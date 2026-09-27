@@ -1,0 +1,31 @@
+// Copyright (C) 2026 Nrupal Akolkar
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
+
+[package]
+name = "codetopo-acp"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "codetopo-acp"
+path = "src/main.rs"
+
+[lib]
+name = "codetopo_acp"
+path = "src/lib.rs"
+
+[dependencies]
+agent-client-protocol = "2.2.0"
+codetopo-cli = { path = "../codetopo-cli" }
+codetopo-core = { path = "../codetopo-core" }
+codetopo-store = { path = "../codetopo-store" }
+codetopo-extract = { path = "../codetopo-extract" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
