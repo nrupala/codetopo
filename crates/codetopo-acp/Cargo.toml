@@ -17,7 +17,6 @@ name = "codetopo_acp"
 path = "src/lib.rs"
 
 [dependencies]
-agent-client-protocol = "2.2.0"
 codetopo-cli = { path = "../codetopo-cli" }
 codetopo-core = { path = "../codetopo-core" }
 codetopo-store = { path = "../codetopo-store" }

@@ -4,8 +4,12 @@
 
 //! Thin adapter: ACP session → codetopo-core / codetopo-store queries.
 //! Read-only, deterministic, no duplicated graph logic.
+//!
+//! Wire protocol: direct newline-delimited JSON-RPC 2.0 over stdio, against
+//! the public ACP specification. No SDK, nothing vendored, nothing copied.
 
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use codetopo_core::Graph;
 
 /// Read-only agent capabilities advertised on initialize.
@@ -40,11 +44,6 @@ pub enum Intent {
     Edit(String), // rename/refactor/fix/etc
 }
 
-#[allow(dead_code)]
-fn extract_quoted(p: &str) -> Option<String> {
-    Some(p.to_string())
-}
-
 pub fn classify_intent(prompt: &str) -> Intent {
     let p = prompt.to_lowercase();
     // Edit requests first — read-only refusal.
@@ -70,18 +69,13 @@ pub fn classify_intent(prompt: &str) -> Intent {
         let nm = after.split_whitespace().next().unwrap_or("unknown").trim();
         return Intent::BlastRadius(nm.to_string());
     }
-    // Path
-    if (p.contains("path from") || p.contains("path betwee")) && p.contains(" to ") {
-        // Very rough parse
-        return Intent::Path("A".into(), "B".into());
-    }
-    if p.contains("hope") || p.contains("maybe") || p.contains("path") && p.contains(" to ") {
-        // try to split around "to"
-        if let Some(pos) = p.find(" to ") {
-            let left = p[..pos].trim();
-            let right = p[pos+4..].trim();
-            let a = left.split_whitespace().last().unwrap_or("A");
-            let b = right.split_whitespace().next().unwrap_or("B");
+    // Path: split on "path from" / " to " to extract node ids from text.
+    if p.contains("path from") && p.contains(" to ") {
+        let after_from = p.split("path from").nth(1).unwrap_or("");
+        let to_parts: Vec<&str> = after_from.split(" to ").collect();
+        if to_parts.len() >= 2 {
+            let a = to_parts[0].split_whitespace().next().unwrap_or("A");
+            let b = to_parts[1].split_whitespace().next().unwrap_or("B");
             return Intent::Path(a.to_string(), b.to_string());
         }
     }
@@ -123,7 +117,7 @@ impl RefusalReply {
 }
 
 /// Execute an intent against a loaded graph, returning a result string.
-pub fn execute_intent(graph: &Graph, intent: &Intent) -> String {
+pub fn execute_intent(graph: &Graph, intent: &Intent, db_path: Option<&Path>) -> String {
     match intent {
         Intent::Descendants(ref id) => {
             let ids = graph.descendants(id);
@@ -161,10 +155,42 @@ pub fn execute_intent(graph: &Graph, intent: &Intent) -> String {
         Intent::Stats => {
             format!("Graph stats: {} nodes, {} edges.", graph.node_count(), graph.edge_count())
         }
-        Intent::Snapshot => "Snapshot available as read-only JSON export (temp).".into(),
+        Intent::Snapshot => {
+            match db_path {
+                Some(p) => {
+                    let temp_out = std::env::temp_dir().join(format!("codetopo-snap-{}.json", std::process::id()));
+                    match codetopo_cli::snapshot_db(p, &temp_out, None) {
+                        Ok(_) => {
+                            let size = std::fs::metadata(&temp_out).map(|m| m.len()).unwrap_or(0);
+                            format!("Snapshot written: {} ({} bytes)", temp_out.display(), size)
+                        }
+                        Err(e) => format!("Snapshot failed: {}", e),
+                    }
+                }
+                None => "Snapshot requires session db (not loaded).".into(),
+            }
+        }
         Intent::Verify => {
-            // Use store audit if loaded; here just report graph consistency
-            format!("Graph consistency: {} nodes, {} edges. Audit verification requires store load.", graph.node_count(), graph.edge_count())
+            match db_path {
+                Some(p) => {
+                    match codetopo_store::Store::open(p) {
+                        Ok(store) => {
+                            match store.load_audit() {
+                                Ok(audit) => {
+                                    if audit.verify() {
+                                        "Audit-chain verification: PASS".into()
+                                    } else {
+                                        "Audit-chain verification: FAIL (chain broken)".into()
+                                    }
+                                }
+                                Err(e) => format!("Audit load failed: {}", e),
+                            }
+                        }
+                        Err(e) => format!("Store open failed: {}", e),
+                    }
+                }
+                None => "Verify requires session db (not loaded).".into(),
+            }
         }
         Intent::Edit(_) => RefusalReply::standard().refusal.into(),
         Intent::Unknown => "Unknown intent — please ask about descendants, ancestors, blast-radius, path, stats, snapshot, or verify.".into(),

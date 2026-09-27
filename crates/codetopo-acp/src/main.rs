@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
 
-//! codetopo-acp — ACP agent over stdio (JSON-RPC 2.0 via agent-client-protocol SDK 2.2.0).
+//! codetopo-acp — ACP agent over stdio (newline-delimited JSON-RPC 2.0).
 //! Read-only. Sealed stdout (only protocol frames). All diagnostics → stderr.
 //!
-//! SDK choice: agent-client-protocol 2.2.0 is used for protocol types/concepts.
-//! The server-side Agent builder (per-message closures over stdio) requires
-//! async runtime integration beyond this adapter's scope; we implement the
-//! wire loop directly against stdio so stdout stays strictly sealed.
+//! SDK choice: none. Direct wire-protocol implementation against the public
+//! ACP spec (newline-delimited JSON-RPC 2.0 over stdio; no Content-Length
+//! headers, stderr free-form logging, sealed stdout). Nothing vendored, nothing
+//! copied.
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 
 fn main() -> io::Result<()> {
     // All logs/diagnostics to stderr; stdout sealed for protocol frames only.
-    eprintln!("codetopo-acp starting (read-only mode) — SDK 2.2.0, direct stdio loop");
+    eprintln!("codetopo-acp starting (read-only mode) — direct ACP wire loop, no SDK");
 
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -60,14 +60,14 @@ fn main() -> io::Result<()> {
                     "id": id,
                     "result": {
                         "agent":"codetopo",
-                        "protocol_version":"v1",
-                        "capabilities": {
+                        "protocolVersion":"1.0",
+                        "agentCapabilities":{
                             "read_only":true,
                             "code_structure":true,
                             "session_based":true,
                             "tools":[]
                         },
-                        "version":"0.1.0"
+                        "agentInfo":{"name":"codetopo","version":"0.1.0"}
                     }
                 });
                 let _ = writeln!(out, "{}", resp);
@@ -92,7 +92,7 @@ fn main() -> io::Result<()> {
                 };
                 {
                     let mut map = session_state.lock().unwrap();
-                    map.insert(session_id.clone(), SessionInfo { db_path: db_path.clone(), cwd: cwd.to_string() });
+                    map.insert(session_id.clone(), SessionInfo { db_path: db_path.clone() });
                 }
                 // Streamed updates
                 let update = json!({
@@ -164,11 +164,9 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct SessionInfo {
     db_path: PathBuf,
-    cwd: String,
 }
 
 fn index_session_db(cwd: &str, session_id: &str) -> Result<PathBuf, String> {
@@ -192,5 +190,5 @@ fn load_and_query(db_path: &Path, prompt: &str) -> Result<String, String> {
     if matches!(intent, codetopo_acp::Intent::Edit(_)) {
         return Ok(codetopo_acp::RefusalReply::standard().refusal.to_string());
     }
-    Ok(codetopo_acp::execute_intent(&graph, &intent))
+    Ok(codetopo_acp::execute_intent(&graph, &intent, Some(db_path)))
 }
