@@ -30,17 +30,52 @@ pub struct Snapshot {
     /// does not own the log — it just binds the snapshot to it.
     #[serde(default)]
     pub audit_head: String,
+    /// The audit-log entries the snapshot was exported under, oldest first.
+    /// Restoring a snapshot replays these entries verbatim, so the restored
+    /// database binds the same audit head and a snapshot → restore →
+    /// snapshot round-trip is byte-identical. `#[serde(default)]` keeps
+    /// snapshots written before this field existed readable (they restore
+    /// with a fresh genesis log instead).
+    #[serde(default)]
+    pub audit_log: Vec<SnapshotAuditEntry>,
+}
+
+/// One entry of the tamper-evident audit log, as carried by a snapshot.
+/// Field-for-field identical to the store crate's `AuditEntry`; defined here
+/// so snapshots can transport the chain without core depending on the store
+/// crate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotAuditEntry {
+    pub seq: u64,
+    pub ts: String,
+    pub op: String,
+    pub payload: String,
+    pub prev_hash: String,
+    pub hash: String,
 }
 
 impl Snapshot {
-    /// Export a graph. Nodes are stored sorted by id so the JSON is
-    /// deterministic; edges keep the graph's deterministic insertion order.
-    pub fn from_graph(g: &Graph, audit_head: &str) -> Self {
+    /// Export a graph. Nodes are stored sorted by id; edges are stored
+    /// sorted by `(from, to, kind)` — with `kind` compared as its snake_case
+    /// wire string, exactly matching the store's
+    /// `ORDER BY from_id, to_id, kind` — so the JSON is deterministic and a
+    /// snapshot → restore → snapshot round-trip is byte-identical.
+    /// `audit_head` is the hash of the last entry of `audit_log`
+    /// (empty string when the log is empty).
+    pub fn from_graph(g: &Graph, audit_log: &[SnapshotAuditEntry]) -> Self {
+        let mut edges: Vec<Edge> = g.edges().cloned().collect();
+        edges.sort_by(|a, b| {
+            a.from
+                .cmp(&b.from)
+                .then_with(|| a.to.cmp(&b.to))
+                .then_with(|| a.kind.as_str().cmp(b.kind.as_str()))
+        });
         Snapshot {
             schema_version: SCHEMA_VERSION.to_string(),
             nodes: g.nodes().cloned().collect(),
-            edges: g.edges().cloned().collect(),
-            audit_head: audit_head.to_string(),
+            edges,
+            audit_head: audit_log.last().map(|e| e.hash.clone()).unwrap_or_default(),
+            audit_log: audit_log.to_vec(),
         }
     }
 

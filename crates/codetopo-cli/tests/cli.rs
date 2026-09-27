@@ -10,7 +10,7 @@
 //! and a restore round-trip into a second database. A second test drives the
 //! built binary to check the exit-code-2 contract for unknown ids.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use codetopo_cli::{index_repo, load_graph_from_db, restore_snapshot};
@@ -28,7 +28,7 @@ fn workdir(name: &str) -> PathBuf {
 }
 
 /// Fixture repo: a.rs (`fn a` → calls `b`), b.rs (`fn b`), c.ts (a class).
-fn fixture_repo(workdir: &PathBuf) -> PathBuf {
+fn fixture_repo(workdir: &Path) -> PathBuf {
     let repo = workdir.join("repo");
     std::fs::create_dir_all(&repo).expect("create repo dir");
     std::fs::write(repo.join("a.rs"), "fn a() {\n    b();\n}\n").expect("write a.rs");
