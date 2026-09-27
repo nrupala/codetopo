@@ -6,17 +6,17 @@ use codetopo_acp::{classify_intent, Intent, RefusalReply, AgentCapabilities};
 
 #[test]
 fn intent_descendants() {
-    assert_eq!(classify_intent("descendants of foo"), Intent::Descendants("descendants of foo".into()));
+    assert_eq!(classify_intent("descendants of foo"), Intent::Descendants("foo".into()));
 }
 
 #[test]
 fn intent_ancestors() {
-    assert_eq!(classify_intent("ancestors of bar"), Intent::Ancestors("ancestors of bar".into()));
+    assert_eq!(classify_intent("ancestors of bar"), Intent::Ancestors("bar".into()));
 }
 
 #[test]
 fn intent_blast_radius() {
-    assert_eq!(classify_intent("blast radius of baz"), Intent::BlastRadius("blast radius of baz".into()));
+    assert_eq!(classify_intent("blast radius of baz"), Intent::BlastRadius("baz".into()));
 }
 
 #[test]

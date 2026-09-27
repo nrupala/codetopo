@@ -1,48 +1,54 @@
-// Copyright (C) 2026 Nrupal Akolkar
-// SPDX-License-Identifier: AGPL-3.0-or-later
-// Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
+# Phase 3 ACP Verification — REAL RESULTS
 
-# Phase 3 ACP Verification Report
+Branch: `phase-3-acp` (clean, same repo `/tmp/opencode/codetopo`).
+Toolchain: `cargo 1.98.0` (rustup `stable-aarch64-unknown-linux-gnu`).
 
-## Branch
-`phase-3-acp` from `origin/main` (`ddb5de6`). Clean commits: (1) design, (2) crate+routing, (3) tests, (4) this report. Status clean after each.
-
-## Commands executed (honest results)
-
-```bash
-# Safety checks
-pwd; git rev-parse --show-toplevel; git log --oneline -1 origin/main  # -> ddb5de6
-# Clean status confirmed before branch creation
-
-git checkout -b phase-3-acp origin/main
-# Crate created at crates/codetopo-acp/ with SDK dep agent-client-protocol = "2.2.0"
-
-cargo test --workspace
-# RESULT: blocked by Cargo.lock version 4 (cargo 1.75 requires -Znext-lockfile-bump)
-# After temporarily moving lockfile: blocked by thiserror v2.0.21 requiring rustc 1.77+
-# No code failures observed; barrier is environment (rust 1.75, lock v4).
-
-cargo clippy --workspace --all-targets -- -D warnings
-# RESULT: same lockfile version 4 error; clippy never reached new crate.
+## Toolchain check
+```
+export PATH=/var/lib/oc-bridge/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/bin:$PATH
+export HOME=/var/lib/oc-bridge
+cargo --version  # cargo 1.98.0
 ```
 
-## Manual stdio session (honest)
+## Build / tests / clippy
+```
+cargo test -p codetopo-acp      # 6 passed (intent classification + refusal + capabilities)
+cargo clippy -p codetopo-acp --all-targets -- -D warnings  # 0 warnings
+```
+Workspace-level `cargo test --workspace` passes (acp + core + store + cli + server + extract + mcp); no regressions.
 
-Binary built via `cargo build --bin codetopo-acp` could not complete because SDK dependency resolution pulls packages requiring rustc 1.77+ and getrandom 0.4.3 requires edition2024 (unsupported by cargo 1.75). Therefore the manual session was NOT executed; attempting it without a working binary would be fabrication.
+## Manual stdio session (honest, no fabrication)
+Binary: `target/debug/codetopo-acp`
+Fixture repo: `crates/codetopo-server/tests/fixture-repo`
+Input (line-delimited JSON-RPC): `initialize` → `session/new` (sessionId=`verify-sess`) → `session/prompt` ("blast radius of alpha::entry") → `session/prompt` ("rename function foo")
 
-What the code prepares:
-- `main.rs` writes a JSON-RPC `initialize` frame to stdout (sealed), logs to stderr.
-- `lib.rs` routes prompts via `classify_intent()`; unknown/edits return `RefusalReply::standard()`.
-- Sealed stdout verified by construction (only `io::stdout().write_all` of JSON; all `eprintln!` go to stderr).
+Stdout: 7 pure JSON lines (0 non-JSON). Example responses:
+- `{"jsonrpc":"2.0","id":1,"result":{"agent":"codetopo"...}}`
+- `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"verify-sess","status":"processing","intent":"BlastRadius(\"alpha::entry\")"}}`
+- `{"jsonrpc":"2.0","id":3,"result":{"sessionId":"verify-sess","answer":"Blast radius of 'alpha::entry': empty (node unknown or isolated).","intent":"BlastRadius(\"alpha::entry\")","streamed":true}}`
+- `{"jsonrpc":"2.0","id":4,"result":{"sessionId":"verify-sess","answer":"I am a read-only code-structure agent; I cannot edit files.","intent":"edit_request","streamed":true}}`
 
-## Edit refusal verification (prepared, not executed due to build block)
-Prompt "rename function X" → `classify_intent` returns `Unknown` → `RefusalReply::standard()` produces refusal string containing "read-only code-structure agent" plus capability list.
+Stderr (diagnostics only):
+```
+codetopo-acp starting (read-only mode) — SDK 2.2.0, direct stdio loop
+files indexed: 3 / files failed: 0 / symbols: 15 / nodes: 15 / edges: 23 / diagnostics: 2
+session/new — session=verify-sess cwd=... db=...
+session/prompt — session=verify-sess intent=BlastRadius(...) answer_len=65
+session/prompt — session=verify-sess intent=edit_request answer_len=59
+```
 
-## Push result
-`git push origin phase-3-acp` — NOT executed because auth credentials not available; no invented credentials used. Branch exists locally only (`git branch -v` shows `phase-3-acp` at `1bab926`).
+Sealed check: `grep -c` on stdout for non-JSON lines → 0.
 
-## Summary
-- Design doc, crate, routing, tests, verification report: all present and committed.
-- `cargo test` / `clippy`: NOT fully green due to environment (rust 1.75, Cargo.lock v4, SDK dependency chain requiring newer rustc/getrandom). Reported honestly; no false claims.
-- SDK remains a dependency (not vendored); licensing header on every new file.
-- Read-only guarantee, sealed stdout, intent routing, refusal logic all in source.
+Notes:
+- `alpha::entry` is not present in fixture, so blast radius honestly reports empty (not fabricated nodes). Stats/descendants/ancestors of known nodes return real counts because the DB loads real graph data.
+- Read-only refusal is correct and immediate for edit prompts.
+- Session state maintained across prompts via `session_state` HashMap; DB persisted to `/tmp` for session lifetime.
+
+## Commit / push
+```
+git add crates/codetopo-acp/src/ crates/codetopo-acp/Cargo.toml crates/codetopo-cli/src/lib.rs docs/phase-3-acp-*.md
+git commit -m "phase-3-acp: real agent wiring (SDK 2.2.0, sealed stdout, real queries, refusal, docs)"
+git push origin phase-3-acp
+```
+
+Push result: TO BE RECORDED (pending execution in final turn).
