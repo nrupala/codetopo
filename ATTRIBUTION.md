@@ -14,7 +14,7 @@ landed. **Reuse** rows may contribute code (with license notices preserved);
 | Source | License | What we take | Landed |
 |---|---|---|---|
 | apache/echarts | Apache-2.0 | Direct dependency; `option` spec pattern as the agent↔visual contract; SSR SVG pipeline; `emphasis.focus:'adjacency'` → `neighborhood()` query primitive | — |
-| marimo-team/marimo | Apache-2.0 | `DirectedGraph` coordinator pattern; `{defs,refs}`→edges pure rule; `descendants`/`ancestors`/`get_path`/topo-sort impact queries; validate-then-apply mutation discipline | — |
+| marimo-team/marimo | Apache-2.0 | `DirectedGraph` coordinator pattern (clean-room reimplementation from the pattern description — no marimo source read or copied); `{defs,refs}`→edges pure rule; `descendants`/`ancestors`/`get_path` impact-query semantics; validate-then-apply mutation discipline | 393b59e |
 | danyQe/codebase-mcp | Apache-2.0 | Tool-surface-first API contract; dual-store (deterministic graph = truth, vector = fuzzy overlay); smallest-unit retrieval; full dumps opt-in | — |
 | jc01rho/omo-herdr-dag | MIT | Event-sourced JSON snapshot schema; dependency-edges vs containment-links kept distinct; event-subscription update pattern | — |
 | Arize-ai/openinference | Apache-2.0 | Typed-schema pattern: kind-scoped attributes, spec-first ontology design | — |
