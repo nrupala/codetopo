@@ -190,12 +190,12 @@ pub fn index_repo(
     }
 
     // 7. Aggregate-first output.
-    println!("files indexed: {files_indexed}");
-    println!("files failed: {files_failed}");
-    println!("symbols: {}", graph.node_count());
-    println!("nodes: {}", graph.node_count());
-    println!("edges: {}", graph.edge_count());
-    println!("diagnostics: {}", diags.len());
+    eprintln!("files indexed: {files_indexed}");
+    eprintln!("files failed: {files_failed}");
+    eprintln!("symbols: {}", graph.node_count());
+    eprintln!("nodes: {}", graph.node_count());
+    eprintln!("edges: {}", graph.edge_count());
+    eprintln!("diagnostics: {}", diags.len());
 
     Ok(IndexReport {
         files_indexed,
@@ -239,7 +239,7 @@ pub fn snapshot_db(db_path: &Path, out: &Path, hmac_key: Option<&[u8]>) -> Resul
     let graph = store.load_graph()?;
     let audit = store.load_audit()?;
     write_snapshot_file(&graph, &audit.snapshot_entries(), out, hmac_key)?;
-    println!("snapshot written: {}", out.display());
+    eprintln!("snapshot written: {}", out.display());
     Ok(())
 }
 
