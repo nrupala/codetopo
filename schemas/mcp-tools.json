@@ -1,0 +1,185 @@
+{
+  "$comment": "MCP tool catalogue for codetopo, extracted from the live server binary, not hand-written. The `tools` array below is the verbatim `result.tools` payload of a JSON-RPC `tools/list` call against `codetopo-mcp` over stdio. Regenerate with: printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}' '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}' | cargo run -q -p codetopo-mcp",
+  "source": {
+    "binary": "codetopo-mcp",
+    "transport": "stdio",
+    "method": "tools/list",
+    "protocolVersion": "2024-11-05",
+    "serverInfo": {
+      "name": "codetopo",
+      "version": "0.1.0"
+    }
+  },
+  "tools": [
+    {
+      "description": "Index a repository into a codetopo graph database.",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path of the database to create.",
+            "type": "string"
+          },
+          "package": {
+            "description": "Package name. Defaults to the repository directory name.",
+            "type": "string"
+          },
+          "repo_path": {
+            "description": "Path to the repository to index.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_path",
+          "db_path"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_index"
+    },
+    {
+      "description": "Nodes transitively reachable from a node over calls and imports edges.",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          },
+          "expand": {
+            "description": "Return full node objects instead of ids. Default false.",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "Maximum members to return. Default 20.",
+            "type": "integer"
+          },
+          "node": {
+            "description": "Node id to walk down from.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "db_path",
+          "node"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_descendants"
+    },
+    {
+      "description": "Nodes from which a node is transitively reachable over calls and imports edges.",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          },
+          "expand": {
+            "description": "Return full node objects instead of ids. Default false.",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "Maximum members to return. Default 20.",
+            "type": "integer"
+          },
+          "node": {
+            "description": "Node id to walk up from.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "db_path",
+          "node"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_ancestors"
+    },
+    {
+      "description": "Nodes that break if a node changes: dependents, overriders, and implementers.",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          },
+          "expand": {
+            "description": "Return full node objects instead of ids. Default false.",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "Maximum members to return. Default 20.",
+            "type": "integer"
+          },
+          "node": {
+            "description": "Node id whose blast radius to compute.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "db_path",
+          "node"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_blast_radius"
+    },
+    {
+      "description": "Shortest typed path between two nodes, or the reason there is none.",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          },
+          "from": {
+            "description": "Node id to start from.",
+            "type": "string"
+          },
+          "to": {
+            "description": "Node id to reach.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "db_path",
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_path"
+    },
+    {
+      "description": "Node and edge totals for an index, with per-kind breakdowns.",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "db_path"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_stats"
+    },
+    {
+      "description": "Verify the tamper-evident audit chain of an index.",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "db_path"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_verify"
+    }
+  ]
+}
