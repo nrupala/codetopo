@@ -299,7 +299,12 @@ pub fn render_path(steps: &[PathStep]) -> String {
     out
 }
 
-fn node_kind_name(kind: NodeKind) -> &'static str {
+/// Wire name of a node kind (`"function"`, `"class"`, …).
+///
+/// Public so the binary surfaces (`codetopo-server`, `codetopo-mcp`) tally
+/// kinds with the same names the CLI prints, rather than each carrying a copy
+/// of this table.
+pub fn node_kind_name(kind: NodeKind) -> &'static str {
     match kind {
         NodeKind::Package => "package",
         NodeKind::Module => "module",
@@ -314,7 +319,8 @@ fn node_kind_name(kind: NodeKind) -> &'static str {
     }
 }
 
-const ALL_NODE_KINDS: [NodeKind; 10] = [
+/// Every node kind, in schema order — the tally order for kind breakdowns.
+pub const ALL_NODE_KINDS: [NodeKind; 10] = [
     NodeKind::Package,
     NodeKind::Module,
     NodeKind::File,
@@ -327,7 +333,8 @@ const ALL_NODE_KINDS: [NodeKind; 10] = [
     NodeKind::Doc,
 ];
 
-const ALL_EDGE_KINDS: [EdgeKind; 9] = [
+/// Every edge kind, in schema order — the tally order for kind breakdowns.
+pub const ALL_EDGE_KINDS: [EdgeKind; 9] = [
     EdgeKind::Imports,
     EdgeKind::Calls,
     EdgeKind::Inherits,

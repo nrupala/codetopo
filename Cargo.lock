@@ -263,6 +263,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "codetopo-mcp"
+version = "0.1.0"
+dependencies = [
+ "codetopo-cli",
+ "codetopo-core",
+ "codetopo-store",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "codetopo-server"
 version = "0.1.0"
 dependencies = [
