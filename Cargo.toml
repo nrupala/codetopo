@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2021"
+license = "AGPL-3.0-or-later"
+authors = ["Nrupal Akolkar"]
+repository = "https://github.com/nrupala/codetopo"
