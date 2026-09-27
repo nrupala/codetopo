@@ -1,0 +1,960 @@
+openapi: 3.1.0
+info:
+  title: codetopo API
+  version: 0.1.0
+  summary: Read-only query surface over a frozen code graph.
+  description: |
+    `codetopo` turns a repository tree into a queryable code graph. This
+    document describes the HTTP surface exposed by `codetopo-server` (Phase 2
+    of the design), which is a transport rename of commands the `codetopo` CLI
+    already runs: the same `codetopo_core` query answers a request, and the same
+    `codetopo_store` read backs it. CLI/API parity is therefore true by
+    construction rather than by two implementations that happen to agree today.
+
+    ## License
+
+    Apache-2.0. See `LICENSE-APACHE` beside this file. The rest of the
+    `codetopo` workspace is AGPL-3.0-or-later; `schemas/` is the only Apache-2.0
+    part, so tooling built on this contract does not inherit the copyleft.
+
+    ## Conventions
+
+    * **Aggregate first.** A closure response carries `total` — the full size of
+      the answer — before any list. An agent learns the shape of the result
+      from one integer and decides whether it can afford the list; a response
+      that is only a list forces it to page before it knows the size.
+    * **Errors are flat and coded.** Every failure returns
+      `{"error": "<code>", "message": "…"}` with the HTTP status in the status
+      line only. There is no nested error object and no `status` field in the
+      body. `error` is a stable machine-readable code; `message` is prose for a
+      human and may change without notice.
+    * **Missing vs. invalid.** A parameter that is absent or empty after
+      trimming is `missing_param`; one that is present but unparseable or
+      out of range is `invalid_param`.
+    * **Determinism.** Every list this API returns has a defined order:
+      adjacency is sorted by (neighbor id, edge-kind rank) at build time, so
+      traversal results are reproducible across runs and machines.
+
+    ## Deviations from the design document
+
+    Recorded here so a client is never surprised by a difference from the
+    written design:
+
+    * **Flat error body.** Design §7 nests the error under an `error` object
+      with a `status` field. The implementation is flat and carries the status
+      in the HTTP status line. Flat was chosen so an error body is a single
+      line an agent can parse without a JSON path.
+    * **`expand` vs. `limit`.** Design §3.1 says `expand=true` returns "the full
+      id list" and, in the same table, that `limit` is the "max ids returned
+      when `expand=true`". Those cannot both hold and the design gives no
+      tie-breaker; CLI parity (§3.2) was used instead. `limit` caps the default
+      list and `expand=true` lifts the cap. Nothing is lost either way, because
+      `total` is always the full size.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+  contact:
+    name: Nrupal Akolkar
+    url: https://github.com/nrupalakolkar/codetopo
+servers:
+  - url: http://127.0.0.1:8080
+    description: |
+      Default bind address (`CODETOPO_BIND`). Loopback by default: the API
+      holds a full source-code index and is meant to sit behind an SSH tunnel
+      or a mesh peer, not to listen on a public interface.
+tags:
+  - name: index
+    description: Creating new indexes.
+  - name: query
+    description: Closure, path, and aggregate reads over a frozen graph.
+  - name: integrity
+    description: Audit-chain verification and portable export.
+security:
+  - bearerAuth: []
+paths:
+  /v1/index:
+    post:
+      tags: [index]
+      operationId: indexRepository
+      summary: Index a repository tree into a new index id.
+      description: |
+        Walks the tree, writes `<data_dir>/<index_id>.db`, and returns the
+        CLI's own `IndexReport` fields, so API stats and CLI stats come from
+        one computation.
+
+        The `index_id` is a UUID v4 rather than a repository name, so
+        re-indexing the same tree does not clobber the previous index and no
+        customer directory layout leaks into a URL or a log line.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IndexRequest'
+            examples:
+              minimal:
+                summary: Only a path
+                value:
+                  repo_path: /srv/customer/acme-api
+      responses:
+        '200':
+          description: The repository was indexed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '415':
+          description: |
+            The request body was not valid JSON with a JSON content type. The
+            library's own extractor rejects a body it cannot parse before any
+            handler runs, so this carries no `error` code of ours.
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/graphs/{id}/descendants:
+    get:
+      tags: [query]
+      operationId: descendants
+      summary: What this node affects.
+      description: |
+        The transitive closure of the node's outgoing `calls` and `imports`
+        edges — strictly reachable *other* nodes, in breadth-first order. The
+        start node is never included, even when a cycle leads back to it.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+        - $ref: '#/components/parameters/NodeParam'
+        - $ref: '#/components/parameters/ExpandParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          $ref: '#/components/responses/ClosureOk'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/graphs/{id}/ancestors:
+    get:
+      tags: [query]
+      operationId: ancestors
+      summary: What depends on this node.
+      description: |
+        The reverse of `descendants`: everything that transitively reaches the
+        node, following `calls` and `imports` edges backwards, in
+        breadth-first order. The start node is never included.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+        - $ref: '#/components/parameters/NodeParam'
+        - $ref: '#/components/parameters/ExpandParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          $ref: '#/components/responses/ClosureOk'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/graphs/{id}/blast-radius:
+    get:
+      tags: [query]
+      operationId: blastRadius
+      summary: What a failure of this node would take with it.
+      description: |
+        `descendants` restricted to the edges that propagate breakage: `calls`,
+        `inherits`, `implements`, `reads`, and `writes`. `imports` alone does
+        not break, so it is excluded here. Breadth-first order; the start node
+        is never included.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+        - $ref: '#/components/parameters/NodeParam'
+        - $ref: '#/components/parameters/ExpandParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          $ref: '#/components/responses/ClosureOk'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/graphs/{id}/path:
+    get:
+      tags: [query]
+      operationId: pathBetween
+      summary: The shortest typed path between two nodes.
+      description: |
+        Returns the whole path rather than a capped prefix: a path is a
+        sequence whose meaning depends on every step, so truncating it would
+        produce a well-formed but false answer.
+
+        The search is a directed breadth-first search from `from` over all
+        non-`contains` edges. If that finds nothing, the search runs backwards
+        from `to` and the steps are reversed — so an `imports` edge is
+        traversable in the direction that has a path. A node paths to itself as
+        an empty step list.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+        - $ref: '#/components/parameters/FromParam'
+        - $ref: '#/components/parameters/ToParam'
+      responses:
+        '200':
+          description: |
+            A path exists. `steps` is empty when `from` and `to` are the same
+            node.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PathResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: |
+            The index does not exist (`unknown_index`), or the two nodes are
+            not connected in either direction (`no_path`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                no_path:
+                  summary: Disconnected
+                  value:
+                    error: no_path
+                    message: no path from 'a::f' to 'b::g'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/graphs/{id}/stats:
+    get:
+      tags: [query]
+      operationId: stats
+      summary: Aggregate node and edge counts.
+      description: |
+        Totals plus per-kind breakdowns, matching what the CLI's `print_stats`
+        prints. `by_kind` omits kinds with a zero count, and is a map rather
+        than an array so a client can read one kind without walking a list to
+        find it.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+      responses:
+        '200':
+          description: Counts for this index.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsResponse'
+              examples:
+                small:
+                  value:
+                    index_id: 3f2b1c84-9d5e-4f7a-8b21-6c0e5a7d9f13
+                    nodes:
+                      total: 128
+                      by_kind:
+                        file: 42
+                        function: 51
+                        class: 12
+                        method: 23
+                    edges:
+                      total: 96
+                      by_kind:
+                        imports: 20
+                        calls: 60
+                        defines: 16
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/graphs/{id}/verify:
+    get:
+      tags: [integrity]
+      operationId: verify
+      summary: Verify the audit chain for this index.
+      description: |
+        The same three facts `codetopo verify-db` prints: how many entries the
+        hash-chained audit log holds, whether recomputing every link
+        reproduces it, and the head hash. This is the route an agent calls
+        before trusting a snapshot it was handed.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+      responses:
+        '200':
+          description: |
+            The chain was inspected. `chain_valid: false` is a successful
+            *answer* about a corrupt log, not an API error — the index exists
+            and was read.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+  /v1/graphs/{id}/snapshot:
+    get:
+      tags: [integrity]
+      operationId: snapshot
+      summary: Portable frozen export of the whole graph.
+      description: |
+        The `Snapshot` struct serialized unwrapped, so the response is
+        byte-compatible with what `codetopo restore` accepts: a client can pipe
+        this body straight to a file and restore it with no translation step.
+
+        The snapshot binds `audit_head`, so a consumer can tell which audit
+        chain it came from. Nodes are sorted by id and edges by
+        `(from, to, kind)`, so two exports of the same index are byte-identical.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+      responses:
+        '200':
+          description: The whole graph.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Snapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        The credential is `Bearer <key_id>:<secret>` — a single opaque token
+        formed by joining a key id and its secret with a colon. Keys live in
+        the keys file named by `CODETOPO_KEYS_FILE` (default `./api_keys`).
+
+        Comparison is constant-time, and every failure — unknown key, wrong
+        secret, malformed header, missing header — returns the same `401` with
+        no hint about which part was wrong. A rejected request is not metered:
+        metering records accepted work, so an attacker cannot exhaust the log
+        by guessing keys.
+  parameters:
+    IndexId:
+      name: id
+      in: path
+      required: true
+      description: |
+        Index identifier, as returned by `POST /v1/index` (a UUID v4). The
+        database is `<data_dir>/<id>.db`; an id with no database behind it is
+        `unknown_index`.
+      schema:
+        type: string
+      example: 3f2b1c84-9d5e-4f7a-8b21-6c0e5a7d9f13
+    NodeParam:
+      name: node
+      in: query
+      required: true
+      description: |
+        Node id to start the closure from. Absent or empty is
+        `missing_param`. A syntactically valid id that is not in the graph is
+        **not** an error: the closure is simply empty, so the response is
+        `200` with `total: 0` and an empty `nodes` — an agent asking about a
+        node the indexer did not emit is asking a real question.
+      schema:
+        type: string
+      example: src/parser::Parser::parse
+    ExpandParam:
+      name: expand
+      in: query
+      required: false
+      description: |
+        `true` returns the full id list; `false` (the default) returns at most
+        `limit` ids and sets `truncated`. The value is trimmed, then matched
+        case-sensitively against `true` or `false`; anything else is
+        `invalid_param`.
+      schema:
+        type: string
+        enum: ['true', 'false']
+        default: 'false'
+    LimitParam:
+      name: limit
+      in: query
+      required: false
+      description: |
+        Maximum ids returned when `expand` is not set. Default 20 (the CLI's
+        `--limit` default), maximum 1000. Trimmed, then parsed as a decimal
+        integer; unparseable, zero, or above the maximum is `invalid_param`
+        rather than silently clamped, so a client asking for 1 000 000 learns
+        that it did not get 1 000 000. An empty value means the default, which
+        keeps a client that templates optional parameters from failing on the
+        empty string.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 20
+    FromParam:
+      name: from
+      in: query
+      required: true
+      description: Path source node id. Absent or empty is `missing_param`.
+      schema:
+        type: string
+      example: src/parser::Parser::parse
+    ToParam:
+      name: to
+      in: query
+      required: true
+      description: Path target node id. Absent or empty is `missing_param`.
+      schema:
+        type: string
+      example: src/codegen::emit
+  responses:
+    ClosureOk:
+      description: The closure. Always `200`, even when it is empty.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ClosureResponse'
+          examples:
+            descendants-truncated:
+              summary: Truncated to the default limit
+              value:
+                index_id: 3f2b1c84-9d5e-4f7a-8b21-6c0e5a7d9f13
+                relation: descendants
+                node: src/parser::Parser::parse
+                total: 3
+                expand: false
+                limit: 20
+                truncated: false
+                nodes:
+                  - src/codegen::emit
+                  - src/lexer::Lexer::next
+                  - src/ast::Node::render
+    BadRequest:
+      description: |
+        A parameter was absent (`missing_param`), unparseable or out of range
+        (`invalid_param`), or the repository path was not usable
+        (`invalid_repo_path`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            missing_param:
+              summary: Required query parameter absent
+              value:
+                error: missing_param
+                message: missing required parameter 'node'
+            invalid_param:
+              summary: limit above the maximum
+              value:
+                error: invalid_param
+                message: limit must be 1..=1000, got 100000
+    Unauthorized:
+      description: |
+        Authentication failed. Every failure mode — missing header, malformed
+        header, unknown key, wrong secret — produces this identical response,
+        and the request is not metered.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: unauthenticated
+            message: invalid or missing credentials
+      headers:
+        WWW-Authenticate:
+          description: Challenge sent with every `401`.
+          schema:
+            type: string
+          example: Bearer realm="codetopo"
+    NotFound:
+      description: |
+        The index does not exist (`unknown_index`), or a node id that had to
+        resolve did not (`unknown_node`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            unknown_index:
+              value:
+                error: unknown_index
+                message: no such index '3f2b1c84'
+            unknown_node:
+              value:
+                error: unknown_node
+                message: unknown node id 'src/ghost::x'
+    Internal:
+      description: |
+        A store, io, or worker failure behind an otherwise well-formed
+        request. The message is for an operator, not a client: it may name
+        filesystem paths.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: internal
+            message: 'index 3f2b1c84: store error: database is locked'
+  schemas:
+    Error:
+      type: object
+      description: |
+        The flat error body. `error` is a stable machine-readable code, and
+        `message` is prose that may change without notice — branch on `error`,
+        log `message`. There is no `status` field: the status is in the HTTP
+        status line.
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Machine-readable code.
+          enum:
+            - invalid_body
+            - invalid_repo_path
+            - missing_param
+            - invalid_param
+            - unauthenticated
+            - unknown_index
+            - unknown_node
+            - no_path
+            - internal
+        message:
+          type: string
+          description: Human-readable detail. May name filesystem paths.
+      additionalProperties: false
+    IndexRequest:
+      type: object
+      description: |
+        Body of `POST /v1/index`. Both fields are optional *at the type level*
+        so that a missing field is reported as `invalid_repo_path` naming it,
+        rather than as a generic JSON rejection arriving before any handler
+        code runs.
+      properties:
+        repo_path:
+          type: string
+          description: |
+            Absolute or relative path to the repository tree to index. Trimmed;
+            absent or empty is `invalid_repo_path`, as is a path that is not an
+            existing directory.
+        package:
+          type: string
+          default: unknown
+          description: |
+            Package name recorded for the index, recorded on the `package` node
+            at the graph root. Trimmed; absent or empty becomes `unknown`,
+            which keeps the field populated — a `package` node with an empty
+            name would be a lie.
+    IndexResponse:
+      type: object
+      description: |
+        The CLI's own `IndexReport` fields, so API stats and CLI stats come from
+        one computation rather than two implementations that agree today.
+      required:
+        - index_id
+        - files_indexed
+        - files_failed
+        - nodes
+        - edges
+        - diagnostics
+      properties:
+        index_id:
+          type: string
+          description: |
+            Identifier of the new index; use it as `{id}` on every later
+            request. A UUID v4, so re-indexing the same tree does not clobber
+            the previous index and no directory layout leaks into a URL.
+        files_indexed:
+          type: integer
+          minimum: 0
+          description: Files successfully extracted.
+        files_failed:
+          type: integer
+          minimum: 0
+          description: |
+            Files that could not be extracted. A non-zero value does not fail
+            the request — a partial index is still a usable index, and
+            `diagnostics` carries the well-formedness violations found while
+            building the graph.
+        nodes:
+          type: integer
+          minimum: 0
+          description: Nodes in the built graph.
+        edges:
+          type: integer
+          minimum: 0
+          description: Edges in the built graph.
+        diagnostics:
+          type: integer
+          minimum: 0
+          description: |
+            Count of well-formedness violations recorded during the build
+            (multi-definitions, dependency cycles, unresolved calls). A *count*,
+            not a list: the violations themselves are not carried here, so a
+            client that needs them must read the audit log via `verify`.
+      additionalProperties: false
+    ClosureResponse:
+      type: object
+      description: |
+        Aggregate-first closure. `total` is the size of the whole closure and
+        `nodes` is a possibly-truncated view of it; `truncated` says which of
+        the two the client got, so a client never has to infer it by comparing
+        two numbers.
+      required: [index_id, relation, node, total, expand, limit, truncated, nodes]
+      properties:
+        index_id:
+          type: string
+        relation:
+          type: string
+          description: Which closure this is; echoes the route that was called.
+          enum: [descendants, ancestors, blast_radius]
+        node:
+          type: string
+          description: The start node, echoed back as requested.
+        total:
+          type: integer
+          minimum: 0
+          description: Size of the entire closure, before any limit.
+        expand:
+          type: boolean
+          description: Echo of the `expand` parameter actually applied.
+        limit:
+          type: integer
+          description: Echo of the `limit` actually applied, whether or not
+            `expand` lifted its cap.
+        truncated:
+          type: boolean
+          description: |
+            `true` when `nodes` is a prefix of a larger closure. Always
+            `false` when `expand` is `true`.
+        nodes:
+          type: array
+          description: |
+            Reachable node ids in breadth-first order, deduplicated, excluding
+            the start node. Empty when the node is not in the graph.
+          items:
+            type: string
+      additionalProperties: false
+    PathResponse:
+      type: object
+      required: [index_id, from, to, steps, rendered]
+      properties:
+        index_id:
+          type: string
+        from:
+          type: string
+          description: The source node, echoed back.
+        to:
+          type: string
+          description: The target node, echoed back.
+        steps:
+          type: array
+          description: |
+            The path in order. Empty when `from` and `to` are the same node.
+            Never truncated — see the operation description.
+          items:
+            $ref: '#/components/schemas/PathStep'
+        rendered:
+          type: string
+          description: |
+            The same path as one human-readable line, the same rendering
+            `codetopo path` prints. Convenience for logs; parse `steps` if you
+            need structure.
+      additionalProperties: false
+    PathStep:
+      type: object
+      description: One hop. `from`/`to` of step *n* are the `from`/`to` of
+        step *n+1*.
+      required: [from, to, kind]
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        kind:
+          $ref: '#/components/schemas/EdgeKind'
+      additionalProperties: false
+    StatsResponse:
+      type: object
+      required: [index_id, nodes, edges]
+      properties:
+        index_id:
+          type: string
+        nodes:
+          $ref: '#/components/schemas/KindCounts'
+        edges:
+          $ref: '#/components/schemas/KindCounts'
+      additionalProperties: false
+    KindCounts:
+      type: object
+      description: A total plus a per-kind breakdown.
+      required: [total, by_kind]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        by_kind:
+          type: object
+          description: |
+            Wire name to count. Kinds with a zero count are **omitted**, not
+            reported as `0`, so `inherits` being absent means "no inheritance
+            edges", not "not counted". Check for the key rather than reading a
+            default.
+          additionalProperties:
+            type: integer
+            minimum: 1
+      additionalProperties: false
+    VerifyResponse:
+      type: object
+      required: [index_id, entries, chain_valid, head]
+      properties:
+        index_id:
+          type: string
+        entries:
+          type: integer
+          minimum: 0
+          description: Number of entries in the audit log, genesis included.
+        chain_valid:
+          type: boolean
+          description: |
+            `true` when recomputing every hash reproduces the log: every
+            recomputed hash matches, `seq` is sequential, and each `prev_hash`
+            equals the previous entry's hash. `false` means the log was
+            tampered with or truncated — a successful answer about a corrupt
+            log, not an API error.
+        head:
+          type: string
+          description: |
+            Hash of the last entry, the chain's current root. Non-empty: the log
+            always begins with a genesis entry, so there is always a head.
+      additionalProperties: false
+    Snapshot:
+      type: object
+      description: |
+        The whole graph as a portable, hash-bound export. This is the exact
+        shape `codetopo restore` accepts, and the route returns it unwrapped so
+        the body round-trips with no translation step.
+      required: [schema_version, nodes, edges, audit_head, audit_log]
+      properties:
+        schema_version:
+          type: string
+          description: Schema generation of the export; bumped on a breaking
+            change to the node or edge shape.
+        nodes:
+          type: array
+          description: Sorted by `id`, so two exports of one index are
+            byte-identical.
+          items:
+            $ref: '#/components/schemas/Node'
+        edges:
+          type: array
+          description: Sorted by `(from, to, kind)`.
+          items:
+            $ref: '#/components/schemas/Edge'
+        audit_head:
+          type: string
+          description: |
+            Head hash of the audit chain this graph came from, tying the export
+            to `verify` and to the entries below. Empty only when the log is
+            empty, which a real index never is.
+        audit_log:
+          type: array
+          description: The hash-chained entries, oldest first.
+          items:
+            $ref: '#/components/schemas/SnapshotAuditEntry'
+      additionalProperties: false
+    SnapshotAuditEntry:
+      type: object
+      description: |
+        One link in the hash chain. Entry *n*'s `prev_hash` is entry *n-1*'s
+        `hash`; entry 0's is the literal `GENESIS`. A snapshot restores with a
+        resolvable chain, which is what makes a tampered graph detectable.
+      required: [seq, ts, op, payload, prev_hash, hash]
+      properties:
+        seq:
+          type: integer
+          minimum: 0
+          description: |
+            Position in the chain, starting at 0. Sequential; a gap is a
+            `chain_valid: false`.
+        ts:
+          type: string
+          description: |
+            When the operation was recorded, as Unix epoch **seconds** in a
+            decimal string (`"1756944000"`) — not RFC 3339. A string, not a
+            number, because the chain hashes this field verbatim and a float
+            would not survive the round-trip.
+        op:
+          type: string
+          description: |
+            The operation this entry records. The values written today are
+            `genesis` (the log's first entry, payload `{}`), `index_started`,
+            and `index_finished` — the ops are open strings, not a closed
+            enum, so a client must not treat an unknown `op` as an error.
+            `payload` is the operation's serialized detail; its shape depends
+            on `op`, so read it as opaque JSON unless you know the operation.
+        payload:
+          type: string
+          description: Serialized operation detail — a JSON document carried as
+            a string, not a nested object.
+        prev_hash:
+          type: string
+          description: |
+            Hash of the preceding entry; the literal `GENESIS` for `seq: 0`.
+        hash:
+          type: string
+          description: |
+            This entry's own hash, computed over the entry and `prev_hash`.
+            Matching `verify` recomputation is what `chain_valid` reports.
+      additionalProperties: false
+    Node:
+      type: object
+      # Every field below is always emitted: `tier`, `defines` and `refs` carry
+      # `#[serde(default)]` (deserialization only) with no
+      # `skip_serializing_if`, so an "all defaults" node still serializes all
+      # seven keys. Only `Loc::column` is genuinely optional.
+      required: [id, kind, label, loc, tier, defines, refs]
+      properties:
+        id:
+          type: string
+          description: |
+            Unique within an index, e.g. `src/parser::Parser::parse`. This is
+            the id every query parameter and `nodes[]` entry uses.
+        kind:
+          $ref: '#/components/schemas/NodeKind'
+        label:
+          type: string
+          description: |
+            Human-facing name, e.g. `Parser::parse` — the part after the last
+            `::` of the id. Display only; never parse it to recover identity.
+        loc:
+          $ref: '#/components/schemas/Loc'
+        tier:
+          $ref: '#/components/schemas/Tier'
+        defines:
+          type: array
+          description: Ids of members this container declares.
+          items:
+            type: string
+        refs:
+          type: array
+          description: |
+            Ids this node references, for display without a second query. May
+            name `external::…` stubs.
+          items:
+            type: string
+      additionalProperties: false
+    Edge:
+      type: object
+      # `attrs` is always emitted (as `{}` when empty) for the same reason as
+      # `Node`'s defaulted fields. `line` is the only optional key: it carries
+      # `skip_serializing_if = "Option::is_none"`, so it is *absent*, never
+      # `null`, when the source location is unknown.
+      required: [from, to, kind, attrs]
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        kind:
+          $ref: '#/components/schemas/EdgeKind'
+        line:
+          type: integer
+          description: 1-based line the edge arises from, when known.
+        attrs:
+          type: object
+          description: |
+            Kind-specific attributes, drawn from a fixed allow-list. `GraphBuilder`
+            rejects anything outside a kind's list and reports it as an
+            `InvalidAttribute` diagnostic, so the keys present here depend only
+            on `kind`:
+
+            | kind | allowed attrs |
+            |---|---|
+            | `imports` | `bindings`, `line` |
+            | `calls` | `line`, `arg_shapes` |
+            | `inherits` | `bases` |
+            | `implements` | `members` |
+            | `defines` | `line` |
+            | `references` | `line`, `kind` |
+            | `contains` | *(none — pure hierarchy)* |
+            | `reads` | `line` |
+            | `writes` | `line` |
+
+            `line` is also a first-class field on the edge; it is allowed inside
+            `attrs` so that carrying it there is not itself a violation.
+          additionalProperties: true
+      additionalProperties: false
+    Loc:
+      type: object
+      description: Source location — a file and a 1-based line, with an
+        optional column.
+      required: [file, line]
+      properties:
+        file:
+          type: string
+          description: Path relative to the indexed repository root.
+        line:
+          type: integer
+          minimum: 1
+          description: 1-based line number.
+        column:
+          type: integer
+          description: 1-based column, omitted when unknown.
+      additionalProperties: false
+    NodeKind:
+      type: string
+      description: |
+        What a node is. Serialized snake_case, in schema declaration order.
+      enum:
+        - package
+        - module
+        - file
+        - class
+        - interface
+        - function
+        - method
+        - variable
+        - external
+        - doc
+    EdgeKind:
+      type: string
+      description: |
+        What an edge means, and — for closures — which traversals follow it.
+        `descendants` and `ancestors` follow `calls` and `imports`; `path`
+        follows every kind except `contains`; `blast_radius` follows `calls`,
+        `inherits`, `implements`, `reads`, `writes`. `contains` is structural
+        hierarchy and is never part of a dependency traversal.
+      enum:
+        - imports
+        - calls
+        - inherits
+        - implements
+        - defines
+        - references
+        - contains
+        - reads
+        - writes
+    Tier:
+      type: string
+      description: |
+        How much a client should care about this node — the extraction
+        priority tier. Defaults to `optional`.
+      enum: [core, recommended, optional]
+      default: optional
