@@ -22,6 +22,7 @@ use codetopo_cli::{
     index_repo, load_graph_from_db, node_kind_name, require_node, CliError, ALL_EDGE_KINDS,
     ALL_NODE_KINDS,
 };
+use codetopo_core::snapshot::Snapshot;
 use codetopo_store::Store;
 use serde_json::{json, Value};
 
@@ -256,6 +257,17 @@ fn tool_catalog() -> Vec<Value> {
                 "required": ["db_path"],
             },
         }),
+        json!({
+            "name": "codetopo_snapshot",
+            "description": "Export the whole graph as a portable snapshot, bound to the audit head.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "db_path": {"type": "string", "description": "Path to the index database."},
+                },
+                "required": ["db_path"],
+            },
+        }),
     ]
 }
 
@@ -276,6 +288,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, ToolError> {
         "codetopo_path" => tool_path(args),
         "codetopo_stats" => tool_stats(args),
         "codetopo_verify" => tool_verify(args),
+        "codetopo_snapshot" => tool_snapshot(args),
         other => Err(ToolError::UnknownTool(other.to_string())),
     }
 }
@@ -302,7 +315,8 @@ fn tool_index(args: &Value) -> Result<Value, ToolError> {
             .unwrap_or_default(),
     };
 
-    // Snapshots and HMAC proofs are out of scope for the stdio surface: the
+    // Snapshots and HMAC proofs are out of scope for the *index* step on the
+    // stdio surface: the
     // local MCP client is trusted with the filesystem, and §6 gives the
     // authenticated HTTP surface the tamper-evident audit chain.
     let report = index_repo(&repo_path, &db_path, &package, None, None)?;
@@ -441,6 +455,21 @@ fn tool_verify(args: &Value) -> Result<Value, ToolError> {
 /// Re-type a store failure as the CLI error the `Cli` variant carries.
 fn store_failure(err: codetopo_store::StoreError) -> ToolError {
     ToolError::Cli(CliError::Store(err))
+}
+
+/// `codetopo_snapshot` — portable frozen export of the whole graph.
+///
+/// Mirrors the HTTP `GET /v1/graphs/{id}/snapshot` body exactly: the
+/// [`Snapshot`] struct itself, unwrapped, so an agent can hand the result to
+/// `codetopo restore` without a translation step. The `audit_head` is read from
+/// the same audit log `codetopo_verify` reports on, so the two agree.
+fn tool_snapshot(args: &Value) -> Result<Value, ToolError> {
+    let db_path = require_index(args)?;
+    let store = Store::open(&db_path).map_err(store_failure)?;
+    let graph = store.load_graph().map_err(store_failure)?;
+    let audit = store.load_audit().map_err(store_failure)?;
+    let snapshot = Snapshot::from_graph(&graph, &audit.snapshot_entries());
+    serde_json::to_value(snapshot).map_err(|err| ToolError::MissingParam(err.to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -594,9 +623,9 @@ mod tests {
     // -- catalogue ---------------------------------------------------------
 
     #[test]
-    fn catalogue_lists_seven_tools() {
+    fn catalogue_lists_eight_tools() {
         let catalog = tool_catalog();
-        assert_eq!(catalog.len(), 7, "expected 7 tools: {catalog:?}");
+        assert_eq!(catalog.len(), 8, "expected 8 tools: {catalog:?}");
 
         let names: Vec<&str> = catalog
             .iter()
@@ -612,6 +641,7 @@ mod tests {
                 "codetopo_path",
                 "codetopo_stats",
                 "codetopo_verify",
+                "codetopo_snapshot",
             ]
         );
         for tool in &catalog {
@@ -652,6 +682,9 @@ mod tests {
         }
         result_of("codetopo_stats", &args(&db_path, json!({})));
         result_of("codetopo_verify", &args(&db_path, json!({})));
+        let snapshot = result_of("codetopo_snapshot", &args(&db_path, json!({})));
+        assert!(snapshot["nodes"].is_array(), "no nodes in snapshot");
+        assert!(snapshot["audit_head"].is_string(), "no audit head");
         let path = result_of(
             "codetopo_path",
             &args(&db_path, json!({"from": node, "to": other})),
@@ -865,6 +898,47 @@ mod tests {
         assert!(!value["head"].as_str().expect("head").is_empty());
     }
 
+    #[test]
+    fn snapshot_carries_the_whole_graph_and_the_audit_head() {
+        let (_dir, db_path) = fixture_index();
+        let graph = load_graph_from_db(&db_path).expect("graph loads");
+        let value = result_of("codetopo_snapshot", &args(&db_path, json!({})));
+
+        assert_eq!(
+            value["schema_version"].as_str().expect("schema"),
+            codetopo_core::snapshot::SCHEMA_VERSION
+        );
+        assert_eq!(
+            value["nodes"].as_array().expect("nodes").len(),
+            graph.node_count()
+        );
+        assert_eq!(
+            value["edges"].as_array().expect("edges").len(),
+            graph.edge_count()
+        );
+
+        // The head must be the one `codetopo_verify` reports: a snapshot that
+        // claimed a different chain would be a different artifact.
+        let verified = result_of("codetopo_verify", &args(&db_path, json!({})));
+        assert_eq!(value["audit_head"], verified["head"]);
+
+        // Edges are sorted by (from, to, kind) for a byte-stable export.
+        let edges = value["edges"].as_array().expect("edges");
+        let keys: Vec<(String, String, String)> = edges
+            .iter()
+            .map(|e| {
+                (
+                    e["from"].as_str().expect("from").to_string(),
+                    e["to"].as_str().expect("to").to_string(),
+                    e["kind"].as_str().expect("kind").to_string(),
+                )
+            })
+            .collect();
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(keys, sorted, "snapshot edges must be sorted");
+    }
+
     // -- error surface -----------------------------------------------------
 
     #[test]
@@ -910,7 +984,7 @@ mod tests {
         assert_eq!(response["id"], 7);
         assert_eq!(
             response["result"]["tools"].as_array().expect("tools").len(),
-            7
+            8
         );
     }
 

@@ -170,7 +170,7 @@ fn a_session_answers_every_step_of_the_read_only_recipe() {
             .as_array()
             .expect("an array")
             .len(),
-        7
+        8
     );
 
     let indexed = client.request(
@@ -220,6 +220,28 @@ fn a_session_answers_every_step_of_the_read_only_recipe() {
         json!({"name": "codetopo_verify", "arguments": {"db_path": db}}),
     );
     assert_eq!(verified["result"]["chain_valid"], json!(true), "{verified}");
+
+    // The export is the last step of the read-only recipe: it must carry the
+    // whole graph and be bound to the audit head the previous call just
+    // verified, or a consumer cannot tell which chain it came from.
+    let snapshot = client.request(
+        7,
+        "tools/call",
+        json!({"name": "codetopo_snapshot", "arguments": {"db_path": db}}),
+    );
+    assert_ne!(snapshot["result"]["isError"], json!(true), "{snapshot}");
+    assert_eq!(
+        snapshot["result"]["audit_head"], verified["result"]["head"],
+        "the snapshot must bind the verified head: {snapshot}"
+    );
+    assert_eq!(
+        snapshot["result"]["nodes"]
+            .as_array()
+            .expect("an array")
+            .len() as u64,
+        stats["result"]["nodes"].as_u64().expect("a count"),
+        "the snapshot must carry every node stats counted: {snapshot}"
+    );
 
     let (code, trailing) = client.close();
     assert_eq!(code, Some(0));
