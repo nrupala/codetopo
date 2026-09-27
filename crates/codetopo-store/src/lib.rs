@@ -7,7 +7,7 @@
 //! Two halves:
 //! - [`Store`]: a rusqlite-backed store for [`Graph`] snapshots (nodes,
 //!   edges), free-text annotations on nodes, and the tamper-evident audit
-//!   log. Schema is created on open; graph inserts are single-transaction
+//!   log. Schema is created on open; graph inserts are chunked-transaction
 //!   `INSERT OR IGNORE` upserts.
 //! - Audit primitive: [`AuditLog`] (hash-chained append-only log) plus
 //!   [`hmac_proof`]/[`verify_proof`] (hex HMAC-SHA256 proof certificates).
@@ -19,7 +19,7 @@
 
 use std::path::Path;
 
-use codetopo_core::snapshot::SCHEMA_VERSION;
+use codetopo_core::snapshot::{SnapshotAuditEntry, SCHEMA_VERSION};
 use codetopo_core::{Edge, Graph, Loc, Node, NodeKind, Snapshot, Tier};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
@@ -173,6 +173,32 @@ pub struct AuditEntry {
     pub hash: String,
 }
 
+impl From<&AuditEntry> for SnapshotAuditEntry {
+    fn from(e: &AuditEntry) -> Self {
+        SnapshotAuditEntry {
+            seq: e.seq,
+            ts: e.ts.clone(),
+            op: e.op.clone(),
+            payload: e.payload.clone(),
+            prev_hash: e.prev_hash.clone(),
+            hash: e.hash.clone(),
+        }
+    }
+}
+
+impl From<&SnapshotAuditEntry> for AuditEntry {
+    fn from(e: &SnapshotAuditEntry) -> Self {
+        AuditEntry {
+            seq: e.seq,
+            ts: e.ts.clone(),
+            op: e.op.clone(),
+            payload: e.payload.clone(),
+            prev_hash: e.prev_hash.clone(),
+            hash: e.hash.clone(),
+        }
+    }
+}
+
 /// Append-only, hash-chained audit log. Each entry's `hash` binds the full
 /// entry (`seq|ts|op|payload|prev_hash`), and `prev_hash` binds the previous
 /// entry's hash — so altering any entry breaks every later link
@@ -205,6 +231,22 @@ impl AuditLog {
     /// intact.
     pub fn from_entries(entries: Vec<AuditEntry>) -> Self {
         AuditLog { entries }
+    }
+
+    /// The log's entries in the snapshot transport form, oldest first.
+    pub fn snapshot_entries(&self) -> Vec<SnapshotAuditEntry> {
+        self.entries.iter().map(SnapshotAuditEntry::from).collect()
+    }
+
+    /// Rebuild a log from snapshot transport entries. An empty slice yields
+    /// a fresh genesis log — snapshots written before the audit trail was
+    /// carried cannot reconstruct their chain.
+    pub fn from_snapshot_entries(entries: &[SnapshotAuditEntry]) -> Self {
+        if entries.is_empty() {
+            AuditLog::new()
+        } else {
+            AuditLog::from_entries(entries.iter().map(AuditEntry::from).collect())
+        }
     }
 
     /// Append an op. `payload` is a JSON string (caller-serialized). Returns
@@ -364,47 +406,83 @@ impl Store {
         Ok(Store { conn })
     }
 
-    /// Insert a graph in a single transaction. Nodes and edges are
+    /// Insert a graph, committing in fixed-size chunks. Nodes and edges are
     /// `INSERT OR IGNORE` — re-inserting an already-stored graph is a no-op
     /// and `InsertStats` reports only rows actually written.
+    ///
+    /// Chunking (50k rows per transaction) keeps the rollback journal bounded
+    /// on very large graphs: one giant transaction grows the journal to
+    /// gigabytes and turns a mid-insert crash into a total loss. Because every
+    /// row is `INSERT OR IGNORE`, a crash between chunks leaves a partial
+    /// graph that a re-run completes idempotently — no duplicate rows, and
+    /// the reported counts stay exact.
     pub fn insert_graph(&mut self, graph: &Graph) -> Result<InsertStats, StoreError> {
-        let tx = self.conn.transaction()?;
-        let mut nodes = 0usize;
-        let mut edges = 0usize;
-        {
-            let mut ns = tx.prepare(
-                "INSERT OR IGNORE INTO nodes(id, kind, label, file, line, col, tier, defines_json, refs_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            )?;
-            for n in graph.nodes() {
-                nodes += ns.execute(rusqlite::params![
-                    n.id,
-                    node_kind_str(n.kind),
-                    n.label,
-                    n.loc.file,
-                    n.loc.line as i64,
-                    n.loc.column.map(|c| c as i64),
-                    tier_str(n.tier),
-                    serde_json::to_string(&n.defines)?,
-                    serde_json::to_string(&n.refs)?,
-                ])?;
+        /// Rows per transaction: bounds the rollback journal on huge graphs.
+        const CHUNK_ROWS: usize = 50_000;
+        let mut stats = InsertStats { nodes: 0, edges: 0 };
+
+        // Nodes, in chunks. `graph` is frozen, so iteration order is stable
+        // across the skip/take windows below.
+        let mut done = 0usize;
+        loop {
+            let tx = self.conn.transaction()?;
+            let mut n = 0usize;
+            {
+                let mut st = tx.prepare(
+                    "INSERT OR IGNORE INTO nodes(id, kind, label, file, line, col, tier, defines_json, refs_json)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                )?;
+                for node in graph.nodes().skip(done).take(CHUNK_ROWS) {
+                    stats.nodes += st.execute(rusqlite::params![
+                        node.id,
+                        node_kind_str(node.kind),
+                        node.label,
+                        node.loc.file,
+                        node.loc.line as i64,
+                        node.loc.column.map(|c| c as i64),
+                        tier_str(node.tier),
+                        serde_json::to_string(&node.defines)?,
+                        serde_json::to_string(&node.refs)?,
+                    ])?;
+                    n += 1;
+                }
             }
-            let mut es = tx.prepare(
-                "INSERT OR IGNORE INTO edges(from_id, to_id, kind, line, attrs_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-            )?;
-            for e in graph.edges() {
-                edges += es.execute(rusqlite::params![
-                    e.from,
-                    e.to,
-                    e.kind.as_str(),
-                    e.line.map(|l| l as i64),
-                    serde_json::to_string(&e.attrs)?,
-                ])?;
+            tx.commit()?;
+            done += n;
+            if n < CHUNK_ROWS {
+                break;
             }
         }
-        tx.commit()?;
-        Ok(InsertStats { nodes, edges })
+
+        // Edges, in chunks.
+        let mut done = 0usize;
+        loop {
+            let tx = self.conn.transaction()?;
+            let mut n = 0usize;
+            {
+                let mut st = tx.prepare(
+                    "INSERT OR IGNORE INTO edges(from_id, to_id, kind, line, attrs_json)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                )?;
+                for e in graph.edges().skip(done).take(CHUNK_ROWS) {
+                    stats.edges += st.execute(rusqlite::params![
+                        e.from,
+                        e.to,
+                        e.kind.as_str(),
+                        e.line.map(|l| l as i64),
+                        serde_json::to_string(&e.attrs)?,
+                    ])?;
+                    n += 1;
+                }
+            }
+            tx.commit()?;
+            done += n;
+            if n < CHUNK_ROWS {
+                break;
+            }
+        }
+
+        Ok(stats)
     }
 
     /// Look up one node by id. `Ok(None)` when the id is not stored.
@@ -451,6 +529,7 @@ impl Store {
             nodes,
             edges,
             audit_head: String::new(),
+            audit_log: Vec::new(),
         };
         Ok(snap.to_graph())
     }

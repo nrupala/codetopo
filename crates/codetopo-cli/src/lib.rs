@@ -13,6 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
+use codetopo_core::snapshot::SnapshotAuditEntry;
 use codetopo_core::{EdgeKind, Graph, GraphBuilder, Node, NodeKind, PathStep, Snapshot};
 use codetopo_extract::{extract_file, is_supported};
 use codetopo_store::{hmac_proof, AuditLog, InsertStats, Store};
@@ -185,7 +186,7 @@ pub fn index_repo(
 
     // 6. Optional snapshot (+ proof when a key is available).
     if let Some(sp) = snapshot_path {
-        write_snapshot_file(&graph, audit.head(), sp, hmac_key)?;
+        write_snapshot_file(&graph, &audit.snapshot_entries(), sp, hmac_key)?;
     }
 
     // 7. Aggregate-first output.
@@ -209,17 +210,17 @@ pub fn index_repo(
 // snapshot / restore
 // ---------------------------------------------------------------------------
 
-/// Write `Snapshot::from_graph(graph, audit_head)` as pretty JSON to `out`.
+/// Write `Snapshot::from_graph(graph, audit_log)` as pretty JSON to `out`.
 /// When `hmac_key` is present, also write `<out>.proof` containing
 /// `hmac_proof(key, snapshot_json)`; otherwise a stderr note records that the
 /// snapshot ships without a proof.
 pub fn write_snapshot_file(
     graph: &Graph,
-    audit_head: &str,
+    audit_log: &[SnapshotAuditEntry],
     out: &Path,
     hmac_key: Option<&[u8]>,
 ) -> Result<(), CliError> {
-    let json = Snapshot::from_graph(graph, audit_head).to_json_pretty()?;
+    let json = Snapshot::from_graph(graph, audit_log).to_json_pretty()?;
     std::fs::write(out, &json)?;
     match hmac_key {
         Some(key) => {
@@ -237,21 +238,25 @@ pub fn snapshot_db(db_path: &Path, out: &Path, hmac_key: Option<&[u8]>) -> Resul
     let store = Store::open(db_path)?;
     let graph = store.load_graph()?;
     let audit = store.load_audit()?;
-    write_snapshot_file(&graph, audit.head(), out, hmac_key)?;
+    write_snapshot_file(&graph, &audit.snapshot_entries(), out, hmac_key)?;
     println!("snapshot written: {}", out.display());
     Ok(())
 }
 
 /// Restore a snapshot JSON file into a (fresh) store at `db_path`.
+/// The snapshot's audit trail is replayed verbatim, so the restored database
+/// binds the same audit head the snapshot was exported under.
 /// Returns the insert stats; prints the round-trip counts.
 pub fn restore_snapshot(
     snapshot_path: &Path,
     db_path: &Path,
 ) -> Result<InsertStats, CliError> {
     let data = std::fs::read_to_string(snapshot_path)?;
-    let graph = Snapshot::from_json(&data)?.to_graph();
+    let snap = Snapshot::from_json(&data)?;
+    let graph = snap.to_graph();
     let mut store = Store::open(db_path)?;
     let stats = store.insert_graph(&graph)?;
+    store.save_audit(&AuditLog::from_snapshot_entries(&snap.audit_log))?;
     println!("restored nodes: {}", stats.nodes);
     println!("restored edges: {}", stats.edges);
     Ok(stats)

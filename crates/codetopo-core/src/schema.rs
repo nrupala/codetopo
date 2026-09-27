@@ -118,19 +118,14 @@ impl fmt::Display for EdgeKind {
 /// version, so nodes built from extractor output default to `Optional`
 /// ("not classified by the extractor") rather than inventing a priority.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Default,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {
     Core,
     Recommended,
+    #[default]
     Optional,
-}
-
-impl Default for Tier {
-    fn default() -> Self {
-        Tier::Optional
-    }
 }
 
 /// Source location: file + 1-based line, optional column.

@@ -62,6 +62,14 @@ pub struct GraphBuilder {
     diagnostics: Vec<Diagnostic>,
     /// Target names already reported as unresolved (dedupe per build).
     unresolved_reported: HashSet<String>,
+    /// Last `::`-segment → node ids. Powers suffix-match candidate lookup in
+    /// [`GraphBuilder::resolve`]: for any id that is not an exact match,
+    /// `id.ends_with("::{name}")` holds iff the last `::`-segment equals
+    /// `name`, so the index returns exactly the same candidate set the old
+    /// full node scan did — but in O(candidates) instead of O(all nodes).
+    /// Ids without `::` (package roots) can never match a `::{name}` suffix
+    /// and are not indexed.
+    name_index: HashMap<String, Vec<String>>,
 }
 
 impl GraphBuilder {
@@ -78,6 +86,7 @@ impl GraphBuilder {
             edge_seen: HashSet::new(),
             diagnostics: Vec::new(),
             unresolved_reported: HashSet::new(),
+            name_index: HashMap::new(),
         }
     }
 
@@ -412,27 +421,28 @@ impl GraphBuilder {
 
     /// Resolve a call/ref name to a node id:
     /// 1. exact symbol-id match;
-    /// 2. `::{name}` suffix match preferring the same module, then the same
-    ///    package, then any — deterministic: lexicographically first within a
-    ///    preference tier; external stubs lose to real nodes;
+    /// 2. `::{name}` suffix match — deterministic ranking: same module first,
+    ///    then same package, then the rest; within each tier symbol kinds
+    ///    (Function, Method, Class, Interface, Variable) beat container kinds
+    ///    (Module, File, Package), which beat External/Doc nodes; the
+    ///    lexicographic id breaks any remaining tie;
     /// 3. `None` (caller decides: stub + diagnostic, or silent).
     fn resolve(&self, from_id: &str, name: &str) -> Option<String> {
         if self.nodes.contains_key(name) {
             return Some(name.to_string());
         }
-        let suffix = format!("::{}", name);
         let module = self.symbol_module.get(from_id);
         let package = module.and_then(|m| self.module_package.get(m));
         let module_prefix = module.map(|m| format!("{}::", m));
         let package_prefix = package.map(|p| format!("{}::", p));
-        // tiers[0] = same module, tiers[1] = same package, tiers[2] = rest
-        // (external stubs sink to the bottom of tier 2 via the sort key).
-        let mut tiers: [Vec<(&String, bool)>; 3] = [Vec::new(), Vec::new(), Vec::new()];
-        for id in self.nodes.keys() {
-            if !id.ends_with(&suffix) {
-                continue;
-            }
-            let is_external = self.nodes[id].kind == NodeKind::External;
+        // tiers[0] = same module, tiers[1] = same package, tiers[2] = rest.
+        let mut tiers: [Vec<(&String, u8)>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+        // Candidate set: ids whose last `::`-segment is `name`. Exact-match
+        // ids (step 1) already returned, and `::`-less ids never match a
+        // `::{name}` suffix, so this is exactly the old scan's set.
+        let empty: Vec<String> = Vec::new();
+        let candidates = self.name_index.get(name).unwrap_or(&empty);
+        for id in candidates {
             let tier = if module_prefix.as_ref().is_some_and(|p| id.starts_with(p)) {
                 0
             } else if package_prefix.as_ref().is_some_and(|p| id.starts_with(p)) {
@@ -440,14 +450,30 @@ impl GraphBuilder {
             } else {
                 2
             };
-            tiers[tier].push((id, is_external));
+            tiers[tier].push((id, Self::node_kind_rank(self.nodes[id].kind)));
         }
         tiers.iter_mut().find_map(|t| {
-            // Real nodes before external stubs, then lexicographic — fully
-            // deterministic.
+            // Symbol kinds before containers, External/Doc last, then
+            // lexicographic id — fully deterministic.
             t.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(b.0)));
             t.first().map(|(id, _)| (*id).clone())
         })
+    }
+
+    /// Rank of a node kind for suffix-match tie-breaking in
+    /// [`GraphBuilder::resolve`]: a call targets a *symbol*, so symbol kinds
+    /// sort first; container kinds (module/file/package) next; External and
+    /// Doc nodes — which never host calls — last.
+    fn node_kind_rank(kind: NodeKind) -> u8 {
+        match kind {
+            NodeKind::Function
+            | NodeKind::Method
+            | NodeKind::Class
+            | NodeKind::Interface
+            | NodeKind::Variable => 0,
+            NodeKind::Module | NodeKind::File | NodeKind::Package => 1,
+            NodeKind::External | NodeKind::Doc => 2,
+        }
     }
 
     /// Tarjan SCC over calls+imports edges. Returns each cyclic component
@@ -485,7 +511,7 @@ impl GraphBuilder {
             // Clone the neighbor list to end the immutable borrow of `st`
             // before recursing with `&mut st`.
             let neighbors: Vec<&'a str> =
-                st.adj.get(v).map(|n| n.clone()).unwrap_or_default();
+                st.adj.get(v).cloned().unwrap_or_default();
             for w in neighbors {
                 if !st.index.contains_key(w) {
                     strongconnect(w, st);
@@ -535,13 +561,29 @@ impl GraphBuilder {
 
     /// Insert a node, keeping the first node ever registered under an id.
     fn ensure_node(&mut self, node: Node) {
-        self.nodes.entry(node.id.clone()).or_insert(node);
+        if self.nodes.contains_key(&node.id) {
+            return;
+        }
+        self.index_name(&node.id);
+        self.nodes.insert(node.id.clone(), node);
+    }
+
+    /// Index a node id by its last `::`-segment for suffix-match lookup.
+    /// Ids without `::` can never match a `::{name}` suffix; they are
+    /// skipped so the index returns exactly the old scan's candidate set.
+    fn index_name(&mut self, id: &str) {
+        if id.contains("::") {
+            if let Some(seg) = id.rsplit("::").next() {
+                self.name_index.entry(seg.to_string()).or_default().push(id.to_string());
+            }
+        }
     }
 
     /// Create an `external::{name}` stub node if absent. External nodes mark
     /// the dependency boundary (CODE_SCHEMA §2); loc is empty (no source).
     fn ensure_external(&mut self, id: &str, label: &str) {
         if !self.nodes.contains_key(id) {
+            self.index_name(id);
             self.nodes.insert(
                 id.to_string(),
                 Node {
@@ -1169,10 +1211,19 @@ mod tests {
 
     #[test]
     fn snapshot_round_trip_preserves_graph() {
-        use crate::snapshot::Snapshot;
+        use crate::snapshot::{Snapshot, SnapshotAuditEntry};
         let (g, _) = diamond_builder().build();
-        let snap = Snapshot::from_graph(&g, "audit-head-123");
+        let entries = vec![SnapshotAuditEntry {
+            seq: 0,
+            ts: "2026-09-26T00:00:00Z".to_string(),
+            op: "genesis".to_string(),
+            payload: "{}".to_string(),
+            prev_hash: "GENESIS".to_string(),
+            hash: "audit-head-123".to_string(),
+        }];
+        let snap = Snapshot::from_graph(&g, &entries);
         assert_eq!(snap.schema_version, "1.0-draft");
+        assert_eq!(snap.audit_log, entries);
         let json = snap.to_json_pretty().expect("serialize");
         let snap2 = Snapshot::from_json(&json).expect("deserialize");
         assert_eq!(snap2.audit_head, "audit-head-123");
@@ -1198,5 +1249,41 @@ mod tests {
             ],
         };
         assert_eq!(d.to_string(), "multi-definition of 's': a.rs:1, b.rs:2:3");
+    }
+
+    /// Regression (W5): call `b()` from `fixture::a::a` resolved to the
+    /// MODULE node `fixture::b` (lexicographically first suffix match)
+    /// instead of the FUNCTION `fixture::b::b`. Suffix-match tie-breaking
+    /// now ranks symbol kinds before container kinds.
+    #[test]
+    fn suffix_match_prefers_function_over_module() {
+        let mut b = GraphBuilder::new();
+        b.add_file(file(
+            "fixture",
+            "a.rs",
+            "fixture::a",
+            vec![sym("fixture::a::a", NodeKind::Function, 1)],
+            vec![],
+            vec![call("fixture::a::a", "b", 2)],
+        ));
+        b.add_file(file(
+            "fixture",
+            "b.rs",
+            "fixture::b",
+            vec![sym("fixture::b::b", NodeKind::Function, 10)],
+            vec![],
+            vec![],
+        ));
+        let (g, diags) = b.build();
+        assert!(diags.is_empty(), "expected no diagnostics, got {:?}", diags);
+        let calls: Vec<_> = g
+            .edges()
+            .filter(|e| e.kind == EdgeKind::Calls && e.from == "fixture::a::a")
+            .collect();
+        assert_eq!(calls.len(), 1, "exactly one calls edge from fixture::a::a");
+        assert_eq!(
+            calls[0].to, "fixture::b::b",
+            "call b() must resolve to the function, not the module"
+        );
     }
 }
