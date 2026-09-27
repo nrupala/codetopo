@@ -114,11 +114,11 @@ returned when `expand=true`). CLI parity was used as the tie-breaker.
 ## `mcp-tools.json`
 
 The verbatim `result.tools` payload of a JSON-RPC `tools/list` call against
-`codetopo-mcp` over stdio. Seven tools:
+`codetopo-mcp` over stdio. Eight tools:
 
 `codetopo_index`, `codetopo_descendants`, `codetopo_ancestors`,
 `codetopo_blast_radius`, `codetopo_path`, `codetopo_stats`,
-`codetopo_verify`
+`codetopo_verify`, `codetopo_snapshot`
 
 Regenerate with:
 
@@ -131,7 +131,7 @@ printf '%s\n' \
 
 ### How the two surfaces line up
 
-Every MCP tool has an HTTP twin except one:
+Every MCP tool has an HTTP twin:
 
 | MCP tool | HTTP equivalent |
 |---|---|
@@ -142,13 +142,19 @@ Every MCP tool has an HTTP twin except one:
 | `codetopo_path` | `GET /v1/graphs/{id}/path` |
 | `codetopo_stats` | `GET /v1/graphs/{id}/stats` |
 | `codetopo_verify` | `GET /v1/graphs/{id}/verify` |
-| — | `GET /v1/graphs/{id}/snapshot` |
+| `codetopo_snapshot` | `GET /v1/graphs/{id}/snapshot` |
 
-The asymmetry is deliberate and runs in both directions. The MCP surface is
-not wrapped by auth because a stdio server is reached by spawning the
-process, which is its own authorisation; the HTTP surface is. Conversely,
-the full-graph export is a bulk endpoint that would blow past an agent's
-context window if returned as a tool result, so it is HTTP-only.
+The one asymmetry that remains runs in a single direction: the MCP surface is
+not wrapped by auth because a stdio server is reached by spawning the process,
+which is its own authorisation; the HTTP surface is. Both read through
+`codetopo-core`, so neither can answer differently from the other or from the
+CLI.
+
+Note that `codetopo_snapshot` returns a whole graph and is therefore the one
+tool that can be large — §8 of the design calls it the "JSON as universal export
+pathway" endpoint, not a query. It is exposed on both surfaces anyway, so an
+agent that wants the export has one spelling for it, and a client that wants it
+on disk can have the same object either way.
 
 One more deliberate difference: MCP tools take `db_path` and read the index
 straight off disk, so the caller chooses which graph to answer from. HTTP

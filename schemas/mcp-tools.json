@@ -180,6 +180,22 @@
         "type": "object"
       },
       "name": "codetopo_verify"
+    },
+    {
+      "description": "Export the whole graph as a portable snapshot, bound to the audit head.",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "db_path"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_snapshot"
     }
   ]
 }
