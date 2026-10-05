@@ -37,3 +37,15 @@ Every new source file carries the AGPL header plus attribution:
 (Adjust comment syntax per file type.) `schemas/` stays Apache-2.0. Never copy
 third-party code into the repo — implement against public specs and use
 official dependencies instead.
+
+## Portfolio certification — PR-flow discipline
+
+- All changes land via **draft PR** — never push directly to `main`.
+- PR flow: draft PR → `cargo build` + clippy (zero warnings) + `cargo test`
+  fully green → the owner merges.
+- Every PR adds a `CHANGELOG.md` entry under `## [Unreleased]` and bumps
+  semver: patch for fixes/chores, minor for features. Bumps touch
+  `crates/*/Cargo.toml` and the matching `Cargo.lock` entries.
+- Merge commits reference the PR number. Releases are tagged `vX.Y.Z`.
+- Docs-only PRs don't need test runs, but every build/test command in the
+  docs must be verified against the repo (or marked unverified).

@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+
+- **Portfolio certification rollout.** `CONTRIBUTING.md` now documents
+  the PR-flow discipline (draft PR → tests green → owner merges;
+  every PR adds a CHANGELOG entry under Unreleased and bumps crate
+  versions; merge commits reference PR numbers; releases tagged
+  `vX.Y.Z`). All seven crates bumped `0.2.0` → `0.2.1`.
+
 ## [0.2.0] — 2026-10-05
 
 First public release.
