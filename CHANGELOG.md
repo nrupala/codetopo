@@ -6,6 +6,28 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **Extractor conformance (final-shape W4).** The graph now carries
+  the schema's full edge vocabulary:
+  - *Reads/writes are first-class.* A resolved ref is a `reads` edge
+    and an assignment target is a `writes` edge — before this, reads
+    hid inside `references` edges with a `kind: "read"` attribute,
+    invisible to kind-walking queries (blast radius included).
+    CODE_SCHEMA §4 amended accordingly (dated amendment note);
+    `references` remains restorable from older snapshots.
+  - *Heritage edges.* Rust `impl Trait for Type` → `implements`,
+    trait supertraits → `inherits`; TypeScript `extends` /
+    `implements` clauses likewise. New emit channel
+    (`FileSymbols.heritage`) resolved by the builder.
+  - *Tiers classify.* By node kind in the builder — skeleton
+    (package/module/file) `core`, type declarations `recommended`,
+    the rest `optional` — instead of every node carrying the default.
+  - *More of the tree is seen:* `.mjs` / `.cjs` files, Markdown
+    files as `doc` nodes, Rust type aliases and TS enums / type
+    aliases as type symbols.
+  - Verified on this repo's own code: 1,932 reads edges, writes,
+    19 doc nodes, tiers distributed — and zero `implements` edges,
+    correctly: every impl in this codebase targets an external trait.
+  (No version bump in this PR — W2 owns the next one.)
 - **Proof certificates v2 + standalone verification (final-shape W2).**
   Snapshot certificates now carry a serial number, issuer, signer-key
   fingerprint, and a signed one-year validity window; an expired

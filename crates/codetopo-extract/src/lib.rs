@@ -47,7 +47,7 @@ pub enum ExtractError {
 }
 
 /// File extensions this crate can extract (case-insensitive).
-const SUPPORTED: &[&str] = &["rs", "ts", "tsx", "js", "jsx", "mts", "cts"];
+const SUPPORTED: &[&str] = &["rs", "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "md"];
 
 /// True when `path` names a file this crate can extract.
 pub fn is_supported(path: &Path) -> bool {
@@ -87,10 +87,61 @@ pub fn extract_file(
         .unwrap_or_default();
     match ext.as_str() {
         "rs" => rust::extract(package, rel_path, source),
+        // Markdown is documentation, not code: it enters the graph as a
+        // single Doc node so docs sit in the map next to what they
+        // describe (CODE_SCHEMA §2 has the kind; nothing emitted it).
+        "md" => Ok(extract_doc(package, rel_path)),
         // `.tsx`/`.jsx` need the TSX grammar (JSX syntax); the rest of the
         // JS/TS family parses with the plain TypeScript grammar.
         "tsx" | "jsx" => ts::extract(package, rel_path, source, true),
         _ => ts::extract(package, rel_path, source, false),
+    }
+}
+
+/// A Markdown file as one Doc symbol. The module id follows the Rust
+/// convention loosely (`docs/guide.md` -> `{pkg}::docs::guide`); the
+/// symbol id appends the file stem once more so it cannot collide with
+/// the module node. Content is not parsed — a doc node marks presence
+/// and place, and the file text stays the documentation itself.
+fn extract_doc(package: &str, rel_path: &Path) -> FileSymbols {
+    let file = display_path(rel_path);
+    let stem = rel_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("doc")
+        .to_string();
+    let mut comps: Vec<String> = rel_path
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => s.to_str().map(|s| s.to_string()),
+            _ => None,
+        })
+        .collect();
+    if let Some(last) = comps.last_mut() {
+        *last = stem.clone();
+    }
+    let module_id = if comps.is_empty() {
+        package.to_string()
+    } else {
+        format!("{}::{}", package, comps.join("::"))
+    };
+    FileSymbols {
+        package: package.to_string(),
+        file,
+        module_id: module_id.clone(),
+        symbols: vec![codetopo_core::RawSymbol {
+            id: format!("{module_id}::{stem}"),
+            kind: codetopo_core::NodeKind::Doc,
+            label: stem,
+            line: 1,
+            column: None,
+            defines: Vec::new(),
+            refs: Vec::new(),
+            writes: Vec::new(),
+        }],
+        imports: Vec::new(),
+        calls: Vec::new(),
+        heritage: Vec::new(),
     }
 }
 
@@ -130,7 +181,7 @@ mod tests {
 
     #[test]
     fn supported_extensions() {
-        for ext in ["rs", "ts", "tsx", "js", "jsx", "mts", "cts", "RS", "TS"] {
+        for ext in ["rs", "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "md", "RS", "TS"] {
             assert!(
                 is_supported(Path::new(&format!("a/b.{ext}"))),
                 "{ext} should be supported"
@@ -140,13 +191,22 @@ mod tests {
 
     #[test]
     fn unsupported_extensions() {
-        for ext in ["py", "go", "md", "toml", "json", ""] {
+        for ext in ["py", "go", "toml", "json", ""] {
             assert!(
                 !is_supported(Path::new(&format!("a/b.{ext}"))),
                 "{ext} should not be supported"
             );
         }
         assert!(!is_supported(Path::new("Makefile")));
+    }
+
+    #[test]
+    fn markdown_extracts_as_a_doc_node() {
+        let fs = extract_file("pkg", Path::new("docs/guide.md"), "# Guide\n").unwrap();
+        assert_eq!(fs.symbols.len(), 1);
+        assert_eq!(fs.symbols[0].kind, codetopo_core::NodeKind::Doc);
+        assert_eq!(fs.symbols[0].label, "guide");
+        assert_eq!(fs.module_id, "pkg::docs::guide");
     }
 
     #[test]

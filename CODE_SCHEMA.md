@@ -45,7 +45,7 @@ any code, versioned independently of any implementation.
 - `kind` — one of the node kinds above
 - `label` — human short name
 - `loc` — file + line (1-based); column optional
-- `tier` — `core` | `recommended` | `optional` (queryable priority, never a dash pattern)
+- `tier` — `core` | `recommended` | `optional` (queryable priority, never a dash pattern). Classified by kind in the builder, identically for every surface: the package/module/file skeleton is `core`, class/interface declarations are `recommended`, everything else is `optional`.
 - `defines` / `refs` — the marimo contract: symbols defined here, symbols referenced here
 
 Everything else (signatures, docstrings, complexity) is a derived view, not the write path.
@@ -59,12 +59,24 @@ Everything else (signatures, docstrings, complexity) is a derived view, not the 
 | `inherits` | class → class | `bases[]` |
 | `implements` | class → interface | `members[]` |
 | `defines` | any → symbol defined here | `line` |
-| `references` | any → symbol read here | `line`, `kind` (read/write) |
+| `references` | any → symbol (legacy: pre-2026-10 snapshots) | `line` |
 | `contains` | package → module → file → class → function | (none — pure hierarchy) |
-| `reads` / `writes` | function/method → variable | `line` |
+| `reads` / `writes` | any → symbol read / written here | `line` |
 
 No edge kind may carry attributes outside its row. Unknown relationships are
 `references`, never invented kinds — the schema grows by versioned amendment only.
+
+*Amendment 2026-10-10 (final-shape pass, PR: extractor conformance).* The
+table previously documented reads/writes two ways at once — as `references`
+edges carrying a `kind: read|write` attribute here, and as first-class edge
+kinds in §6's blast-radius definition. The first-class reading wins: the
+builder now emits `reads` for every resolved ref and `writes` for every
+resolved assignment target the extractors report, as their own kinds with
+no attributes. `references` remains in the kind set so snapshots written
+before this amendment restore unchanged; new graphs do not emit it.
+`inherits` / `implements` are likewise emitted for the first time, from
+heritage the extractors report (Rust `impl Trait for Type` and trait
+supertraits; TypeScript `extends` / `implements` clauses).
 
 ## 5. Well-formedness constraints
 

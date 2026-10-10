@@ -22,7 +22,7 @@ pub mod schema;
 pub mod snapshot;
 
 pub use diag::Diagnostic;
-pub use emit::{FileSymbols, RawCall, RawImport, RawSymbol};
+pub use emit::{FileSymbols, RawCall, RawHeritage, RawImport, RawSymbol};
 pub use graph::{Graph, GraphBuilder, PathStep, Subgraph};
 pub use schema::{Edge, EdgeKind, Loc, Node, NodeKind, Tier};
 pub use snapshot::Snapshot;
