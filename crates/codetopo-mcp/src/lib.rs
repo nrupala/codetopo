@@ -19,8 +19,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use codetopo_cli::{
-    index_repo, load_graph_from_db, node_kind_name, require_node, CliError, ALL_EDGE_KINDS,
-    ALL_NODE_KINDS,
+    describe_schema, index_repo, load_graph_from_db, node_kind_name, require_node, CliError,
+    ALL_EDGE_KINDS, ALL_NODE_KINDS,
 };
 use codetopo_core::snapshot::Snapshot;
 use codetopo_store::Store;
@@ -268,6 +268,49 @@ fn tool_catalog() -> Vec<Value> {
                 "required": ["db_path"],
             },
         }),
+        json!({
+            "name": "codetopo_neighborhood",
+            "description": "The subgraph within a few hops of a node, in both directions (contains/defines excluded).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "db_path": {"type": "string", "description": "Path to the index database."},
+                    "node": {"type": "string", "description": "Node id at the center."},
+                    "depth": {"type": "integer", "description": "Hops to walk (default 1)."},
+                },
+                "required": ["db_path", "node"],
+            },
+        }),
+        json!({
+            "name": "codetopo_get_symbol",
+            "description": "One node in full: kind, location, tier, defines and refs. Errors when the id is unknown.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "db_path": {"type": "string", "description": "Path to the index database."},
+                    "node": {"type": "string", "description": "Node id to fetch."},
+                },
+                "required": ["db_path", "node"],
+            },
+        }),
+        json!({
+            "name": "codetopo_search_symbols",
+            "description": "Find symbols by name (case-insensitive substring of the label) - the discovery step before the exact-id queries.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "db_path": {"type": "string", "description": "Path to the index database."},
+                    "query": {"type": "string", "description": "Name fragment to search for."},
+                    "limit": {"type": "integer", "description": "Maximum results (default 20)."},
+                },
+                "required": ["db_path", "query"],
+            },
+        }),
+        json!({
+            "name": "codetopo_describe_schema",
+            "description": "The schema this server speaks: node and edge kinds, tier rules, and the query vocabulary. Needs no database.",
+            "inputSchema": {"type": "object", "properties": {}, "required": []},
+        }),
     ]
 }
 
@@ -289,6 +332,10 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, ToolError> {
         "codetopo_stats" => tool_stats(args),
         "codetopo_verify" => tool_verify(args),
         "codetopo_snapshot" => tool_snapshot(args),
+        "codetopo_neighborhood" => tool_neighborhood(args),
+        "codetopo_get_symbol" => tool_get_symbol(args),
+        "codetopo_search_symbols" => tool_search_symbols(args),
+        "codetopo_describe_schema" => Ok(describe_schema()),
         other => Err(ToolError::UnknownTool(other.to_string())),
     }
 }
@@ -309,10 +356,7 @@ fn tool_index(args: &Value) -> Result<Value, ToolError> {
     // only identity the caller did not have to invent.
     let package = match optional_str(args, "package")? {
         Some(pkg) => pkg.to_string(),
-        None => repo_path
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().into_owned())
-            .unwrap_or_default(),
+        None => codetopo_cli::default_package_name(&repo_path),
     };
 
     // Snapshots and HMAC proofs are out of scope for the *index* step on the
@@ -533,6 +577,36 @@ pub fn handle_request(request: &Value) -> Option<Value> {
     }
 }
 
+fn tool_neighborhood(args: &Value) -> Result<Value, ToolError> {
+    let graph = open_graph(args)?;
+    let node = require_str(args, "node")?;
+    require_node(&graph, node).map_err(|_| ToolError::UnknownNode(node.to_string()))?;
+    let depth = args.get("depth").and_then(Value::as_u64).unwrap_or(1) as u32;
+    let sub = graph.neighborhood(node, depth);
+    Ok(json!({
+        "node": node,
+        "depth": depth,
+        "nodes": sub.nodes,
+        "edges": sub.edges,
+    }))
+}
+
+fn tool_get_symbol(args: &Value) -> Result<Value, ToolError> {
+    let graph = open_graph(args)?;
+    let node_id = require_str(args, "node")?;
+    let node = require_node(&graph, node_id)
+        .map_err(|_| ToolError::UnknownNode(node_id.to_string()))?;
+    serde_json::to_value(node).map_err(|e| ToolError::Cli(CliError::Json(e)))
+}
+
+fn tool_search_symbols(args: &Value) -> Result<Value, ToolError> {
+    let graph = open_graph(args)?;
+    let query = require_str(args, "query")?;
+    let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(20) as usize;
+    let hits = graph.search_symbols(query, limit);
+    Ok(json!({"query": query, "total": hits.len(), "results": hits}))
+}
+
 /// `tools/call`, including the parse-error case where there is no usable id.
 fn handle_tool_call(id: &Value, params: &Value) -> Value {
     let name = match params.get("name").and_then(Value::as_str) {
@@ -623,9 +697,9 @@ mod tests {
     // -- catalogue ---------------------------------------------------------
 
     #[test]
-    fn catalogue_lists_eight_tools() {
+    fn catalogue_lists_twelve_tools() {
         let catalog = tool_catalog();
-        assert_eq!(catalog.len(), 8, "expected 8 tools: {catalog:?}");
+        assert_eq!(catalog.len(), 12, "expected 12 tools: {catalog:?}");
 
         let names: Vec<&str> = catalog
             .iter()
@@ -642,6 +716,10 @@ mod tests {
                 "codetopo_stats",
                 "codetopo_verify",
                 "codetopo_snapshot",
+                "codetopo_neighborhood",
+                "codetopo_get_symbol",
+                "codetopo_search_symbols",
+                "codetopo_describe_schema",
             ]
         );
         for tool in &catalog {
@@ -994,7 +1072,7 @@ mod tests {
         assert_eq!(response["id"], 7);
         assert_eq!(
             response["result"]["tools"].as_array().expect("tools").len(),
-            8
+            12
         );
     }
 
@@ -1048,5 +1126,54 @@ mod tests {
     fn a_missing_jsonrpc_field_does_not_break_a_good_call() {
         let response = handle_line(r#"{"id":9,"method":"tools/list"}"#).expect("a response");
         assert_eq!(response["id"], 9);
+    }
+
+    #[test]
+    fn discovery_tools_search_fetch_and_describe() {
+        let (_dir, db_path) = fixture_index();
+        let node = a_function_id(&db_path);
+        let graph = load_graph_from_db(&db_path).expect("graph loads");
+        let label = graph.get(&node).expect("node").label.clone();
+
+        // search finds the function by its label fragment
+        let found = result_of(
+            "codetopo_search_symbols",
+            &args(&db_path, json!({"query": label})),
+        );
+        assert!(found["results"]
+            .as_array()
+            .expect("results")
+            .iter()
+            .any(|n| n["id"] == node));
+
+        // get_symbol returns the node itself; unknown ids are unknown_node
+        let fetched = result_of("codetopo_get_symbol", &args(&db_path, json!({"node": node})));
+        assert_eq!(fetched["id"], node);
+        let err = call_tool(
+            "codetopo_get_symbol",
+            &args(&db_path, json!({"node": "no::such::id"})),
+        )
+        .expect_err("unknown symbol must fail");
+        assert_eq!(err.code(), "unknown_node");
+
+        // neighborhood contains its center
+        let hood = result_of(
+            "codetopo_neighborhood",
+            &args(&db_path, json!({"node": node, "depth": 1})),
+        );
+        assert!(hood["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .any(|n| n["id"] == node));
+
+        // describe_schema needs no database at all
+        let schema = result_of("codetopo_describe_schema", &json!({}));
+        assert_eq!(schema["schema_version"], "1.0-draft");
+        assert!(schema["node_kinds"]
+            .as_array()
+            .expect("kinds")
+            .iter()
+            .any(|k| k == "function"));
     }
 }

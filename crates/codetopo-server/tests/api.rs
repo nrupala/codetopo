@@ -768,3 +768,107 @@ fn urlencode(value: &str) -> String {
     }
     out
 }
+
+
+// ---------------------------------------------------------------------------
+// (PR C) Discovery routes + unified package identity
+// ---------------------------------------------------------------------------
+
+/// The new read routes serve the same computations as the core walks,
+/// and `/v1/schema` answers without any index at all.
+#[tokio::test]
+async fn discovery_routes_match_the_core() {
+    let harness = Harness::new();
+
+    // schema needs no index
+    let (status, schema) = harness.get("/v1/schema").await;
+    assert_eq!(status, StatusCode::OK, "schema: {schema}");
+    assert_eq!(schema["schema_version"], "1.0-draft");
+    assert!(schema["node_kinds"]
+        .as_array()
+        .expect("node kinds")
+        .iter()
+        .any(|k| k == "function"));
+
+    let index_id = harness.index_fixture().await["index_id"]
+        .as_str()
+        .expect("index_id")
+        .to_string();
+    let graph = load_graph_from_db(&harness.db(&index_id)).expect("load graph");
+    let a_fn = graph
+        .nodes()
+        .find(|n| n.kind == codetopo_core::NodeKind::Function)
+        .expect("fixture has a function")
+        .clone();
+
+    // symbol: the full node, and 404 for an unknown id
+    let (status, body) = harness
+        .get(&format!("/v1/graphs/{index_id}/symbol?node={}", a_fn.id))
+        .await;
+    assert_eq!(status, StatusCode::OK, "symbol: {body}");
+    assert_eq!(body["node"]["id"], a_fn.id);
+    assert_eq!(body["node"]["label"], a_fn.label);
+    let (status, _) = harness
+        .get(&format!("/v1/graphs/{index_id}/symbol?node=no::such::id"))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "unknown symbol must 404");
+
+    // search: the function's own label finds it
+    let (status, body) = harness
+        .get(&format!("/v1/graphs/{index_id}/search?q={}", a_fn.label))
+        .await;
+    assert_eq!(status, StatusCode::OK, "search: {body}");
+    assert!(body["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .any(|n| n["id"] == a_fn.id));
+
+    // neighborhood: the center is present and the node set matches core
+    let (status, body) = harness
+        .get(&format!(
+            "/v1/graphs/{index_id}/neighborhood?node={}&depth=1",
+            a_fn.id
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK, "neighborhood: {body}");
+    let core = graph.neighborhood(&a_fn.id, 1);
+    let mut http_ids: Vec<&str> = body["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .map(|n| n["id"].as_str().expect("id"))
+        .collect();
+    let mut core_ids: Vec<&str> = core.nodes.iter().map(|n| n.id.as_str()).collect();
+    http_ids.sort_unstable();
+    core_ids.sort_unstable();
+    assert_eq!(http_ids, core_ids, "HTTP neighborhood == core neighborhood");
+}
+
+/// Indexing without a `package` must produce the same package identity
+/// as the CLI/MCP default — the repository directory's name — never the
+/// old server-only `unknown`.
+#[tokio::test]
+async fn default_package_matches_the_other_surfaces() {
+    let harness = Harness::new();
+    let repo = fixture_repo().to_string_lossy().to_string();
+    let (status, body) = harness
+        .send(
+            Method::POST,
+            "/v1/index",
+            Some(json!({ "repo_path": repo })),
+            Some(format!("Bearer {KEY_ID}:{SECRET}")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "index failed: {body}");
+    let index_id = body["index_id"].as_str().expect("index_id").to_string();
+    let graph = load_graph_from_db(&harness.db(&index_id)).expect("load graph");
+    assert!(
+        graph.nodes().any(|n| n.id.starts_with("fixture-repo::")),
+        "ids carry the directory name"
+    );
+    assert!(
+        !graph.nodes().any(|n| n.id.starts_with("unknown::")),
+        "no id may carry the retired 'unknown' package"
+    );
+}

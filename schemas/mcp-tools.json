@@ -7,7 +7,7 @@
     "protocolVersion": "2024-11-05",
     "serverInfo": {
       "name": "codetopo",
-      "version": "0.1.0"
+      "version": "0.2.3"
     }
   },
   "tools": [
@@ -196,6 +196,86 @@
         "type": "object"
       },
       "name": "codetopo_snapshot"
+    },
+    {
+      "description": "The subgraph within a few hops of a node, in both directions (contains/defines excluded).",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          },
+          "depth": {
+            "description": "Hops to walk (default 1).",
+            "type": "integer"
+          },
+          "node": {
+            "description": "Node id at the center.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "db_path",
+          "node"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_neighborhood"
+    },
+    {
+      "description": "One node in full: kind, location, tier, defines and refs. Errors when the id is unknown.",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          },
+          "node": {
+            "description": "Node id to fetch.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "db_path",
+          "node"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_get_symbol"
+    },
+    {
+      "description": "Find symbols by name (case-insensitive substring of the label) - the discovery step before the exact-id queries.",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum results (default 20).",
+            "type": "integer"
+          },
+          "query": {
+            "description": "Name fragment to search for.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "db_path",
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_search_symbols"
+    },
+    {
+      "description": "The schema this server speaks: node and edge kinds, tier rules, and the query vocabulary. Needs no database.",
+      "inputSchema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "codetopo_describe_schema"
     }
   ]
 }

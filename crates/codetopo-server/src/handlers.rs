@@ -34,7 +34,10 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use codetopo_cli::{index_repo, load_graph_from_db, render_path, CliError};
+use codetopo_cli::{
+    default_package_name, describe_schema, index_repo, load_graph_from_db, render_path,
+    require_node, CliError,
+};
 use codetopo_core::graph::{Graph, PathStep};
 use codetopo_core::schema::{EdgeKind, NodeKind};
 use codetopo_core::snapshot::Snapshot;
@@ -94,6 +97,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/graphs/:id/stats", get(stats))
         .route("/v1/graphs/:id/verify", get(verify))
         .route("/v1/graphs/:id/snapshot", get(snapshot))
+        .route("/v1/graphs/:id/neighborhood", get(neighborhood))
+        .route("/v1/graphs/:id/symbol", get(symbol))
+        .route("/v1/graphs/:id/search", get(search))
+        .route("/v1/schema", get(schema))
         .with_state(state)
 }
 
@@ -112,13 +119,12 @@ struct IndexRequest {
     package: Option<String>,
 }
 
-/// Package name recorded for the index when the request omits one.
-///
-/// The CLI has a `--package` flag with a caller-supplied value and no default
-/// worth inheriting here; `"unknown"` keeps the field populated (a node of kind
-/// `package` whose name is empty would be a lie) while being obviously not a
-/// real name.
-const UNKNOWN_PACKAGE: &str = "unknown";
+// Package name recorded for the index when the request omits one:
+// the shared default every surface uses
+// (`codetopo_cli::default_package_name` — the repository directory's
+// file stem). Before this was unified, the same fixture indexed as
+// `fixture-repo::…` via CLI/MCP but `unknown::…` here, so node ids —
+// and every query keyed on them — disagreed by surface.
 
 /// `POST /v1/index` — index a repository tree into a new index id.
 ///
@@ -147,8 +153,8 @@ async fn index(
         .as_deref()
         .map(str::trim)
         .filter(|raw| !raw.is_empty())
-        .unwrap_or(UNKNOWN_PACKAGE)
-        .to_string();
+        .map(str::to_string)
+        .unwrap_or_else(|| default_package_name(&repo));
 
     // §6: a UUID v4 rather than a repo name, so re-indexing the same tree does
     // not clobber the previous index and no customer directory layout leaks
@@ -612,6 +618,115 @@ async fn snapshot(
 // ---------------------------------------------------------------------------
 // shared helpers
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// GET /v1/graphs/{id}/neighborhood, /symbol, /search; GET /v1/schema
+// ---------------------------------------------------------------------------
+
+/// Query for `neighborhood`: the shared closure params plus `depth`.
+#[derive(Debug, Default, Deserialize)]
+struct NeighborhoodQuery {
+    node: Option<String>,
+    depth: Option<String>,
+}
+
+/// `GET /v1/graphs/{id}/neighborhood?node=&depth=` — the subgraph
+/// within `depth` hops of a node, both directions (CODE_SCHEMA §6's
+/// neighborhood query; the CLI and MCP serve the same computation).
+async fn neighborhood(
+    State(state): State<AppState>,
+    UrlPath(index_id): UrlPath<String>,
+    Query(query): Query<NeighborhoodQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let node = query
+        .node
+        .as_deref()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .ok_or_else(|| ApiError::missing_param("node"))?
+        .to_string();
+    let depth: u32 = match query.depth.as_deref().map(str::trim) {
+        None | Some("") => 1,
+        Some(raw) => raw.parse().map_err(|_| {
+            ApiError::invalid_param("depth", &format!("expected a non-negative integer, got '{raw}'"))
+        })?,
+    };
+    let db = state.db_path(&index_id);
+    let graph = load_graph_blocking(&db, &index_id)?;
+    require_node(&graph, &node).map_err(|e| map_cli_error(&index_id, e))?;
+    let sub = graph.neighborhood(&node, depth);
+    Ok(Json(json!({
+        "index_id": index_id,
+        "node": node,
+        "depth": depth,
+        "nodes": sub.nodes,
+        "edges": sub.edges,
+    })))
+}
+
+/// `GET /v1/graphs/{id}/symbol?node=` — one node in full.
+async fn symbol(
+    State(state): State<AppState>,
+    UrlPath(index_id): UrlPath<String>,
+    Query(query): Query<ClosureQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let node_id = query
+        .node
+        .as_deref()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .ok_or_else(|| ApiError::missing_param("node"))?
+        .to_string();
+    let db = state.db_path(&index_id);
+    let graph = load_graph_blocking(&db, &index_id)?;
+    let node = require_node(&graph, &node_id).map_err(|e| map_cli_error(&index_id, e))?;
+    Ok(Json(json!({"index_id": index_id, "node": node})))
+}
+
+/// Query for `search`.
+#[derive(Debug, Default, Deserialize)]
+struct SearchQuery {
+    q: Option<String>,
+    limit: Option<String>,
+}
+
+/// `GET /v1/graphs/{id}/search?q=&limit=` — name discovery: the step
+/// the exact-id queries always assumed a caller had already done.
+async fn search(
+    State(state): State<AppState>,
+    UrlPath(index_id): UrlPath<String>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let q = query
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .ok_or_else(|| ApiError::missing_param("q"))?
+        .to_string();
+    let limit: usize = match query.limit.as_deref().map(str::trim) {
+        None | Some("") => 20,
+        Some(raw) => raw.parse().map_err(|_| {
+            ApiError::invalid_param("limit", &format!("expected a positive integer, got '{raw}'"))
+        })?,
+    };
+    let db = state.db_path(&index_id);
+    let graph = load_graph_blocking(&db, &index_id)?;
+    let hits = graph.search_symbols(&q, limit);
+    Ok(Json(json!({
+        "index_id": index_id,
+        "query": q,
+        "total": hits.len(),
+        "results": hits,
+    })))
+}
+
+/// `GET /v1/schema` — the schema description, identical to the CLI's
+/// `schema` command and the MCP `codetopo_describe_schema` tool
+/// (one generator in the CLI library serves all three).
+async fn schema() -> Json<Value> {
+    Json(describe_schema())
+}
 
 /// Open an index database, mapping "no such file" to `unknown_index`.
 fn require_index(db: &FsPath, index_id: &str) -> Result<(), ApiError> {

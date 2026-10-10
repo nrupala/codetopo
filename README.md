@@ -31,6 +31,9 @@ cargo install --git https://github.com/nrupala/codetopo
 # Index a repository (Rust and TypeScript/JavaScript are parsed via tree-sitter)
 codetopo index ~/my-project --db graph.db
 
+# Find a symbol's id by name (every surface has this discovery step)
+codetopo search connect --db graph.db
+
 # Ask what calls what
 codetopo descendants myproject::net::Client::connect --db graph.db --expand
 ```
@@ -106,18 +109,21 @@ curl -H "Authorization: Bearer demo-key:change-me" \
 
 Eight endpoints under `/v1`, one index operation plus seven read-only
 queries: `POST /v1/index`, `GET /v1/graphs/{id}/{descendants, ancestors,
-blast-radius, path, stats, verify, snapshot}`. Full contract in
+blast-radius, path, stats, verify, snapshot, neighborhood, symbol,
+search}`, `GET /v1/schema`. Full contract in
 [`schemas/openapi.yaml`](schemas/openapi.yaml) (OpenAPI 3.1.0), env knobs
 (`CODETOPO_BIND`, `CODETOPO_DATA_DIR`, `CODETOPO_KEYS_FILE`,
 `CODETOPO_METERING_LOG`) documented in [`schemas/README.md`](schemas/README.md).
 
 ### MCP (`codetopo-mcp`)
 
-A stdio JSON-RPC server exposing the same handler layer as eight tools —
-`codetopo_index`, `codetopo_descendants`, `codetopo_ancestors`,
-`codetopo_blast_radius`, `codetopo_path`, `codetopo_stats`,
-`codetopo_verify`, `codetopo_snapshot` — so an in-process agent learns one
-surface and gets both. MCP answers are identical to the HTTP answers by
+A stdio JSON-RPC server exposing the same handler layer as twelve tools —
+the eight query/integrity tools (`codetopo_index`, `codetopo_descendants`,
+`codetopo_ancestors`, `codetopo_blast_radius`, `codetopo_path`,
+`codetopo_stats`, `codetopo_verify`, `codetopo_snapshot`) plus discovery
+(`codetopo_search_symbols`, `codetopo_get_symbol`,
+`codetopo_neighborhood`, `codetopo_describe_schema`) — so an in-process
+agent learns one surface and gets both. MCP answers are identical to the HTTP answers by
 construction: both call the same `codetopo-core` queries.
 
 ```json
