@@ -855,6 +855,7 @@ mod tests {
             column: None,
             defines: Vec::new(),
             refs: Vec::new(),
+            writes: Vec::new(),
         }
     }
 
@@ -876,6 +877,7 @@ mod tests {
                 RawCall { from_id: "t::m::d".to_string(), to_name: "b".to_string(), line: 2 },
                 RawCall { from_id: "t::m::b".to_string(), to_name: "e".to_string(), line: 11 },
             ],
+            heritage: Vec::new(),
         });
         let (g, diags) = b.build();
         assert!(diags.is_empty(), "test fixture must be clean: {:?}", diags);
@@ -899,6 +901,7 @@ mod tests {
             symbols: vec![sym("t::x::solo", NodeKind::Function, 1)],
             imports: Vec::new(),
             calls: Vec::new(),
+            heritage: Vec::new(),
         });
         let (g2, _) = b.build();
         let stats = store.replace_graph(&g2).unwrap();
@@ -1088,6 +1091,7 @@ mod tests {
                 line: 3,
             }],
             calls: Vec::new(),
+            heritage: Vec::new(),
         });
         let (g, diags) = b.build();
         assert!(diags.is_empty());

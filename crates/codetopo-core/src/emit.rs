@@ -20,8 +20,10 @@ use crate::schema::NodeKind;
 /// One symbol found in a file.
 ///
 /// Note: there is no `tier` field in this version of the contract — the
-/// builder assigns [`crate::schema::Tier::Optional`] ("not classified") and
-/// documents it. Symbol `id`s are taken verbatim as node ids.
+/// builder classifies tier by node kind (CODE_SCHEMA §2: the
+/// package/module/file skeleton is `core`, type declarations are
+/// `recommended`, everything else `optional`). Symbol `id`s are taken
+/// verbatim as node ids.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawSymbol {
     pub id: String,
@@ -33,10 +35,32 @@ pub struct RawSymbol {
     /// Symbols defined here (marimo contract).
     #[serde(default)]
     pub defines: Vec<String>,
-    /// Symbols referenced here (marimo contract). Each entry is resolved
-    /// best-effort into a `references` edge; unresolvable refs are silent.
+    /// Symbols referenced here (marimo contract). Each entry is a value
+    /// *read*; entries resolve best-effort into `reads` edges;
+    /// unresolvable refs are silent.
     #[serde(default)]
     pub refs: Vec<String>,
+    /// Symbols *written* here (assignment targets, by name). Each entry
+    /// resolves best-effort into a `writes` edge; unresolvable writes
+    /// are silent, like refs.
+    #[serde(default)]
+    pub writes: Vec<String>,
+}
+
+/// One inheritance or implementation claim found in a file: the named
+/// type (`type_name`) inherits from or implements the named target
+/// (`target_name`) — Rust `impl Trait for Type`, `trait A: B`, TS
+/// `class X extends Y` / `implements Z`, `interface A extends B`.
+/// Names resolve at build time with the same best-effort rules as
+/// refs; unresolvable heritage is silent. `kind` is only ever
+/// [`EdgeKind::Inherits`] or [`EdgeKind::Implements`] — the builder
+/// ignores anything else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RawHeritage {
+    pub type_name: String,
+    pub target_name: String,
+    pub kind: crate::schema::EdgeKind,
+    pub line: u32,
 }
 
 /// One module-level import statement.
@@ -77,4 +101,6 @@ pub struct FileSymbols {
     pub imports: Vec<RawImport>,
     #[serde(default)]
     pub calls: Vec<RawCall>,
+    #[serde(default)]
+    pub heritage: Vec<RawHeritage>,
 }

@@ -50,15 +50,16 @@ fn execute_intent_descendants_real_graph() {
     b.add_file(FileSymbols {
         package: "p".into(), file: "f.rs".into(), module_id: "m".into(),
         symbols: vec![
-            RawSymbol { id: "a".into(), kind: NodeKind::Function, label: "a".into(), line: 1, column: None, defines: vec![], refs: vec![] },
-            RawSymbol { id: "b".into(), kind: NodeKind::Function, label: "b".into(), line: 2, column: None, defines: vec![], refs: vec![] },
-            RawSymbol { id: "c".into(), kind: NodeKind::Function, label: "c".into(), line: 3, column: None, defines: vec![], refs: vec![] },
+            RawSymbol { id: "a".into(), kind: NodeKind::Function, label: "a".into(), line: 1, column: None, defines: vec![], refs: vec![], writes: vec![] },
+            RawSymbol { id: "b".into(), kind: NodeKind::Function, label: "b".into(), line: 2, column: None, defines: vec![], refs: vec![], writes: vec![] },
+            RawSymbol { id: "c".into(), kind: NodeKind::Function, label: "c".into(), line: 3, column: None, defines: vec![], refs: vec![], writes: vec![] },
         ],
         imports: vec![],
         calls: vec![
             RawCall { from_id: "a".into(), to_name: "b".into(), line: 1 },
             RawCall { from_id: "b".into(), to_name: "c".into(), line: 2 },
         ],
+        heritage: vec![],
     });
     let (graph, _diag) = b.build();
     let res = execute_intent(&graph, &Intent::Descendants("a".into()), None);
@@ -72,7 +73,7 @@ fn execute_intent_refuses_edit() {
     let mut b = GraphBuilder::new();
     b.add_file(FileSymbols {
         package: "p".into(), file: "f.rs".into(), module_id: "m".into(),
-        symbols: vec![], imports: vec![], calls: vec![],
+        symbols: vec![], imports: vec![], calls: vec![], heritage: vec![],
     });
     let (graph, _diag) = b.build();
     let res = execute_intent(&graph, &Intent::Edit("rename foo".into()), None);

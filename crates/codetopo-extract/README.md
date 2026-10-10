@@ -170,9 +170,10 @@ crates.io. Its 0.23 API exposes `LANGUAGE_TYPESCRIPT` / `LANGUAGE_TSX` as
 4. **Macros are opaque.** `macro_rules!` bodies and `macro_invocation`
    call sites are walked for plain `call_expression`s only; generated
    items are invisible.
-5. **`impl Trait for Type`** methods are scoped under the self type only;
-   the trait side is not recorded (no `implements` edge in this version of
-   the emit contract).
+5. **`impl Trait for Type`** methods are scoped under the self type, and
+   the trait side IS recorded: the emit contract carries heritage, so the
+   builder produces an `implements` edge (and `inherits` for trait
+   supertraits and TS `extends`).
 6. **defines/refs are heuristic.** Destructuring edge cases, `typeof`
    annotations, and identifiers inside skipped subtrees (nested items,
    JSX) may be missed or, rarely, misattributed.

@@ -16,8 +16,8 @@ use std::path::{Component, Path};
 
 use tree_sitter::{Node, Parser};
 
-use codetopo_core::emit::{FileSymbols, RawCall, RawImport, RawSymbol};
-use codetopo_core::schema::NodeKind;
+use codetopo_core::emit::{FileSymbols, RawCall, RawHeritage, RawImport, RawSymbol};
+use codetopo_core::schema::{EdgeKind, NodeKind};
 
 use crate::{children, display_path, line_of, text_of, ExtractError};
 
@@ -50,6 +50,7 @@ pub(crate) fn extract(
         symbols: Vec::new(),
         imports: Vec::new(),
         calls: Vec::new(),
+        heritage: Vec::new(),
     };
     for child in children(tree.root_node()) {
         w.walk(child);
@@ -61,6 +62,7 @@ pub(crate) fn extract(
         symbols: w.symbols,
         imports: w.imports,
         calls: w.calls,
+        heritage: w.heritage,
     })
 }
 
@@ -123,6 +125,7 @@ struct Walker<'a> {
     symbols: Vec<RawSymbol>,
     imports: Vec<RawImport>,
     calls: Vec<RawCall>,
+    heritage: Vec<RawHeritage>,
 }
 
 fn field_text(node: Node, field: &str, src: &[u8]) -> Option<String> {
@@ -144,8 +147,8 @@ impl<'a> Walker<'a> {
                     } else {
                         NodeKind::Function
                     };
-                    let (defines, refs) = self.fn_body_info(params, body);
-                    self.with_symbol(kind, &name, node, defines, refs, body, false);
+                    let (defines, refs, writes) = self.fn_body_info(params, body);
+                    self.with_symbol_writes(kind, &name, node, defines, refs, writes, body, false);
                 } else {
                     self.walk_children(node);
                 }
@@ -154,7 +157,7 @@ impl<'a> Walker<'a> {
                 // Trait method declaration (no body). Always a method.
                 if let Some(name) = field_text(node, "name", self.src) {
                     let params = node.child_by_field_name("parameters");
-                    let (defines, _) = self.fn_body_info(params, None);
+                    let (defines, _, _) = self.fn_body_info(params, None);
                     self.with_symbol(NodeKind::Method, &name, node, defines, vec![], None, false);
                 }
             }
@@ -169,10 +172,37 @@ impl<'a> Walker<'a> {
             }
             "trait_item" => {
                 if let Some(name) = field_text(node, "name", self.src) {
+                    // Supertraits (`trait A: B + C`) are inheritance.
+                    for child in children(node) {
+                        if child.kind() == "trait_bounds" {
+                            for bound in children(child) {
+                                if let Some(t) = self.base_type_name(bound) {
+                                    self.heritage.push(RawHeritage {
+                                        type_name: name.clone(),
+                                        target_name: t,
+                                        kind: EdgeKind::Inherits,
+                                        line: line_of(node),
+                                    });
+                                }
+                            }
+                        }
+                    }
                     let body = node.child_by_field_name("body");
                     let refs = self.body_refs(body);
                     // Interface scope: members walked with in_assoc set.
                     self.with_symbol(NodeKind::Interface, &name, node, vec![], refs, body, true);
+                } else {
+                    self.walk_children(node);
+                }
+            }
+            "type_item" => {
+                // Type alias: a type-level name, classified with the
+                // other type declarations (Class kind, per the
+                // extractor README's kind mapping).
+                if let Some(name) = field_text(node, "name", self.src) {
+                    let ty = node.child_by_field_name("type");
+                    let refs = self.body_refs(ty);
+                    self.with_symbol(NodeKind::Class, &name, node, vec![], refs, None, false);
                 } else {
                     self.walk_children(node);
                 }
@@ -230,6 +260,21 @@ impl<'a> Walker<'a> {
         body: Option<Node>,
         assoc_scope: bool,
     ) {
+        self.with_symbol_writes(kind, name, node, defines, refs, Vec::new(), body, assoc_scope);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn with_symbol_writes(
+        &mut self,
+        kind: NodeKind,
+        name: &str,
+        node: Node,
+        defines: Vec<String>,
+        refs: Vec<String>,
+        writes: Vec<String>,
+        body: Option<Node>,
+        assoc_scope: bool,
+    ) {
         self.path.push(name.to_string());
         let id = format!("{}::{}", self.module_id, self.path.join("::"));
         self.symbols.push(RawSymbol {
@@ -240,6 +285,7 @@ impl<'a> Walker<'a> {
             column: None,
             defines,
             refs,
+            writes,
         });
         self.enclosing.push(id);
         let saved = self.in_assoc;
@@ -254,8 +300,13 @@ impl<'a> Walker<'a> {
         self.path.pop();
     }
 
-    /// Parameter names → defines; identifier/type references in the body → refs.
-    fn fn_body_info(&self, params: Option<Node>, body: Option<Node>) -> (Vec<String>, Vec<String>) {
+    /// Parameter names → defines; identifier/type references in the
+    /// body → refs; assignment targets in the body → writes.
+    fn fn_body_info(
+        &self,
+        params: Option<Node>,
+        body: Option<Node>,
+    ) -> (Vec<String>, Vec<String>, Vec<String>) {
         let mut defines = Vec::new();
         if let Some(p) = params {
             for child in children(p) {
@@ -263,19 +314,23 @@ impl<'a> Walker<'a> {
             }
         }
         let mut refs = Vec::new();
+        let mut writes = Vec::new();
         if let Some(b) = body {
-            self.scan(b, &mut defines, &mut refs);
+            self.scan_w(b, &mut defines, &mut refs, &mut writes);
         }
         finalize(&mut defines, &mut refs);
-        (defines, refs)
+        writes.sort();
+        writes.dedup();
+        (defines, refs, writes)
     }
 
     /// Best-effort refs for a body with no defines of its own.
     fn body_refs(&self, body: Option<Node>) -> Vec<String> {
         let mut defines = Vec::new();
         let mut refs = Vec::new();
+        let mut writes = Vec::new();
         if let Some(b) = body {
-            self.scan(b, &mut defines, &mut refs);
+            self.scan_w(b, &mut defines, &mut refs, &mut writes);
         }
         finalize(&mut defines, &mut refs);
         refs
@@ -308,7 +363,7 @@ impl<'a> Walker<'a> {
     /// Walk a body collecting `let`-bound names into `defines` and other
     /// identifiers / type names into `refs`. Nested items are skipped: their
     /// bindings belong to their own symbols.
-    fn scan(&self, node: Node, defines: &mut Vec<String>, refs: &mut Vec<String>) {
+    fn scan_w(&self, node: Node, defines: &mut Vec<String>, refs: &mut Vec<String>, writes: &mut Vec<String>) {
         match node.kind() {
             "function_item" | "function_signature_item" | "struct_item" | "enum_item"
             | "union_item" | "trait_item" | "impl_item" | "mod_item" | "const_item"
@@ -320,8 +375,33 @@ impl<'a> Walker<'a> {
                 // The value and type can still reference outer names.
                 for field in ["value", "type"] {
                     if let Some(ch) = node.child_by_field_name(field) {
-                        self.scan(ch, defines, refs);
+                        self.scan_w(ch, defines, refs, writes);
                     }
+                }
+                return;
+            }
+            "assignment_expression" => {
+                // `target = value`: the target name is written, the
+                // value side is read. Field targets write the field.
+                if let Some(left) = node.child_by_field_name("left") {
+                    match left.kind() {
+                        "identifier" => {
+                            if let Some(t) = text_of(left, self.src) {
+                                writes.push(t.to_string());
+                            }
+                        }
+                        "field_expression" => {
+                            if let Some(f) = left.child_by_field_name("field") {
+                                if let Some(t) = text_of(f, self.src) {
+                                    writes.push(t.to_string());
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(right) = node.child_by_field_name("right") {
+                    self.scan_w(right, defines, refs, writes);
                 }
                 return;
             }
@@ -334,7 +414,7 @@ impl<'a> Walker<'a> {
             _ => {}
         }
         for child in children(node) {
-            self.scan(child, defines, refs);
+            self.scan_w(child, defines, refs, writes);
         }
     }
 
@@ -358,6 +438,17 @@ impl<'a> Walker<'a> {
         let name = self_ty
             .and_then(|t| self.base_type_name(t))
             .unwrap_or_else(|| "<unknown>".to_string());
+        // `impl Trait for Type` is an implementation claim.
+        if let Some(trait_node) = trait_node {
+            if let Some(trait_name) = self.base_type_name(trait_node) {
+                self.heritage.push(RawHeritage {
+                    type_name: name.clone(),
+                    target_name: trait_name,
+                    kind: EdgeKind::Implements,
+                    line: line_of(node),
+                });
+            }
+        }
         // The impl block itself is not a symbol; its type name scopes the methods.
         self.path.push(name);
         let saved = self.in_assoc;
@@ -657,6 +748,39 @@ pub fn ping(c: &Client) -> bool {
 
     fn ids(fs: &FileSymbols) -> Vec<(&str, NodeKind)> {
         fs.symbols.iter().map(|s| (s.id.as_str(), s.kind)).collect()
+    }
+
+    #[test]
+    fn rust_heritage_writes_and_type_alias() {
+        let src = r#"
+trait Store { fn get(&self); }
+struct Counter { n: u32 }
+impl Store for Counter { fn get(&self) {} }
+trait Read: Store {}
+static mut TOTAL: u32 = 0;
+fn bump() { TOTAL = 1; }
+type Count = u32;
+"#;
+        let fs = extract_file("mycrate", Path::new("src/h.rs"), src).unwrap();
+        assert!(
+            fs.heritage.iter().any(|h| h.type_name == "Counter"
+                && h.target_name == "Store"
+                && h.kind == EdgeKind::Implements),
+            "impl Trait for Type -> implements: {:?}",
+            fs.heritage
+        );
+        assert!(
+            fs.heritage.iter().any(|h| h.type_name == "Read"
+                && h.target_name == "Store"
+                && h.kind == EdgeKind::Inherits),
+            "trait supertrait -> inherits: {:?}",
+            fs.heritage
+        );
+        assert!(fs.symbols.iter().any(|s| s.label == "Count" && s.kind == NodeKind::Class),
+            "type alias extracted as a type symbol");
+        let bump = fs.symbols.iter().find(|s| s.label == "bump").expect("bump fn");
+        assert!(bump.writes.contains(&"TOTAL".to_string()),
+            "assignment target recorded as a write: {:?}", bump.writes);
     }
 
     #[test]

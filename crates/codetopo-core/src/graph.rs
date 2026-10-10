@@ -25,13 +25,27 @@ use crate::schema::{Edge, EdgeKind, Loc, Node, NodeKind, Tier};
 // GraphBuilder
 // ---------------------------------------------------------------------------
 
-/// A pending `defines`/`refs` entry: `(from_symbol_id, name, line)`.
-/// `is_defines` selects the edge kind at build time.
+/// A pending name-resolution entry: `(from_symbol_id, name, line)`,
+/// resolved at build time into an edge of `kind` — one of defines,
+/// reads, or writes.
 struct PendingRef {
     from: String,
     name: String,
     line: u32,
-    is_defines: bool,
+    kind: EdgeKind,
+}
+
+/// Tier classification by node kind (CODE_SCHEMA §2): the structural
+/// skeleton a reader navigates by is `core`; type declarations are
+/// `recommended`; everything else — functions, methods, variables,
+/// externals, docs — is `optional`. One rule, applied in the builder,
+/// so every surface reports the same tier for the same node.
+fn tier_for(kind: NodeKind) -> Tier {
+    match kind {
+        NodeKind::Package | NodeKind::Module | NodeKind::File => Tier::Core,
+        NodeKind::Class | NodeKind::Interface => Tier::Recommended,
+        _ => Tier::Optional,
+    }
 }
 
 /// Validate-then-apply builder for [`Graph`].
@@ -55,6 +69,7 @@ pub struct GraphBuilder {
     pending_imports: Vec<crate::emit::RawImport>,
     pending_calls: Vec<crate::emit::RawCall>,
     pending_refs: Vec<PendingRef>,
+    pending_heritage: Vec<crate::emit::RawHeritage>,
     /// All edges in deterministic insertion order.
     edges: Vec<Edge>,
     /// (from, to, kind) pairs already inserted — duplicate edges collapse.
@@ -82,6 +97,7 @@ impl GraphBuilder {
             pending_imports: Vec::new(),
             pending_calls: Vec::new(),
             pending_refs: Vec::new(),
+            pending_heritage: Vec::new(),
             edges: Vec::new(),
             edge_seen: HashSet::new(),
             diagnostics: Vec::new(),
@@ -106,8 +122,9 @@ impl GraphBuilder {
     ///   (within this file or across files) yields a [`Diagnostic::MultiDefinition`];
     ///   the first occurrence is kept and the duplicate is ignored wholesale
     ///   (no node, no contains edge, no calls/refs recorded for it).
-    /// - Symbols default to `Tier::Optional` — the extractor contract carries
-    ///   no tier, and we do not invent a priority.
+    /// - Tiers are classified by node kind in the builder (see
+    ///   [`tier_for`]): skeleton `core`, types `recommended`, the rest
+    ///   `optional` — one rule for every surface to agree on.
     /// - `RawImport.from_module_id` must be a known module, else an
     ///   [`Diagnostic::UnknownSymbol`] and the import is skipped. The import
     ///   edge itself is materialized at build time (see field docs).
@@ -141,7 +158,7 @@ impl GraphBuilder {
             kind: NodeKind::Package,
             label: package.clone(),
             loc: Loc { file: String::new(), line: 0, column: None },
-            tier: Tier::Optional,
+            tier: tier_for(NodeKind::Package),
             defines: Vec::new(),
             refs: Vec::new(),
         });
@@ -151,7 +168,7 @@ impl GraphBuilder {
             kind: NodeKind::Module,
             label: module_id.clone(),
             loc: Loc { file: fs.file.clone(), line: 1, column: None },
-            tier: Tier::Optional,
+            tier: tier_for(NodeKind::Module),
             defines: Vec::new(),
             refs: Vec::new(),
         });
@@ -160,7 +177,7 @@ impl GraphBuilder {
             kind: NodeKind::File,
             label: fs.file.clone(),
             loc: Loc { file: fs.file.clone(), line: 1, column: None },
-            tier: Tier::Optional,
+            tier: tier_for(NodeKind::File),
             defines: Vec::new(),
             refs: Vec::new(),
         });
@@ -203,7 +220,7 @@ impl GraphBuilder {
                 kind: s.kind,
                 label: s.label.clone(),
                 loc,
-                tier: Tier::Optional,
+                tier: tier_for(s.kind),
                 defines: s.defines.clone(),
                 refs: s.refs.clone(),
             });
@@ -219,7 +236,7 @@ impl GraphBuilder {
                     from: s.id.clone(),
                     name: d.clone(),
                     line: s.line,
-                    is_defines: true,
+                    kind: EdgeKind::Defines,
                 });
             }
             for r in &s.refs {
@@ -227,7 +244,15 @@ impl GraphBuilder {
                     from: s.id.clone(),
                     name: r.clone(),
                     line: s.line,
-                    is_defines: false,
+                    kind: EdgeKind::Reads,
+                });
+            }
+            for w in &s.writes {
+                self.pending_refs.push(PendingRef {
+                    from: s.id.clone(),
+                    name: w.clone(),
+                    line: s.line,
+                    kind: EdgeKind::Writes,
                 });
             }
         }
@@ -242,6 +267,8 @@ impl GraphBuilder {
             }
             self.pending_calls.push(c);
         }
+
+        self.pending_heritage.extend(fs.heritage);
 
         for imp in fs.imports {
             let known_module =
@@ -287,9 +314,10 @@ impl GraphBuilder {
     ///   create the calls edge (CODE_SCHEMA §5.3: unresolved targets are
     ///   diagnostics, not dropped edges). Duplicate (from, to) calls keep the
     ///   smallest line.
-    /// - `defines`/`refs` resolve the same way but create no stubs and are
-    ///   silent on failure (best effort). `refs` become `references` edges
-    ///   with the `kind` attribute set to `"read"`.
+    /// - `defines`/`refs`/`writes` resolve the same way but create no
+    ///   stubs and are silent on failure (best effort), becoming
+    ///   `defines` / `reads` / `writes` edges respectively. Heritage
+    ///   claims (inherits/implements) resolve both names globally.
     /// - Cycles: Tarjan SCC over calls+imports edges; one
     ///   [`Diagnostic::Cycle`] per SCC of size > 1 or self-loop.
     /// - Diagnostics are deterministic: per-file processing order, then
@@ -371,25 +399,44 @@ impl GraphBuilder {
             });
         }
 
-        // 3. defines / references — same resolution, no stubs, silent failures.
-        let mut ref_acc: HashMap<(String, String, bool), u32> = HashMap::new();
+        // 3. defines / reads / writes — same resolution, no stubs, silent
+        // failures. (Before the final-shape pass, reads were recorded as
+        // `references` edges carrying a `kind: "read"` attribute, which
+        // hid them from every query that walks the schema's first-class
+        // `reads`/`writes` kinds — blast radius included.)
+        let mut ref_acc: HashMap<(String, String, EdgeKind), u32> = HashMap::new();
         for pr in std::mem::take(&mut self.pending_refs) {
             if let Some(to_id) = self.resolve(&pr.from, &pr.name) {
-                let acc = ref_acc.entry((pr.from.clone(), to_id, pr.is_defines)).or_insert(u32::MAX);
+                let acc = ref_acc.entry((pr.from.clone(), to_id, pr.kind)).or_insert(u32::MAX);
                 *acc = (*acc).min(pr.line);
             }
         }
         let mut ref_list: Vec<_> = ref_acc.into_iter().collect();
         ref_list.sort();
-        for ((from, to, is_defines), line) in ref_list {
-            let (kind, attrs) = if is_defines {
-                (EdgeKind::Defines, serde_json::Map::new())
-            } else {
-                let mut m = serde_json::Map::new();
-                m.insert("kind".to_string(), serde_json::Value::String("read".to_string()));
-                (EdgeKind::References, m)
-            };
-            self.push_edge(Edge { from, to, kind, line: Some(line), attrs });
+        for ((from, to, kind), line) in ref_list {
+            self.push_edge(Edge { from, to, kind, line: Some(line), attrs: Default::default() });
+        }
+
+        // 3b. Heritage: inheritance / implementation claims. Both names
+        // resolve globally (an impl's self type often lives in another
+        // file); only the schema's two heritage kinds are honored.
+        for h in std::mem::take(&mut self.pending_heritage) {
+            if h.kind != EdgeKind::Inherits && h.kind != EdgeKind::Implements {
+                continue;
+            }
+            if let (Some(from), Some(to)) =
+                (self.resolve("", &h.type_name), self.resolve("", &h.target_name))
+            {
+                if from != to {
+                    self.push_edge(Edge {
+                        from,
+                        to,
+                        kind: h.kind,
+                        line: Some(h.line),
+                        attrs: Default::default(),
+                    });
+                }
+            }
         }
 
         // 4. Cycle detection: Tarjan SCC over calls+imports edges.
@@ -891,6 +938,7 @@ mod tests {
             column: None,
             defines: Vec::new(),
             refs: Vec::new(),
+            writes: Vec::new(),
         }
     }
 
@@ -909,6 +957,7 @@ mod tests {
             symbols,
             imports,
             calls,
+            heritage: Vec::new(),
         }
     }
 
@@ -1204,7 +1253,11 @@ mod tests {
     }
 
     #[test]
-    fn refs_become_references_edges_with_read_kind() {
+    fn refs_become_reads_edges() {
+        // Final-shape semantics: a ref is a value read, recorded as the
+        // schema's first-class `reads` kind — not a `references` edge
+        // with a kind attribute, which hid reads from kind-walking
+        // queries (blast radius included).
         let mut b = GraphBuilder::new();
         let mut s = sym("t::m::a", NodeKind::Function, 1);
         s.refs = vec!["Config".to_string(), "nope_nothing".to_string()];
@@ -1218,15 +1271,69 @@ mod tests {
         ));
         let (g, diags) = b.build();
         assert!(diags.is_empty());
-        let refs: Vec<_> =
-            g.edges().filter(|e| e.kind == EdgeKind::References).collect();
-        assert_eq!(refs.len(), 1, "unresolvable refs are silent");
-        assert_eq!(refs[0].from, "t::m::a");
-        assert_eq!(refs[0].to, "t::m::Config");
-        assert_eq!(
-            refs[0].attrs.get("kind"),
-            Some(&serde_json::Value::String("read".to_string()))
+        let reads: Vec<_> = g.edges().filter(|e| e.kind == EdgeKind::Reads).collect();
+        assert_eq!(reads.len(), 1, "unresolvable refs are silent");
+        assert_eq!(reads[0].from, "t::m::a");
+        assert_eq!(reads[0].to, "t::m::Config");
+        assert!(reads[0].attrs.is_empty());
+        assert_eq!(g.edge_count_by_kind(EdgeKind::References), 0);
+    }
+
+    #[test]
+    fn writes_and_heritage_become_typed_edges() {
+        let mut b = GraphBuilder::new();
+        let mut f = sym("t::m::run", NodeKind::Function, 1);
+        f.writes = vec!["Counter".to_string()];
+        let mut fs = file(
+            "t",
+            "m.rs",
+            "t::m",
+            vec![
+                f,
+                sym("t::m::Counter", NodeKind::Class, 10),
+                sym("t::m::Store", NodeKind::Interface, 20),
+            ],
+            vec![],
+            vec![],
         );
+        fs.heritage = vec![crate::emit::RawHeritage {
+            type_name: "Counter".to_string(),
+            target_name: "Store".to_string(),
+            kind: EdgeKind::Implements,
+            line: 10,
+        }];
+        b.add_file(fs);
+        let (g, diags) = b.build();
+        assert!(diags.is_empty());
+        let writes: Vec<_> = g.edges().filter(|e| e.kind == EdgeKind::Writes).collect();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].from, "t::m::run");
+        assert_eq!(writes[0].to, "t::m::Counter");
+        let impls: Vec<_> = g.edges().filter(|e| e.kind == EdgeKind::Implements).collect();
+        assert_eq!(impls.len(), 1);
+        assert_eq!(impls[0].from, "t::m::Counter");
+        assert_eq!(impls[0].to, "t::m::Store");
+        // Blast radius sees reads/writes dependents too: changing
+        // Counter breaks run (writes) — checked via the walk kinds.
+        assert!(g.blast_radius("t::m::Counter").contains(&"t::m::run".to_string()));
+    }
+
+    #[test]
+    fn tiers_classify_by_kind() {
+        let (g, _) = diamond_builder().build();
+        assert_eq!(g.get("t").map(|n| n.tier), Some(Tier::Core));
+        assert_eq!(g.get("t::m::d").map(|n| n.tier), Some(Tier::Optional));
+        let mut b = GraphBuilder::new();
+        b.add_file(file(
+            "t",
+            "c.rs",
+            "t::c",
+            vec![sym("t::c::Thing", NodeKind::Class, 1)],
+            vec![],
+            vec![],
+        ));
+        let (g2, _) = b.build();
+        assert_eq!(g2.get("t::c::Thing").map(|n| n.tier), Some(Tier::Recommended));
     }
 
     #[test]
