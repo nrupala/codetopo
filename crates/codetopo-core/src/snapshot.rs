@@ -79,6 +79,27 @@ impl Snapshot {
         }
     }
 
+    /// The major component of a `MAJOR.MINOR...` schema version string
+    /// (`"1.0-draft"` → `Some(1)`). `None` when the string does not start
+    /// with a number — an unparseable version is never silently accepted.
+    pub fn schema_major(version: &str) -> Option<u32> {
+        version.split('.').next()?.parse().ok()
+    }
+
+    /// Enforce CODE_SCHEMA §8: a consumer rejects a snapshot whose schema
+    /// major version differs from its own — loudly, never by guessing.
+    /// Same-major minor drift is tolerated, per the §8 rule.
+    pub fn check_schema_version(&self) -> Result<(), String> {
+        let want = Self::schema_major(SCHEMA_VERSION).expect("own schema version parses");
+        match Self::schema_major(&self.schema_version) {
+            Some(m) if m == want => Ok(()),
+            _ => Err(format!(
+                "unsupported snapshot schema_version {:?} (this build supports major {want})",
+                self.schema_version
+            )),
+        }
+    }
+
     pub fn to_json_pretty(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }

@@ -6,6 +6,16 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **Proof certificates v2 + standalone verification (final-shape W2).**
+  Snapshot certificates now carry a serial number, issuer, signer-key
+  fingerprint, and a signed one-year validity window; an expired
+  certificate is refused. Restore and the new
+  `codetopo verify-proof --snapshot` command share one verification
+  gate (schema major per CODE_SCHEMA §8, audit chain, certificate) —
+  restore writes only after the gate passes, and verify-proof runs
+  the same gate without writing. Certificate v1 files still verify
+  and are reported as v1 (no serial or validity window). All seven
+  crates bumped `0.2.2` → `0.2.3`.
 - **Persisted diagnostics + store format gate (restored from PR #13,
   see the reconciliation note below).** Builder diagnostics are
   stored with the index and replaced on reindex; the new

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use codetopo_cli::{
     index_repo, load_graph_from_db, print_diagnostics, print_id_list, print_stats, render_path,
-    require_node, resolve_hmac_key, restore_snapshot, snapshot_db, verify_db,
+    require_node, resolve_hmac_key, restore_snapshot, snapshot_db, verify_db, verify_proof_file,
 };
 
 #[derive(Parser)]
@@ -123,6 +123,20 @@ enum Commands {
         #[arg(long)]
         allow_unverified: bool,
     },
+    /// Verify a snapshot (schema, audit chain, proof certificate)
+    /// without restoring it.
+    #[command(name = "verify-proof")]
+    VerifyProof {
+        #[arg(long)]
+        snapshot: PathBuf,
+        /// HMAC key the snapshot's proof certificate was signed with
+        /// (else CODETOPO_HMAC_KEY env).
+        #[arg(long, value_name = "KEY")]
+        hmac_key: Option<String>,
+        /// Accept a snapshot with no verifiable proof (audit chain only).
+        #[arg(long)]
+        allow_unverified: bool,
+    },
 }
 
 fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
@@ -176,6 +190,10 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
         Commands::Restore { snapshot, db, hmac_key, allow_unverified } => {
             let key = resolve_hmac_key(hmac_key.as_deref());
             restore_snapshot(&snapshot, &db, key.as_deref(), allow_unverified)?;
+        }
+        Commands::VerifyProof { snapshot, hmac_key, allow_unverified } => {
+            let key = resolve_hmac_key(hmac_key.as_deref());
+            verify_proof_file(&snapshot, key.as_deref(), allow_unverified)?;
         }
     }
     Ok(())
