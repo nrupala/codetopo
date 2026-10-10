@@ -6,6 +6,83 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **Contract drift gate (final-shape, contracts).**
+  `scripts/check-contracts.py`, run in CI after the test/clippy
+  steps, compares the published contracts against the running code
+  and fails the build on any disagreement: the MCP tool catalogue
+  (`schemas/mcp-tools.json`) against the built `codetopo-mcp`
+  binary's live `tools/list` answer, the OpenAPI paths against the
+  routes the server actually registers, and the ACP agent's
+  advertised identity against its crate. The schemas README's own
+  counts and tables are corrected to match (ten graph reads plus
+  `/v1/schema`; twelve MCP tools and their HTTP twins).
+
+- **One surface, three doors (final-shape W3).** The CLI, HTTP API,
+  and MCP server now answer the same questions with the same shapes:
+  - *Discovery everywhere.* `Graph::search_symbols` (exact < prefix <
+    contains ranking) plus `codetopo search`, `GET …/search`, and
+    `codetopo_search_symbols` — before this, every query needed an
+    exact node id nobody could discover from the tools themselves.
+  - *Neighborhood everywhere.* CODE_SCHEMA §6 names the neighborhood
+    query binding, but no surface exposed it. Now: `codetopo
+    neighborhood`, `GET …/neighborhood`, `codetopo_neighborhood`,
+    all serving the core `Graph::neighborhood` computation.
+  - *One symbol, in full:* `codetopo symbol`, `GET …/symbol`,
+    `codetopo_get_symbol`; and the schema itself: `codetopo schema`,
+    `GET /v1/schema`, `codetopo_describe_schema` — one generator in
+    the CLI library, so the three cannot drift.
+  - *One package identity.* Indexing without an explicit package now
+    derives the same name on every surface (the repository
+    directory's file stem). The HTTP surface previously recorded
+    `unknown`, so the same tree produced different node ids — and
+    different query results — depending on the door used.
+  - *CLI `--json`* on descendants / ancestors / blast-radius / path /
+    stats, emitting the HTTP response shapes (minus `index_id`), so
+    scripts get one format from either door.
+  - `schemas/mcp-tools.json` regenerated from the live binary
+    (twelve tools); `schemas/openapi.yaml` documents the new routes.
+  (No version bump in this PR.)
+- **Extractor conformance (final-shape W4).** The graph now carries
+  the schema's full edge vocabulary:
+  - *Reads/writes are first-class.* A resolved ref is a `reads` edge
+    and an assignment target is a `writes` edge — before this, reads
+    hid inside `references` edges with a `kind: "read"` attribute,
+    invisible to kind-walking queries (blast radius included).
+    CODE_SCHEMA §4 amended accordingly (dated amendment note);
+    `references` remains restorable from older snapshots.
+  - *Heritage edges.* Rust `impl Trait for Type` → `implements`,
+    trait supertraits → `inherits`; TypeScript `extends` /
+    `implements` clauses likewise. New emit channel
+    (`FileSymbols.heritage`) resolved by the builder.
+  - *Tiers classify.* By node kind in the builder — skeleton
+    (package/module/file) `core`, type declarations `recommended`,
+    the rest `optional` — instead of every node carrying the default.
+  - *More of the tree is seen:* `.mjs` / `.cjs` files, Markdown
+    files as `doc` nodes, Rust type aliases and TS enums / type
+    aliases as type symbols.
+  - Verified on this repo's own code: 1,932 reads edges, writes,
+    19 doc nodes, tiers distributed — and zero `implements` edges,
+    correctly: every impl in this codebase targets an external trait.
+  (No version bump in this PR — W2 owns the next one.)
+- **Proof certificates v2 + standalone verification (final-shape W2).**
+  Snapshot certificates now carry a serial number, issuer, signer-key
+  fingerprint, and a signed one-year validity window; an expired
+  certificate is refused. Restore and the new
+  `codetopo verify-proof --snapshot` command share one verification
+  gate (schema major per CODE_SCHEMA §8, audit chain, certificate) —
+  restore writes only after the gate passes, and verify-proof runs
+  the same gate without writing. Certificate v1 files still verify
+  and are reported as v1 (no serial or validity window). All seven
+  crates bumped `0.2.2` → `0.2.3`.
+- **Persisted diagnostics + store format gate (restored from PR #13,
+  see the reconciliation note below).** Builder diagnostics are
+  stored with the index and replaced on reindex; the new
+  `codetopo diagnostics --db` command prints them after the fact.
+  The store stamps a format version (`PRAGMA user_version`) and
+  refuses databases from newer formats. The `symbols:` line at index
+  time now counts actual symbol nodes. All seven crates are at
+  **0.2.2**.
+
 - **One surface, three doors (final-shape W3).** The CLI, HTTP API,
   and MCP server now answer the same questions with the same shapes:
   - *Discovery everywhere.* `Graph::search_symbols` (exact < prefix <
@@ -148,6 +225,19 @@ All notable changes to this project are documented here.
   every PR adds a CHANGELOG entry under Unreleased and bumps crate
   versions; merge commits reference PR numbers; releases tagged
   `vX.Y.Z`). All seven crates bumped `0.2.0` → `0.2.1`.
+
+### Fixed
+
+- **The ACP agent now advertises its real identity.** Its
+  `initialize` response claimed version "0.1.0" — frozen since the
+  first build while the crates moved to 0.2.x — and a string
+  protocol version "1.0". It now reports the crate version
+  (`env!("CARGO_PKG_VERSION")`) and `protocolVersion` 1, the public
+  ACP spec's integer. The phase-3 design doc carries a dated
+  amendment saying plainly which parts of the wire follow the spec
+  and which are a codetopo dialect; session indexing also uses the
+  shared package-name default like every other surface.
+  (No version bump in this PR.)
 
 ## [0.2.0] — 2026-10-05
 

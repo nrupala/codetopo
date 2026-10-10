@@ -60,14 +60,14 @@ fn main() -> io::Result<()> {
                     "id": id,
                     "result": {
                         "agent":"codetopo",
-                        "protocolVersion":"1.0",
+                        "protocolVersion":1,
                         "agentCapabilities":{
                             "read_only":true,
                             "code_structure":true,
                             "session_based":true,
                             "tools":[]
                         },
-                        "agentInfo":{"name":"codetopo","version":"0.1.0"}
+                        "agentInfo":{"name":"codetopo","version":env!("CARGO_PKG_VERSION")}
                     }
                 });
                 let _ = writeln!(out, "{}", resp);
@@ -176,9 +176,9 @@ fn index_session_db(cwd: &str, session_id: &str) -> Result<PathBuf, String> {
         return Err(format!("not a directory: {}", cwd));
     }
     let db_path = std::env::temp_dir().join(format!("codetopo-{}-{}.sqlite", std::process::id(), session_id));
-    let pkg = repo.file_name().and_then(|n| n.to_str()).unwrap_or("repo");
+    let pkg = codetopo_cli::default_package_name(repo);
     // Call CLI index_repo — same extraction path, writes SQLite DB.
-    match codetopo_cli::index_repo(repo, &db_path, pkg, None, None) {
+    match codetopo_cli::index_repo(repo, &db_path, &pkg, None, None) {
         Ok(_) => Ok(db_path.to_path_buf()),
         Err(e) => Err(format!("index fail: {}", e)),
     }
