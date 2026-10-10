@@ -2,7 +2,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
 
-use codetopo_acp::{classify_intent, Intent, RefusalReply, AgentCapabilities, execute_intent};
+use codetopo_acp::{classify_intent, initialize_result, Intent, RefusalReply, AgentCapabilities, execute_intent};
+
+#[test]
+fn initialize_reports_the_crate_version() {
+    // Version honesty: the handshake must claim the version of the
+    // crate it ships in — it previously hardcoded 0.1.0.
+    let result = initialize_result();
+    assert_eq!(result["agentInfo"]["name"], "codetopo");
+    assert_eq!(
+        result["agentInfo"]["version"],
+        env!("CARGO_PKG_VERSION"),
+        "agentInfo version must be the crate version, not a hardcoded string"
+    );
+}
 
 #[test]
 fn intent_descendants() {

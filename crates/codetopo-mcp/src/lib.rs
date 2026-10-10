@@ -179,7 +179,7 @@ fn closure_result(members: &[String], total: usize, expand: bool, limit: usize) 
 /// The `tools/list` catalogue: name, description, and JSON Schema for each
 /// tool. Arguments mirror the HTTP parameters one-for-one, so an agent that
 /// has learned one surface has learned both (§9).
-fn tool_catalog() -> Vec<Value> {
+pub fn tool_catalog() -> Vec<Value> {
     let node_arg = |description: &str| {
         json!({
             "type": "object",

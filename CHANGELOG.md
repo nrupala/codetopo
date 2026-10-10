@@ -6,6 +6,15 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **Contract drift gates + ACP version honesty.** The published
+  contracts can no longer drift silently: workspace tests (run in CI)
+  now fail when `schemas/mcp-tools.json` differs from the live MCP
+  tool catalogue or its recorded server version, and when
+  `schemas/openapi.yaml`'s info version or route set differs from
+  what `codetopo-server` serves (its version had been stale at 0.1.0;
+  now 0.2.4). The ACP agent's `initialize` handshake reports the
+  crate version instead of a hardcoded `0.1.0`. All seven crates
+  bumped `0.2.3` → `0.2.4`.
 - **One surface, three doors (final-shape W3).** The CLI, HTTP API,
   and MCP server now answer the same questions with the same shapes:
   - *Discovery everywhere.* `Graph::search_symbols` (exact < prefix <

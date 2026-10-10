@@ -9,6 +9,7 @@
 //! the public ACP specification. No SDK, nothing vendored, nothing copied.
 
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::path::Path;
 use codetopo_core::Graph;
 
@@ -28,6 +29,24 @@ impl Default for AgentCapabilities {
             session_based: true,
         }
     }
+}
+
+/// The `initialize` handshake result. The agent version is the crate
+/// version (`env!("CARGO_PKG_VERSION")`) — never a hardcoded string
+/// that can drift from the shipped binary (it previously claimed
+/// 0.1.0 while the crate shipped 0.2.x).
+pub fn initialize_result() -> Value {
+    json!({
+        "agent": "codetopo",
+        "protocolVersion": "1.0",
+        "agentCapabilities": {
+            "read_only": true,
+            "code_structure": true,
+            "session_based": true,
+            "tools": []
+        },
+        "agentInfo": {"name": "codetopo", "version": env!("CARGO_PKG_VERSION")}
+    })
 }
 
 /// Intent classification from prompt text (deterministic keyword/regex).

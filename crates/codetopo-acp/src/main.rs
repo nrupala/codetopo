@@ -58,17 +58,7 @@ fn main() -> io::Result<()> {
                 let resp = json!({
                     "jsonrpc":"2.0",
                     "id": id,
-                    "result": {
-                        "agent":"codetopo",
-                        "protocolVersion":"1.0",
-                        "agentCapabilities":{
-                            "read_only":true,
-                            "code_structure":true,
-                            "session_based":true,
-                            "tools":[]
-                        },
-                        "agentInfo":{"name":"codetopo","version":"0.1.0"}
-                    }
+                    "result": codetopo_acp::initialize_result()
                 });
                 let _ = writeln!(out, "{}", resp);
                 let _ = out.flush();
