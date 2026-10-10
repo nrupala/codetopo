@@ -720,9 +720,11 @@ impl Graph {
         self.walk(id, &[EdgeKind::Calls, EdgeKind::Imports], false)
     }
 
-    /// `descendants` restricted to edges that propagate breakage: calls,
-    /// inherits, implements, reads, writes. Imports alone does not break
-    /// (CODE_SCHEMA §6).
+    /// What breaks if `id` changes: every node that depends on `id`,
+    /// transitively, over the edges that propagate breakage — calls,
+    /// inherits, implements, reads, writes. This walks *incoming*
+    /// edges (dependents), the reverse direction from `descendants`;
+    /// imports alone does not break (CODE_SCHEMA §6, DESIGN §3).
     pub fn blast_radius(&self, id: &str) -> Vec<String> {
         self.walk(
             id,
@@ -733,7 +735,7 @@ impl Graph {
                 EdgeKind::Reads,
                 EdgeKind::Writes,
             ],
-            true,
+            false,
         )
     }
 
@@ -763,20 +765,12 @@ impl Graph {
     }
 
     /// Shortest typed path. Directed BFS from `from` over all non-contains
-    /// edges; if none, directed BFS from `to` and the steps are reversed.
-    /// `None` when disconnected (or either endpoint is unknown). A node paths
-    /// to itself as an empty step list.
+    /// edges. `None` when no directed path exists (or either endpoint is
+    /// unknown): a path is never synthesized by reversing edges, because a
+    /// reversed step would claim a directed relationship that does not
+    /// exist. A node paths to itself as an empty step list.
     pub fn path(&self, from: &str, to: &str) -> Option<Vec<PathStep>> {
-        if let Some(steps) = self.directed_path(from, to) {
-            return Some(steps);
-        }
-        self.directed_path(to, from).map(|steps| {
-            steps
-                .into_iter()
-                .rev()
-                .map(|s| PathStep { from: s.to, to: s.from, kind: s.kind })
-                .collect()
-        })
+        self.directed_path(from, to)
     }
 
     fn directed_path(&self, from: &str, to: &str) -> Option<Vec<PathStep>> {
@@ -1057,6 +1051,54 @@ mod tests {
         assert!(g2.path("t::x::lonely", "t::m::e").is_none());
     }
 
+    /// Chain: a calls b, b calls c. Blast radius answers "what breaks if
+    /// this changes" — the dependents (incoming direction), never the
+    /// dependencies. Regression test for the outgoing-walk bug.
+    #[test]
+    fn blast_radius_walks_dependents_not_dependencies() {
+        let mut b = GraphBuilder::new();
+        b.add_file(file(
+            "t",
+            "chain.rs",
+            "t::chain",
+            vec![
+                sym("t::chain::a", NodeKind::Function, 1),
+                sym("t::chain::b", NodeKind::Function, 5),
+                sym("t::chain::c", NodeKind::Function, 9),
+            ],
+            vec![],
+            vec![call("t::chain::a", "b", 2), call("t::chain::b", "c", 6)],
+        ));
+        let (g, diags) = b.build();
+        assert!(diags.is_empty());
+        // Changing c breaks b, and transitively a — in BFS order.
+        assert_eq!(
+            g.blast_radius("t::chain::c"),
+            vec!["t::chain::b".to_string(), "t::chain::a".to_string()]
+        );
+        // Nothing depends on a.
+        assert!(g.blast_radius("t::chain::a").is_empty());
+        // Sanity: descendants/ancestors keep their own directions.
+        assert_eq!(
+            g.descendants("t::chain::a"),
+            vec!["t::chain::b".to_string(), "t::chain::c".to_string()]
+        );
+        assert_eq!(
+            g.ancestors("t::chain::c"),
+            vec!["t::chain::b".to_string(), "t::chain::a".to_string()]
+        );
+    }
+
+    /// A path must never be fabricated by reversing edges: on the diamond,
+    /// d reaches e, but e does not reach d — the answer is None, not a
+    /// relabelled reverse walk.
+    #[test]
+    fn path_never_reverses_edges() {
+        let (g, _) = diamond_builder().build();
+        assert!(g.path("t::m::d", "t::m::e").is_some());
+        assert!(g.path("t::m::e", "t::m::d").is_none());
+    }
+
     #[test]
     fn blast_radius_excludes_imports_only_reachability() {
         let mut b = GraphBuilder::new();
@@ -1086,10 +1128,12 @@ mod tests {
 
         // Module m2 is reachable from m1 via the imports edge...
         assert!(g.descendants("p::m1").contains(&"p::m2".to_string()));
-        // ...but imports alone do not propagate breakage.
+        // ...but imports alone do not propagate breakage — and breakage
+        // flows to dependents, not to dependencies: f2's blast radius
+        // contains its caller f1, never the other way round.
         assert!(!g.blast_radius("p::m1").contains(&"p::m2".to_string()));
-        // The calls edge does propagate.
-        assert!(g.blast_radius("p::m1::f1").contains(&"p::m2::f2".to_string()));
+        assert!(!g.blast_radius("p::m1::f1").contains(&"p::m2::f2".to_string()));
+        assert!(g.blast_radius("p::m2::f2").contains(&"p::m1::f1".to_string()));
     }
 
     #[test]

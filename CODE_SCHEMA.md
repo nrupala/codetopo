@@ -79,9 +79,14 @@ No edge kind may carry attributes outside its row. Unknown relationships are
 ## 6. Query semantics (binding on implementations)
 
 - `descendants(id)` / `ancestors(id)` — transitive closure over `calls` + `imports`
-- `blast_radius(id)` — `descendants` restricted to edges that propagate breakage
-  (`calls`, `inherits`, `implements`, `reads`/`writes`); `imports` alone does not break
-- `path(a, b)` — shortest typed path; returns edge-kind sequence, not just hops
+- `blast_radius(id)` — the dependents of `id`: transitive closure over *incoming*
+  edges that propagate breakage (`calls`, `inherits`, `implements`,
+  `reads`/`writes`); `imports` alone does not break. (Direction corrected
+  2026-10-10: earlier text said `descendants`, which named what `id` depends
+  on — the opposite of the DESIGN §3 promise, "what breaks if I change X".)
+- `path(a, b)` — shortest *directed* typed path; returns edge-kind sequence,
+  not just hops. `None` when no directed path exists — implementations
+  must not synthesize one by reversing edges
 - `neighborhood(id, depth)` — k-hop subgraph, both directions
 - **Aggregate-first:** default responses are counts/summaries; full dumps require
   explicit `expand`
