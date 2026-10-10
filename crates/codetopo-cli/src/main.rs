@@ -9,8 +9,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use codetopo_cli::{
-    index_repo, load_graph_from_db, print_id_list, print_stats, render_path, require_node,
-    resolve_hmac_key, restore_snapshot, snapshot_db, verify_db,
+    index_repo, load_graph_from_db, print_diagnostics, print_id_list, print_stats, render_path,
+    require_node, resolve_hmac_key, restore_snapshot, snapshot_db, verify_db,
 };
 
 #[derive(Parser)]
@@ -93,6 +93,11 @@ enum Commands {
         #[arg(long)]
         db: PathBuf,
     },
+    /// Print the diagnostics recorded when the index was built.
+    Diagnostics {
+        #[arg(long)]
+        db: PathBuf,
+    },
     /// Export the stored graph as a JSON snapshot (+ .proof with a key).
     Snapshot {
         #[arg(long)]
@@ -163,6 +168,7 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
         }
         Commands::Stats { db } => print_stats(&load_graph_from_db(&db)?),
         Commands::Verify { db } => verify_db(&db)?,
+        Commands::Diagnostics { db } => print_diagnostics(&db)?,
         Commands::Snapshot { db, out, hmac_key } => {
             let key = resolve_hmac_key(hmac_key.as_deref());
             snapshot_db(&db, &out, key.as_deref())?;
