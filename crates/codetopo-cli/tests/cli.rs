@@ -256,3 +256,36 @@ fn restore_verification_gates() {
     let db_e = workdir.join("e.db");
     assert!(restore_snapshot(&snap2, &db_e, None, true).is_err());
 }
+
+/// W1's scenario, kept alongside the repo-swap variant above: rename
+/// a function and its call site, reindex the same database, and the
+/// stored graph must equal a fresh index exactly — no stale node.
+#[test]
+fn reindex_replaces_stale_graph() {
+    let workdir = workdir("reindex-replace");
+    let repo = fixture_repo(&workdir);
+    let db = workdir.join("index.db");
+
+    index_repo(&repo, &db, "fixture", None, None).expect("first index");
+    let g1 = load_graph_from_db(&db).expect("load first graph");
+    assert!(g1.nodes().any(|n| n.kind == NodeKind::Function && n.label == "b"));
+
+    std::fs::write(repo.join("a.rs"), "fn a() {\n    bb();\n}\n").expect("rewrite a.rs");
+    std::fs::write(repo.join("b.rs"), "fn bb() {}\n").expect("rewrite b.rs");
+    let report = index_repo(&repo, &db, "fixture", None, None).expect("reindex");
+    let g2 = load_graph_from_db(&db).expect("load reindexed graph");
+
+    assert!(
+        !g2.nodes().any(|n| n.kind == NodeKind::Function && n.label == "b"),
+        "stale function node 'b' must not survive reindex"
+    );
+    assert!(g2.nodes().any(|n| n.kind == NodeKind::Function && n.label == "bb"));
+
+    let fresh_db = workdir.join("fresh.db");
+    let fresh = index_repo(&repo, &fresh_db, "fixture", None, None).expect("fresh index");
+    assert_eq!(report.nodes, fresh.nodes, "reindex node count == fresh count");
+    assert_eq!(report.edges, fresh.edges, "reindex edge count == fresh count");
+    assert_eq!(g2.node_count(), fresh.nodes);
+
+    let _ = std::fs::remove_dir_all(&workdir);
+}

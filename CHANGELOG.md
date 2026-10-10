@@ -4,8 +4,33 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **Persisted diagnostics + store format gate (restored from PR #13,
+  see the reconciliation note below).** Builder diagnostics are
+  stored with the index and replaced on reindex; the new
+  `codetopo diagnostics --db` command prints them after the fact.
+  The store stamps a format version (`PRAGMA user_version`) and
+  refuses databases from newer formats. The `symbols:` line at index
+  time now counts actual symbol nodes. All seven crates are at
+  **0.2.2**.
+
 ### Fixed
 
+- **Reconciliation: PR #13's W1 changes are back.** Two store-
+  integrity implementations were built in parallel today (PR #12 in
+  the demo thread, PR #13 in the main thread). PR #12's merge used
+  its branch tree wholesale and silently dropped PR #13's tree
+  changes (persisted diagnostics, the format gate, the honest
+  symbols count, the 0.2.2 bump) even though both merges are in
+  history. This entry's PR restores them, merged with PR #12's
+  verified restore: where the two disagreed on restore semantics,
+  **verify-then-replace** (PR #12) stands — a snapshot is restored
+  only after its schema, audit chain, and proof certificate verify,
+  and restore then replaces by design; PR #13's refuse-populated
+  variant was not kept, because refusal alone verifies nothing.
+  Lesson recorded: a hand-built merge must merge trees, not adopt
+  one side's tree, when the base has moved.
 - **The store now replaces; it never silently unions.** Reindexing or
   restoring into an existing database used `INSERT OR IGNORE`, so
   stale symbols from an older graph survived forever. Indexing and
