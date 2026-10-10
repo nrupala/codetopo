@@ -161,9 +161,13 @@ pub fn index_repo(
     }
     let (graph, diags) = builder.build();
 
-    // 4. Persist.
+    // 4. Persist. Replacement semantics: reindexing an existing database
+    //    must produce exactly the new graph — never a union with rows from
+    //    a previous index of a different tree state. Diagnostics belong to
+    //    this index and are replaced alongside it.
     let mut store = Store::open(db_path)?;
-    let _inserted = store.insert_graph(&graph)?;
+    let _inserted = store.replace_graph(&graph)?;
+    store.save_diagnostics(&diags)?;
 
     // 5. Audit: index_started then index_finished, then save the chain.
     let mut audit = AuditLog::new();
@@ -189,10 +193,25 @@ pub fn index_repo(
         write_snapshot_file(&graph, &audit.snapshot_entries(), sp, hmac_key)?;
     }
 
-    // 7. Aggregate-first output.
+    // 7. Aggregate-first output. `symbols` counts actual symbol nodes
+    //    (classes, interfaces, functions, methods, variables) — not the
+    //    structural package/module/file/external nodes included in `nodes`.
+    let symbols = graph
+        .nodes()
+        .filter(|n| {
+            matches!(
+                n.kind,
+                NodeKind::Class
+                    | NodeKind::Interface
+                    | NodeKind::Function
+                    | NodeKind::Method
+                    | NodeKind::Variable
+            )
+        })
+        .count();
     eprintln!("files indexed: {files_indexed}");
     eprintln!("files failed: {files_failed}");
-    eprintln!("symbols: {}", graph.node_count());
+    eprintln!("symbols: {symbols}");
     eprintln!("nodes: {}", graph.node_count());
     eprintln!("edges: {}", graph.edge_count());
     eprintln!("diagnostics: {}", diags.len());
@@ -247,6 +266,10 @@ pub fn snapshot_db(db_path: &Path, out: &Path, hmac_key: Option<&[u8]>) -> Resul
 /// The snapshot's audit trail is replayed verbatim, so the restored database
 /// binds the same audit head the snapshot was exported under.
 /// Returns the insert stats; prints the round-trip counts.
+///
+/// The destination must be empty: restoring into a populated store would
+/// union two graphs into a state neither snapshot describes, so it is a
+/// usage error rather than a silent merge.
 pub fn restore_snapshot(
     snapshot_path: &Path,
     db_path: &Path,
@@ -255,6 +278,14 @@ pub fn restore_snapshot(
     let snap = Snapshot::from_json(&data)?;
     let graph = snap.to_graph();
     let mut store = Store::open(db_path)?;
+    let (n, e) = store.counts()?;
+    if n != 0 || e != 0 {
+        return Err(CliError::Usage(format!(
+            "restore destination {} already holds a graph ({n} nodes, {e} edges); \
+             restore requires a fresh database — delete the file or choose a new --db path",
+            db_path.display()
+        )));
+    }
     let stats = store.insert_graph(&graph)?;
     store.save_audit(&AuditLog::from_snapshot_entries(&snap.audit_log))?;
     println!("restored nodes: {}", stats.nodes);
@@ -363,6 +394,21 @@ pub fn print_stats(graph: &Graph) {
             println!("  {}: {n}", kind.as_str());
         }
     }
+}
+
+/// Print the diagnostics recorded when the index at `db_path` was built:
+/// the aggregate count first, then one line per diagnostic. Diagnostics
+/// are persisted with the index (see [`Store::save_diagnostics`]), so this
+/// works long after the indexing run — the count printed at index time is
+/// no longer the only trace.
+pub fn print_diagnostics(db_path: &Path) -> Result<(), CliError> {
+    let store = Store::open(db_path)?;
+    let diags = store.load_diagnostics()?;
+    println!("diagnostics: {}", diags.len());
+    for d in &diags {
+        println!("{d}");
+    }
+    Ok(())
 }
 
 /// Verify the tamper-evident audit chain: entry count, validity, head hash.

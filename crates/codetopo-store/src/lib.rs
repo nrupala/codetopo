@@ -6,9 +6,14 @@
 //!
 //! Two halves:
 //! - [`Store`]: a rusqlite-backed store for [`Graph`] snapshots (nodes,
-//!   edges), free-text annotations on nodes, and the tamper-evident audit
-//!   log. Schema is created on open; graph inserts are chunked-transaction
-//!   `INSERT OR IGNORE` upserts.
+//!   edges), free-text annotations on nodes, builder diagnostics, and the
+//!   tamper-evident audit log. Schema is created on open. Two write paths:
+//!   [`Store::insert_graph`] (chunked `INSERT OR IGNORE` upsert — used for
+//!   restore into a verified-empty store) and [`Store::replace_graph`]
+//!   (atomic whole-graph replacement — used for (re)indexing, so a reindex
+//!   can never union stale rows from a previous index into the new graph).
+//!   The on-disk format carries a version (`PRAGMA user_version`); a
+//!   database written by a newer format is refused, never silently mangled.
 //! - Audit primitive: [`AuditLog`] (hash-chained append-only log) plus
 //!   [`hmac_proof`]/[`verify_proof`] (hex HMAC-SHA256 proof certificates).
 //!   This is the trust-primitive port (axiomcode pattern): every mutation of
@@ -20,14 +25,20 @@
 use std::path::Path;
 
 use codetopo_core::snapshot::{SnapshotAuditEntry, SCHEMA_VERSION};
-use codetopo_core::{Edge, Graph, Loc, Node, NodeKind, Snapshot, Tier};
+use codetopo_core::{Diagnostic, Edge, Graph, Loc, Node, NodeKind, Snapshot, Tier};
 use hmac::{Hmac, Mac};
+use rusqlite::OptionalExtension;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
+
+/// On-disk store format version, recorded in `PRAGMA user_version`.
+/// Bump when the table layout changes incompatibly; [`Store::open`]
+/// refuses databases from a newer format instead of mangling them.
+pub const STORE_FORMAT_VERSION: u32 = 1;
 
 /// Every fallible operation in this crate returns this error type.
 #[derive(Debug, Error)]
@@ -41,6 +52,10 @@ pub enum StoreError {
     /// Filesystem failure (creating parent directories for the DB path).
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    /// The database was written by a newer store format than this build
+    /// understands. Opening it anyway could corrupt the newer layout.
+    #[error("unsupported store format version {0} (this build understands up to {STORE_FORMAT_VERSION})")]
+    UnsupportedFormat(u32),
 }
 
 // ---------------------------------------------------------------------------
@@ -84,9 +99,45 @@ CREATE TABLE IF NOT EXISTS audit_log(
     prev_hash TEXT NOT NULL,
     hash TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS diagnostics(
+    seq INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS index_meta(
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_id);
 CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
 "#;
+
+/// Stamp/check the on-disk format version (`PRAGMA user_version`).
+/// A database with no stamp (fresh, or written before format versioning)
+/// is stamped with the current version. A database stamped *newer* than
+/// this build understands is refused.
+fn init_format_version(conn: &rusqlite::Connection) -> Result<(), StoreError> {
+    let v: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if v > STORE_FORMAT_VERSION {
+        return Err(StoreError::UnsupportedFormat(v));
+    }
+    if v < STORE_FORMAT_VERSION {
+        conn.execute_batch(&format!("PRAGMA user_version = {STORE_FORMAT_VERSION}"))?;
+    }
+    Ok(())
+}
+
+/// Snake_case tag for a [`Diagnostic`] variant (stored alongside the JSON
+/// payload so the table stays greppable without a JSON parser).
+fn diagnostic_kind(d: &Diagnostic) -> &'static str {
+    match d {
+        Diagnostic::MultiDefinition { .. } => "multi_definition",
+        Diagnostic::Cycle { .. } => "cycle",
+        Diagnostic::UnresolvedCall { .. } => "unresolved_call",
+        Diagnostic::InvalidAttribute { .. } => "invalid_attribute",
+        Diagnostic::UnknownSymbol { .. } => "unknown_symbol",
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -395,6 +446,7 @@ impl Store {
         }
         let conn = rusqlite::Connection::open(path)?;
         conn.execute_batch(SCHEMA_SQL)?;
+        init_format_version(&conn)?;
         Ok(Store { conn })
     }
 
@@ -403,6 +455,7 @@ impl Store {
     pub fn open_in_memory() -> Result<Self, StoreError> {
         let conn = rusqlite::Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA_SQL)?;
+        init_format_version(&conn)?;
         Ok(Store { conn })
     }
 
@@ -483,6 +536,113 @@ impl Store {
         }
 
         Ok(stats)
+    }
+
+    /// Atomically replace the whole stored graph with `graph`: in one
+    /// transaction, delete every stored node and edge, insert the new
+    /// graph, and advance the index generation. This is the (re)indexing
+    /// write path — a reindex of a changed tree must never leave rows from
+    /// the previous index behind (the failure mode of re-running
+    /// [`Store::insert_graph`] into a populated store, whose
+    /// `INSERT OR IGNORE` unions old and new). Annotations are user data,
+    /// not index data, and are preserved. The returned stats are the new
+    /// graph's full counts.
+    pub fn replace_graph(&mut self, graph: &Graph) -> Result<InsertStats, StoreError> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM nodes", [])?;
+        tx.execute("DELETE FROM edges", [])?;
+        {
+            let mut st = tx.prepare(
+                "INSERT INTO nodes(id, kind, label, file, line, col, tier, defines_json, refs_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )?;
+            for node in graph.nodes() {
+                st.execute(rusqlite::params![
+                    node.id,
+                    node_kind_str(node.kind),
+                    node.label,
+                    node.loc.file,
+                    node.loc.line as i64,
+                    node.loc.column.map(|c| c as i64),
+                    tier_str(node.tier),
+                    serde_json::to_string(&node.defines)?,
+                    serde_json::to_string(&node.refs)?,
+                ])?;
+            }
+        }
+        {
+            let mut st = tx.prepare(
+                "INSERT INTO edges(from_id, to_id, kind, line, attrs_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?;
+            for e in graph.edges() {
+                st.execute(rusqlite::params![
+                    e.from,
+                    e.to,
+                    e.kind.as_str(),
+                    e.line.map(|l| l as i64),
+                    serde_json::to_string(&e.attrs)?,
+                ])?;
+            }
+        }
+        tx.execute(
+            "INSERT INTO index_meta(key, value) VALUES('generation', '1')
+             ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(InsertStats {
+            nodes: graph.node_count(),
+            edges: graph.edge_count(),
+        })
+    }
+
+    /// The index generation: how many whole-graph replacements this store
+    /// has taken (0 for a store that has only ever been upserted into).
+    pub fn generation(&self) -> Result<u64, StoreError> {
+        let v: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM index_meta WHERE key = 'generation'", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(v.and_then(|s| s.parse().ok()).unwrap_or(0))
+    }
+
+    /// Replace the stored builder diagnostics with `diags` (one
+    /// transaction). Diagnostics belong to the index that produced them:
+    /// a reindex replaces them wholesale, exactly like the graph.
+    pub fn save_diagnostics(&mut self, diags: &[Diagnostic]) -> Result<(), StoreError> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM diagnostics", [])?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO diagnostics(seq, kind, payload) VALUES (?1, ?2, ?3)",
+            )?;
+            for (i, d) in diags.iter().enumerate() {
+                stmt.execute(rusqlite::params![
+                    i as i64,
+                    diagnostic_kind(d),
+                    serde_json::to_string(d)?,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The diagnostics recorded for the current index, in builder order.
+    /// Empty when the index produced none (or predates diagnostic storage).
+    pub fn load_diagnostics(&self) -> Result<Vec<Diagnostic>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT payload FROM diagnostics ORDER BY seq")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for payload in rows {
+            out.push(serde_json::from_str(&payload?)?);
+        }
+        Ok(out)
     }
 
     /// Look up one node by id. `Ok(None)` when the id is not stored.
@@ -896,5 +1056,97 @@ mod tests {
                 "Serialize".to_string()
             )]))
         );
+    }
+
+    fn other_graph() -> Graph {
+        let mut b = GraphBuilder::new();
+        b.add_file(FileSymbols {
+            package: "u".to_string(),
+            file: "x.rs".to_string(),
+            module_id: "u::x".to_string(),
+            symbols: vec![sym("u::x::f", NodeKind::Function, 1)],
+            imports: Vec::new(),
+            calls: Vec::new(),
+        });
+        let (g, diags) = b.build();
+        assert!(diags.is_empty());
+        g
+    }
+
+    #[test]
+    fn replace_graph_drops_stale_rows_and_bumps_generation() {
+        let mut store = Store::open_in_memory().unwrap();
+        let g1 = chain_graph();
+        store.insert_graph(&g1).unwrap();
+        assert_eq!(store.generation().unwrap(), 0);
+
+        // Replace with a disjoint graph: no row of g1 may survive.
+        let g2 = other_graph();
+        let stats = store.replace_graph(&g2).unwrap();
+        assert_eq!(stats, InsertStats { nodes: g2.node_count(), edges: g2.edge_count() });
+        assert_eq!(store.counts().unwrap(), (g2.node_count(), g2.edge_count()));
+        assert!(store.get_node("t::m::b").unwrap().is_none(), "stale node gone");
+        assert!(store.get_node("u::x::f").unwrap().is_some(), "new node present");
+        assert_eq!(store.generation().unwrap(), 1);
+
+        // Replacing again advances the generation again.
+        store.replace_graph(&g1).unwrap();
+        assert_eq!(store.generation().unwrap(), 2);
+        assert!(store.get_node("u::x::f").unwrap().is_none());
+        assert!(store.get_node("t::m::b").unwrap().is_some());
+    }
+
+    #[test]
+    fn diagnostics_round_trip_and_replace() {
+        let mut store = Store::open_in_memory().unwrap();
+        assert!(store.load_diagnostics().unwrap().is_empty());
+
+        let diags = vec![
+            Diagnostic::UnknownSymbol { id: "u::x::nope".to_string() },
+            Diagnostic::UnresolvedCall {
+                from: "u::x::f".to_string(),
+                target: "missing".to_string(),
+                line: 7,
+            },
+        ];
+        store.save_diagnostics(&diags).unwrap();
+        assert_eq!(store.load_diagnostics().unwrap(), diags);
+
+        // A clean reindex clears the previous index's diagnostics.
+        store.save_diagnostics(&[]).unwrap();
+        assert!(store.load_diagnostics().unwrap().is_empty());
+    }
+
+    #[test]
+    fn format_version_is_stamped_and_newer_is_refused() {
+        let dir = std::env::temp_dir()
+            .join(format!("codetopo-store-fmt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("fmt.sqlite");
+
+        {
+            let _store = Store::open(&db).unwrap();
+        }
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        let v: u32 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, STORE_FORMAT_VERSION);
+
+        // A database stamped with a newer format must be refused.
+        conn.execute_batch(&format!(
+            "PRAGMA user_version = {}",
+            STORE_FORMAT_VERSION + 1
+        ))
+        .unwrap();
+        drop(conn);
+        match Store::open(&db) {
+            Err(StoreError::UnsupportedFormat(got)) => {
+                assert_eq!(got, STORE_FORMAT_VERSION + 1);
+            }
+            other => panic!("expected UnsupportedFormat, got {:?}", other.map(|_| "ok")),
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
