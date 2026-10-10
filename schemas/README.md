@@ -114,11 +114,12 @@ returned when `expand=true`). CLI parity was used as the tie-breaker.
 ## `mcp-tools.json`
 
 The verbatim `result.tools` payload of a JSON-RPC `tools/list` call against
-`codetopo-mcp` over stdio. Eight tools:
+`codetopo-mcp` over stdio. Twelve tools:
 
 `codetopo_index`, `codetopo_descendants`, `codetopo_ancestors`,
 `codetopo_blast_radius`, `codetopo_path`, `codetopo_stats`,
-`codetopo_verify`, `codetopo_snapshot`
+`codetopo_verify`, `codetopo_snapshot`, `codetopo_neighborhood`,
+`codetopo_get_symbol`, `codetopo_search_symbols`, `codetopo_describe_schema`
 
 Regenerate with:
 

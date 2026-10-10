@@ -549,41 +549,60 @@ impl GraphBuilder {
             sccs: Vec<Vec<String>>,
         }
 
-        fn strongconnect<'a>(v: &'a str, st: &mut State<'a>) {
-            st.index.insert(v, st.counter);
-            st.lowlink.insert(v, st.counter);
-            st.counter += 1;
-            st.stack.push(v);
-            st.on_stack.insert(v);
-            // Clone the neighbor list to end the immutable borrow of `st`
-            // before recursing with `&mut st`.
-            let neighbors: Vec<&'a str> =
-                st.adj.get(v).cloned().unwrap_or_default();
-            for w in neighbors {
-                if !st.index.contains_key(w) {
-                    strongconnect(w, st);
-                    let low_v = st.lowlink[v].min(st.lowlink[w]);
-                    st.lowlink.insert(v, low_v);
-                } else if st.on_stack.contains(w) {
-                    let low_v = st.lowlink[v].min(st.index[w]);
-                    st.lowlink.insert(v, low_v);
-                }
-            }
-            if st.lowlink[v] == st.index[v] {
-                let mut scc = Vec::new();
-                while let Some(w) = st.stack.pop() {
-                    st.on_stack.remove(w);
-                    scc.push(w.to_string());
-                    if w == v {
-                        break;
+        // Iterative Tarjan with an explicit call stack. The recursive
+        // form overflowed the call stack on deep graphs (a 10,000-deep
+        // call chain aborts a 2 MB-stack thread — the scale gate caught
+        // it); depth here is bounded by heap, not by the thread stack.
+        // Traversal order (sorted starts, sorted neighbors) and the
+        // cyclic rule are unchanged, so results are identical.
+        fn strongconnect<'a>(root: &'a str, st: &mut State<'a>) {
+            // Each frame: (node, neighbors, next neighbor to visit).
+            let mut call_stack: Vec<(&'a str, Vec<&'a str>, usize)> = Vec::new();
+            let push = |v: &'a str, st: &mut State<'a>, cs: &mut Vec<(&'a str, Vec<&'a str>, usize)>| {
+                st.index.insert(v, st.counter);
+                st.lowlink.insert(v, st.counter);
+                st.counter += 1;
+                st.stack.push(v);
+                st.on_stack.insert(v);
+                let neighbors: Vec<&'a str> = st.adj.get(v).cloned().unwrap_or_default();
+                cs.push((v, neighbors, 0));
+            };
+            push(root, st, &mut call_stack);
+            while let Some((v, neighbors, idx)) = call_stack.last().cloned() {
+                if idx < neighbors.len() {
+                    call_stack.last_mut().expect("frame").2 += 1;
+                    let w = neighbors[idx];
+                    if !st.index.contains_key(w) {
+                        push(w, st, &mut call_stack);
+                    } else if st.on_stack.contains(w) {
+                        let low_v = st.lowlink[v].min(st.index[w]);
+                        st.lowlink.insert(v, low_v);
                     }
+                    continue;
                 }
-                // Cyclic iff more than one member, or a self-loop.
-                let cyclic = scc.len() > 1
-                    || st.adj.get(v).is_some_and(|n| n.contains(&v));
-                if cyclic {
-                    scc.sort();
-                    st.sccs.push(scc);
+                // All neighbors visited: v is finished.
+                call_stack.pop();
+                if let Some(parent) = call_stack.last() {
+                    // Post-recursion lowlink propagation to the caller.
+                    let low_parent = st.lowlink[parent.0].min(st.lowlink[v]);
+                    st.lowlink.insert(parent.0, low_parent);
+                }
+                if st.lowlink[v] == st.index[v] {
+                    let mut scc = Vec::new();
+                    while let Some(w) = st.stack.pop() {
+                        st.on_stack.remove(w);
+                        scc.push(w.to_string());
+                        if w == v {
+                            break;
+                        }
+                    }
+                    // Cyclic iff more than one member, or a self-loop.
+                    let cyclic = scc.len() > 1
+                        || st.adj.get(v).is_some_and(|n| n.contains(&v));
+                    if cyclic {
+                        scc.sort();
+                        st.sccs.push(scc);
+                    }
                 }
             }
         }

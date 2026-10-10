@@ -6,6 +6,19 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **Scale gate passed at 10,000 files** (`docs/scale-gate.md`). A
+  deterministic 10k-file fixture (generator:
+  `scripts/gen_scale_fixture.py`; gate test:
+  `codetopo-cli/tests/scale_gate.rs`, run deliberately in release
+  mode) indexes in ~3.5 s at 134 MB peak RSS (46,001 nodes / 90,017
+  edges), and the long-pole queries answer in well under a second
+  in-process. **Defect found and fixed:** cycle detection (Tarjan
+  SCC) was recursive — a 10,000-deep call chain overflowed a 2 MB
+  thread stack and aborted the process; it is now an iterative
+  Tarjan with identical results, so depth is bounded by heap, not
+  by the caller's stack. Also corrected `schemas/README.md`'s MCP
+  tool count (eight → twelve). All seven crates bumped
+  `0.2.4` → `0.2.5`.
 - **Contract drift gates + ACP version honesty.** The published
   contracts can no longer drift silently: workspace tests (run in CI)
   now fail when `schemas/mcp-tools.json` differs from the live MCP
