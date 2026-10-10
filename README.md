@@ -15,7 +15,9 @@ It is deliberately domain-blind: no scoring, no rankings, no opinions about
 what the code means. It answers structural questions about source trees, and
 only that. Domain meaning belongs to the agents and teams composing on top.
 
-![codetopo demo: a code dependency graph](assets/codetopo-demo.svg)
+![Illustrative mock-up of a codetopo dependency graph (not actual tool output)](assets/codetopo-demo.svg)
+
+**Live demo:** [codetopo.aimlds.org](https://codetopo.aimlds.org) — codetopo's real map of this repository, drawn by codetopo itself and refreshed on every push to `main`.
 
 ## 60-second quickstart
 
