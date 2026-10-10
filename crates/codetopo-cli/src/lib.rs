@@ -369,8 +369,17 @@ pub fn print_stats(graph: &Graph) {
 pub fn verify_db(db_path: &Path) -> Result<(), CliError> {
     let store = Store::open(db_path)?;
     let audit = store.load_audit()?;
+    let valid = audit.verify();
     println!("audit entries: {}", audit.len());
-    println!("chain valid: {}", audit.verify());
+    println!("chain valid: {valid}");
     println!("head: {}", audit.head());
-    Ok(())
+    if valid {
+        Ok(())
+    } else {
+        Err(CliError::Usage(
+            "audit chain verification FAILED — the stored chain does not \
+             recompute; the database has been altered or corrupted"
+                .to_string(),
+        ))
+    }
 }

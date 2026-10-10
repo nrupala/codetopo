@@ -1,0 +1,28 @@
+# Copyright (C) 2026 Nrupal Akolkar
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: ci
+
+# The repo's first automated gate: the full workspace test suite plus
+# clippy with warnings denied, on every pull request and every push
+# to main. (No fmt gate yet: the tree is not rustfmt-clean at
+# baseline; formatting lands as its own change, not as a tax on
+# every PR.)
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Test the workspace
+        run: cargo test --workspace
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --workspace --all-targets -- -D warnings

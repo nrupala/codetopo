@@ -803,20 +803,30 @@ mod tests {
     fn path_returns_the_typed_chain() {
         let (_dir, db_path) = fixture_index();
         let graph = load_graph_from_db(&db_path).expect("graph loads");
-        // Walk a real calls edge backwards to get a pair that is joined.
+        // Walk a real calls edge in its true direction to get a pair
+        // that is joined. (An earlier version of this test walked the
+        // edge backwards and expected a chain — that expectation
+        // enshrined the reversed-path fabrication fixed in core.)
         let edge = graph
             .edges()
             .find(|e| e.kind == codetopo_core::EdgeKind::Calls)
             .expect("fixture has a calls edge");
         let value = result_of(
             "codetopo_path",
-            &args(&db_path, json!({"from": edge.to, "to": edge.from})),
+            &args(&db_path, json!({"from": edge.from, "to": edge.to})),
         );
         let steps = value["path"].as_array().expect("path");
         assert!(!steps.is_empty());
         assert!(steps[0]["kind"].is_string(), "steps must be typed");
-        assert_eq!(steps[0]["from"], edge.to);
-        assert_eq!(steps[steps.len() - 1]["to"], edge.from);
+        assert_eq!(steps[0]["from"], edge.from);
+        assert_eq!(steps[steps.len() - 1]["to"], edge.to);
+        // The backwards query has no directed path and must say so.
+        let err = call_tool(
+            "codetopo_path",
+            &args(&db_path, json!({"from": edge.to, "to": edge.from})),
+        )
+        .expect_err("no directed path backwards");
+        assert!(matches!(err, ToolError::NoPath { .. }), "unexpected: {err}");
     }
 
     #[test]

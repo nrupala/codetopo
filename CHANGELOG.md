@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Blast radius walked the wrong way.** `blast_radius` returned what a
+  node *depends on*; it now returns what *depends on it* — the
+  dependents that break when it changes — as DESIGN §3 promises.
+  CODE_SCHEMA §6 corrected to match, and the tests that enshrined the
+  old direction rewritten, with a chain regression test.
+- **`path` no longer fabricates directed paths.** When no directed
+  path existed, the reverse walk was relabelled as a forward path.
+  `path` now returns `None` honestly; the MCP test that expected a
+  backwards chain is corrected, with a no-path-backwards assertion.
+- **`codetopo verify` exits non-zero on a broken audit chain.** It
+  printed "chain valid: false" and returned success; it now errors,
+  with a tamper regression test.
+- **CI added** (`.github/workflows/ci.yml`): `cargo test` +
+  `cargo clippy -D warnings` on every PR and push to `main` — the
+  repo's first automated gate.
+
 ### Added
 
 - **Portfolio certification rollout.** `CONTRIBUTING.md` now documents

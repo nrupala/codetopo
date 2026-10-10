@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use codetopo_cli::{index_repo, load_graph_from_db, restore_snapshot};
+use codetopo_cli::{index_repo, load_graph_from_db, restore_snapshot, verify_db};
 use codetopo_core::{EdgeKind, NodeKind};
 
 /// Fresh scratch dir per test: <temp>/codetopo-cli-test-<pid>-<name>/.
@@ -155,4 +155,36 @@ fn unknown_id_exits_2() {
     );
 
     let _ = std::fs::remove_dir_all(&workdir);
+}
+
+/// `verify` must FAIL (Err -> non-zero exit) when the stored audit chain
+/// has been tampered with — printing "chain valid: false" and exiting 0
+/// would let a broken chain pass every script that checks the exit code.
+#[test]
+fn verify_db_fails_on_tampered_chain() {
+    use codetopo_store::{AuditLog, Store};
+
+    let workdir = workdir("verify-tamper");
+    let repo = fixture_repo(&workdir);
+    let db = workdir.join("index.db");
+    index_repo(&repo, &db, "fixture", None, None).expect("index");
+
+    // Untouched chain verifies.
+    verify_db(&db).expect("fresh chain verifies");
+
+    // Tamper: rewrite one entry's payload without recomputing its hash.
+    let mut store = Store::open(&db).expect("open store");
+    let audit = store.load_audit().expect("load audit");
+    let mut entries = audit.entries().to_vec();
+    assert!(entries.len() > 1, "fixture index writes multiple entries");
+    entries[1].payload = "tampered".to_string();
+    store
+        .save_audit(&AuditLog::from_entries(entries))
+        .expect("save tampered audit");
+    drop(store);
+
+    assert!(
+        verify_db(&db).is_err(),
+        "verify_db must error on a tampered chain"
+    );
 }
