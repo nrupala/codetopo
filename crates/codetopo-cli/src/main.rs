@@ -9,8 +9,10 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use codetopo_cli::{
-    index_repo, load_graph_from_db, print_diagnostics, print_id_list, print_stats, render_path,
-    require_node, resolve_hmac_key, restore_snapshot, snapshot_db, verify_db, verify_proof_file,
+    default_package_name, describe_schema, index_repo, load_graph_from_db, node_kind_name,
+    print_diagnostics, print_id_list, print_id_list_json, print_stats, print_stats_json,
+    render_path, require_node, resolve_hmac_key, restore_snapshot, snapshot_db, verify_db,
+    verify_proof_file,
 };
 
 #[derive(Parser)]
@@ -53,6 +55,9 @@ enum Commands {
         expand: bool,
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        /// Emit the HTTP response shape as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Reverse of descendants: transitive callers/importers of this id.
     Ancestors {
@@ -63,6 +68,9 @@ enum Commands {
         expand: bool,
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        /// Emit the HTTP response shape as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// What breaks if this changes: the dependents of the id, over calls,
     /// inherits, implements, reads/writes edges (imports alone does not break).
@@ -75,6 +83,9 @@ enum Commands {
         expand: bool,
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        /// Emit the HTTP response shape as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Shortest typed path between two ids (edge-kind sequence).
     Path {
@@ -82,11 +93,17 @@ enum Commands {
         b: String,
         #[arg(long)]
         db: PathBuf,
+        /// Emit the HTTP response shape as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Aggregate graph statistics: node/edge totals and per-kind counts.
     Stats {
         #[arg(long)]
         db: PathBuf,
+        /// Emit the HTTP response shape as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Verify the tamper-evident audit chain.
     Verify {
@@ -97,6 +114,41 @@ enum Commands {
     Diagnostics {
         #[arg(long)]
         db: PathBuf,
+    },
+    /// Everything within `depth` hops of an id, both directions
+    /// (the schema's neighborhood query, now on every surface).
+    Neighborhood {
+        id: String,
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long, default_value_t = 1)]
+        depth: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    /// One symbol in full: kind, location, tier, defines/refs.
+    Symbol {
+        id: String,
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Find symbols by name — the discovery step the id-based
+    /// queries assume you already did.
+    Search {
+        query: String,
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// The schema this build speaks: kinds, tiers, query vocabulary.
+    Schema {
+        #[arg(long)]
+        json: bool,
     },
     /// Export the stored graph as a JSON snapshot (+ .proof with a key).
     Snapshot {
@@ -142,45 +194,138 @@ enum Commands {
 fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
     match cli.command {
         Commands::Index { repo, db, package, snapshot, hmac_key } => {
-            let package = package.unwrap_or_else(|| {
-                repo.file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "repo".to_string())
-            });
+            let package = package.unwrap_or_else(|| default_package_name(&repo));
             let key = resolve_hmac_key(hmac_key.as_deref());
             index_repo(&repo, &db, &package, snapshot.as_deref(), key.as_deref())?;
         }
-        Commands::Descendants { id, db, expand, limit } => {
+        Commands::Descendants { id, db, expand, limit, json } => {
             let graph = load_graph_from_db(&db)?;
             require_node(&graph, &id)?;
-            print_id_list(&format!("descendants of {id}"), &graph.descendants(&id), expand, limit);
+            let ids = graph.descendants(&id);
+            if json {
+                print_id_list_json("descendants", &id, &ids, expand, limit);
+            } else {
+                print_id_list(&format!("descendants of {id}"), &ids, expand, limit);
+            }
         }
-        Commands::Ancestors { id, db, expand, limit } => {
+        Commands::Ancestors { id, db, expand, limit, json } => {
             let graph = load_graph_from_db(&db)?;
             require_node(&graph, &id)?;
-            print_id_list(&format!("ancestors of {id}"), &graph.ancestors(&id), expand, limit);
+            let ids = graph.ancestors(&id);
+            if json {
+                print_id_list_json("ancestors", &id, &ids, expand, limit);
+            } else {
+                print_id_list(&format!("ancestors of {id}"), &ids, expand, limit);
+            }
         }
-        Commands::BlastRadius { id, db, expand, limit } => {
+        Commands::BlastRadius { id, db, expand, limit, json } => {
             let graph = load_graph_from_db(&db)?;
             require_node(&graph, &id)?;
-            print_id_list(
-                &format!("blast radius of {id}"),
-                &graph.blast_radius(&id),
-                expand,
-                limit,
-            );
+            let ids = graph.blast_radius(&id);
+            if json {
+                print_id_list_json("blast_radius", &id, &ids, expand, limit);
+            } else {
+                print_id_list(&format!("blast radius of {id}"), &ids, expand, limit);
+            }
         }
-        Commands::Path { a, b, db } => {
+        Commands::Path { a, b, db, json } => {
             let graph = load_graph_from_db(&db)?;
             require_node(&graph, &a)?;
             require_node(&graph, &b)?;
             match graph.path(&a, &b) {
-                Some(steps) if steps.is_empty() => println!("{a}"),
-                Some(steps) => println!("{}", render_path(&steps)),
-                None => println!("no path"),
+                Some(steps) => {
+                    let rendered = if steps.is_empty() { a.clone() } else { render_path(&steps) };
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::json!({"from": a, "to": b, "steps": steps, "rendered": rendered})
+                        );
+                    } else {
+                        println!("{rendered}");
+                    }
+                }
+                None => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::json!({"from": a, "to": b, "steps": null, "rendered": "no path"})
+                        );
+                    } else {
+                        println!("no path");
+                    }
+                }
             }
         }
-        Commands::Stats { db } => print_stats(&load_graph_from_db(&db)?),
+        Commands::Stats { db, json } => {
+            let graph = load_graph_from_db(&db)?;
+            if json {
+                print_stats_json(&graph);
+            } else {
+                print_stats(&graph);
+            }
+        }
+        Commands::Neighborhood { id, db, depth, json } => {
+            let graph = load_graph_from_db(&db)?;
+            require_node(&graph, &id)?;
+            let sub = graph.neighborhood(&id, depth);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"node": id, "depth": depth, "nodes": sub.nodes, "edges": sub.edges})
+                );
+            } else {
+                println!("{} nodes within {depth} hop(s) of {id}", sub.nodes.len());
+                for n in &sub.nodes {
+                    println!("{}", n.id);
+                }
+            }
+        }
+        Commands::Symbol { id, db, json } => {
+            let graph = load_graph_from_db(&db)?;
+            let node = require_node(&graph, &id)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(node).expect("node serializes"));
+            } else {
+                println!("{} ({})", node.label, node_kind_name(node.kind));
+                println!("id: {}", node.id);
+                if !node.loc.file.is_empty() {
+                    println!("at: {}:{}", node.loc.file, node.loc.line);
+                }
+                println!("tier: {}", match node.tier {
+                    codetopo_core::Tier::Core => "core",
+                    codetopo_core::Tier::Recommended => "recommended",
+                    codetopo_core::Tier::Optional => "optional",
+                });
+                println!("defines: {}", node.defines.len());
+                println!("refs: {}", node.refs.len());
+            }
+        }
+        Commands::Search { query, db, limit, json } => {
+            let graph = load_graph_from_db(&db)?;
+            let hits = graph.search_symbols(&query, limit);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"query": query, "total": hits.len(), "results": hits})
+                );
+            } else {
+                println!("{} result(s) for '{query}'", hits.len());
+                for n in hits {
+                    println!("{}  ({}, {}:{})", n.id, node_kind_name(n.kind), n.loc.file, n.loc.line);
+                }
+            }
+        }
+        Commands::Schema { json } => {
+            let schema = describe_schema();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&schema).expect("schema serializes"));
+            } else {
+                println!("schema version: {}", schema["schema_version"].as_str().unwrap_or(""));
+                println!("node kinds: {}", schema["node_kinds"]);
+                println!("edge kinds: {}", schema["edge_kinds"]);
+                println!("queries: {}", schema["queries"]);
+            }
+        }
         Commands::Verify { db } => verify_db(&db)?,
         Commands::Diagnostics { db } => print_diagnostics(&db)?,
         Commands::Snapshot { db, out, hmac_key } => {

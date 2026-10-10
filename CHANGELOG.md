@@ -6,6 +6,31 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **One surface, three doors (final-shape W3).** The CLI, HTTP API,
+  and MCP server now answer the same questions with the same shapes:
+  - *Discovery everywhere.* `Graph::search_symbols` (exact < prefix <
+    contains ranking) plus `codetopo search`, `GET …/search`, and
+    `codetopo_search_symbols` — before this, every query needed an
+    exact node id nobody could discover from the tools themselves.
+  - *Neighborhood everywhere.* CODE_SCHEMA §6 names the neighborhood
+    query binding, but no surface exposed it. Now: `codetopo
+    neighborhood`, `GET …/neighborhood`, `codetopo_neighborhood`,
+    all serving the core `Graph::neighborhood` computation.
+  - *One symbol, in full:* `codetopo symbol`, `GET …/symbol`,
+    `codetopo_get_symbol`; and the schema itself: `codetopo schema`,
+    `GET /v1/schema`, `codetopo_describe_schema` — one generator in
+    the CLI library, so the three cannot drift.
+  - *One package identity.* Indexing without an explicit package now
+    derives the same name on every surface (the repository
+    directory's file stem). The HTTP surface previously recorded
+    `unknown`, so the same tree produced different node ids — and
+    different query results — depending on the door used.
+  - *CLI `--json`* on descendants / ancestors / blast-radius / path /
+    stats, emitting the HTTP response shapes (minus `index_id`), so
+    scripts get one format from either door.
+  - `schemas/mcp-tools.json` regenerated from the live binary
+    (twelve tools); `schemas/openapi.yaml` documents the new routes.
+  (No version bump in this PR.)
 - **Extractor conformance (final-shape W4).** The graph now carries
   the schema's full edge vocabulary:
   - *Reads/writes are first-class.* A resolved ref is a `reads` edge

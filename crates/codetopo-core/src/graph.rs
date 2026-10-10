@@ -865,6 +865,37 @@ impl Graph {
     /// k-hop subgraph around `id`, both directions, over non-contains edges.
     /// Nodes sorted by id; edges (both endpoints inside) sorted by
     /// (from, to, kind rank). Unknown id → empty subgraph.
+    /// Discovery: nodes whose label contains `query` (case-insensitive),
+    /// ranked exact-label first, then label-prefix, then label-contains,
+    /// then id-contains; ties break by kind rank and id, so every
+    /// surface reports the same order. Empty query returns nothing.
+    /// This is the entry point the exact-id queries always assumed a
+    /// caller already had (DESIGN §3's Layer-1 discovery gap).
+    pub fn search_symbols(&self, query: &str, limit: usize) -> Vec<&Node> {
+        let q = query.trim().to_lowercase();
+        if q.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        let mut scored: Vec<(u8, u8, &str, &Node)> = Vec::new();
+        for node in self.nodes.values() {
+            let label = node.label.to_lowercase();
+            let rank = if label == q {
+                0
+            } else if label.starts_with(&q) {
+                1
+            } else if label.contains(&q) {
+                2
+            } else if node.id.to_lowercase().contains(&q) {
+                3
+            } else {
+                continue;
+            };
+            scored.push((rank, GraphBuilder::node_kind_rank(node.kind), &node.id, node));
+        }
+        scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)).then_with(|| a.2.cmp(b.2)));
+        scored.into_iter().take(limit).map(|(_, _, _, n)| n).collect()
+    }
+
     pub fn neighborhood(&self, id: &str, depth: u32) -> Subgraph {
         let mut seen: HashSet<String> = HashSet::new();
         if !self.nodes.contains_key(id) {
@@ -1436,5 +1467,37 @@ mod tests {
             calls[0].to, "fixture::b::b",
             "call b() must resolve to the function, not the module"
         );
+    }
+
+    #[test]
+    fn search_symbols_ranks_exact_then_prefix_then_contains_then_id() {
+        let mut b = GraphBuilder::new();
+        b.add_file(file(
+            "t",
+            "m.rs",
+            "t::m",
+            vec![
+                sym("t::m::parse", NodeKind::Function, 1),
+                sym("t::m::parse_file", NodeKind::Function, 2),
+                sym("t::m::reparse", NodeKind::Function, 3),
+                sym("t::parse::helper", NodeKind::Function, 4),
+                sym("t::m::other", NodeKind::Function, 5),
+            ],
+            Vec::new(),
+            Vec::new(),
+        ));
+        let (g, _diags) = b.build();
+        let hits: Vec<&str> = g.search_symbols("parse", 20).iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(
+            hits,
+            vec!["t::m::parse", "t::m::parse_file", "t::m::reparse", "t::parse::helper"],
+            "exact < prefix < contains < id-only"
+        );
+        // case-insensitive, and the limit applies after ranking
+        let upper: Vec<&str> = g.search_symbols("PARSE", 2).iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(upper, vec!["t::m::parse", "t::m::parse_file"]);
+        assert!(g.search_symbols("", 20).is_empty(), "empty query finds nothing");
+        assert!(g.search_symbols("parse", 0).is_empty(), "zero limit finds nothing");
+        assert!(g.search_symbols("zzz", 20).is_empty(), "no match, no results");
     }
 }

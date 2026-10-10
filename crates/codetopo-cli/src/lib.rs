@@ -69,6 +69,18 @@ pub fn resolve_hmac_key(flag: Option<&str>) -> Option<Vec<u8>> {
         .map(|k| k.into_bytes())
 }
 
+/// The package name every surface defaults to for a repository:
+/// the repository directory's file stem, or `"repo"` when the path
+/// has none. The CLI, the HTTP server, and the MCP tools all call
+/// this — before it existed, the same fixture indexed as
+/// `fixture-repo::…` via the CLI and MCP but `unknown::…` via HTTP,
+/// so ids (and every query keyed on them) disagreed by surface.
+pub fn default_package_name(repo: &Path) -> String {
+    repo.file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "repo".to_string())
+}
+
 // ---------------------------------------------------------------------------
 // index
 // ---------------------------------------------------------------------------
@@ -617,6 +629,71 @@ pub const ALL_EDGE_KINDS: [EdgeKind; 9] = [
 
 /// Aggregate-first store statistics: totals plus per-kind breakdowns
 /// (non-zero kinds only).
+/// The schema description every surface can serve (CLI `schema`,
+/// HTTP `GET /v1/schema`, MCP `codetopo_describe_schema`): the node
+/// and edge kinds, the tier classification rule, and the query
+/// vocabulary — generated from the same constants the tallies use,
+/// so it cannot drift from the implementation it describes.
+pub fn describe_schema() -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": codetopo_core::snapshot::SCHEMA_VERSION,
+        "node_kinds": ALL_NODE_KINDS.iter().map(|k| node_kind_name(*k)).collect::<Vec<_>>(),
+        "edge_kinds": ALL_EDGE_KINDS.iter().map(|k| k.as_str()).collect::<Vec<_>>(),
+        "tiers": {
+            "core": "package, module, file (the structural skeleton)",
+            "recommended": "class, interface (type declarations)",
+            "optional": "everything else",
+        },
+        "queries": ["descendants", "ancestors", "blast_radius", "path",
+                    "neighborhood", "search", "symbol", "stats", "verify"],
+    })
+}
+
+/// JSON form of an id-list answer, field-for-field the HTTP closure
+/// response minus `index_id` (the CLI has no index ids).
+pub fn print_id_list_json(relation: &str, node: &str, ids: &[String], expand: bool, limit: usize) {
+    let total = ids.len();
+    let shown: &[String] = if expand { ids } else { &ids[..total.min(limit)] };
+    println!(
+        "{}",
+        serde_json::json!({
+            "relation": relation,
+            "node": node,
+            "total": total,
+            "expand": expand,
+            "limit": limit,
+            "truncated": !expand && total > limit,
+            "nodes": shown,
+        })
+    );
+}
+
+/// JSON form of the stats answer, matching the HTTP stats shape
+/// (`{nodes: {total, by_kind}, edges: {total, by_kind}}`).
+pub fn print_stats_json(graph: &Graph) {
+    let mut node_kinds = serde_json::Map::new();
+    for kind in ALL_NODE_KINDS {
+        let count = graph.nodes().filter(|n| n.kind == kind).count();
+        if count > 0 {
+            node_kinds.insert(node_kind_name(kind).to_string(), count.into());
+        }
+    }
+    let mut edge_kinds = serde_json::Map::new();
+    for kind in ALL_EDGE_KINDS {
+        let count = graph.edge_count_by_kind(kind);
+        if count > 0 {
+            edge_kinds.insert(kind.as_str().to_string(), count.into());
+        }
+    }
+    println!(
+        "{}",
+        serde_json::json!({
+            "nodes": {"total": graph.node_count(), "by_kind": node_kinds},
+            "edges": {"total": graph.edge_count(), "by_kind": edge_kinds},
+        })
+    );
+}
+
 pub fn print_stats(graph: &Graph) {
     println!("nodes: {}", graph.node_count());
     for kind in ALL_NODE_KINDS {

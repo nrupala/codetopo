@@ -390,3 +390,77 @@ fn reindex_replaces_stale_graph() {
 
     let _ = std::fs::remove_dir_all(&workdir);
 }
+
+
+/// The discovery surface (PR C): search / symbol / neighborhood / schema
+/// and `--json` output, driven through the real binary.
+#[test]
+fn discovery_commands_and_json_output() {
+    let workdir = workdir("discovery");
+    let repo = fixture_repo(&workdir);
+    let db = workdir.join("index.db");
+    index_repo(&repo, &db, "fixture", None, None).expect("index_repo succeeds");
+    let graph = load_graph_from_db(&db).expect("load graph");
+    let b_id = find_id(&graph, NodeKind::Function, "b");
+    let a_id = find_id(&graph, NodeKind::Function, "a");
+    let bin = env!("CARGO_BIN_EXE_codetopo");
+    let run = |args: &[&str]| {
+        Command::new(bin)
+            .args(args)
+            .arg("--db")
+            .arg(&db)
+            .output()
+            .expect("run codetopo binary")
+    };
+
+    // search finds b without knowing its id
+    let out = run(&["search", "b"]);
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains(&b_id), "search prints b's id: {text}");
+
+    // symbol describes the node in words
+    let out = run(&["symbol", &b_id]);
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("tier:"), "symbol prints a tier: {text}");
+
+    // unknown symbol id exits 2, like every other id-based command
+    let out = run(&["symbol", "no::such::id"]);
+    assert_eq!(out.status.code(), Some(2), "unknown symbol must exit 2");
+
+    // neighborhood of a includes a itself
+    let out = run(&["neighborhood", &a_id]);
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains(&a_id), "neighborhood lists the center: {text}");
+
+    // --json shapes match the HTTP surface (minus index_id)
+    let out = run(&["descendants", &a_id, "--json"]);
+    assert!(out.status.success());
+    let value: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("descendants --json is JSON");
+    assert_eq!(value["relation"], "descendants");
+    assert_eq!(value["node"], a_id);
+    assert!(value["total"].as_u64().is_some());
+
+    let out = run(&["search", "b", "--json"]);
+    let value: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("search --json is JSON");
+    assert_eq!(value["query"], "b");
+    assert!(value["total"].as_u64().expect("total") >= 1);
+
+    let out = Command::new(bin).args(["schema", "--json"]).output().expect("run schema");
+    assert!(out.status.success());
+    let value: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("schema --json is JSON");
+    assert_eq!(value["schema_version"], "1.0-draft");
+    assert!(value["node_kinds"].as_array().expect("kinds").iter().any(|k| k == "function"));
+
+    let out = run(&["stats", "--json"]);
+    let value: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("stats --json is JSON");
+    assert!(value["nodes"]["total"].as_u64().expect("node total") >= 10);
+
+    let _ = std::fs::remove_dir_all(&workdir);
+}
