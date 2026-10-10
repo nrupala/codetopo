@@ -157,6 +157,91 @@ fn unknown_id_exits_2() {
     let _ = std::fs::remove_dir_all(&workdir);
 }
 
+/// Reindexing a changed tree into the same database must REPLACE the old
+/// graph: a renamed symbol's old node may not survive as a stale row.
+#[test]
+fn reindex_replaces_stale_graph() {
+    let workdir = workdir("reindex-replace");
+    let repo = fixture_repo(&workdir);
+    let db = workdir.join("index.db");
+
+    index_repo(&repo, &db, "fixture", None, None).expect("first index");
+    let g1 = load_graph_from_db(&db).expect("load first graph");
+    assert!(g1.nodes().any(|n| n.kind == NodeKind::Function && n.label == "b"));
+
+    // Rename fn b -> fn bb (and the call site), then reindex the same db.
+    std::fs::write(repo.join("a.rs"), "fn a() {\n    bb();\n}\n").expect("rewrite a.rs");
+    std::fs::write(repo.join("b.rs"), "fn bb() {}\n").expect("rewrite b.rs");
+    let report = index_repo(&repo, &db, "fixture", None, None).expect("reindex");
+    let g2 = load_graph_from_db(&db).expect("load reindexed graph");
+
+    assert!(
+        !g2.nodes().any(|n| n.kind == NodeKind::Function && n.label == "b"),
+        "stale function node 'b' must not survive reindex"
+    );
+    assert!(g2.nodes().any(|n| n.kind == NodeKind::Function && n.label == "bb"));
+
+    // Counts must equal a fresh index of the changed tree exactly.
+    let fresh_db = workdir.join("fresh.db");
+    let fresh = index_repo(&repo, &fresh_db, "fixture", None, None).expect("fresh index");
+    assert_eq!(report.nodes, fresh.nodes, "reindex node count == fresh count");
+    assert_eq!(report.edges, fresh.edges, "reindex edge count == fresh count");
+    assert_eq!(g2.node_count(), fresh.nodes);
+
+    let _ = std::fs::remove_dir_all(&workdir);
+}
+
+/// Restore into a populated database is a usage error, not a silent union.
+#[test]
+fn restore_into_nonempty_db_fails() {
+    let workdir = workdir("restore-nonempty");
+    let repo = fixture_repo(&workdir);
+    let db = workdir.join("index.db");
+    let snap = workdir.join("snap.json");
+
+    index_repo(&repo, &db, "fixture", Some(&snap), None).expect("index with snapshot");
+    let err = restore_snapshot(&snap, &db).expect_err("restore into same db must fail");
+    assert!(
+        err.to_string().contains("already holds a graph"),
+        "error explains the refusal, got: {err}"
+    );
+
+    let _ = std::fs::remove_dir_all(&workdir);
+}
+
+/// Diagnostics are persisted with the index and replaced on reindex.
+#[test]
+fn diagnostics_persist_and_clear_on_reindex() {
+    use codetopo_store::Store;
+
+    let workdir = workdir("diagnostics-persist");
+    let repo = workdir.join("repo");
+    std::fs::create_dir_all(&repo).expect("create repo dir");
+    // A call to a function that does not exist -> UnresolvedCall diagnostic.
+    std::fs::write(repo.join("a.rs"), "fn a() {\n    missing();\n}\n").expect("write a.rs");
+    let db = workdir.join("index.db");
+
+    let report = index_repo(&repo, &db, "fixture", None, None).expect("index");
+    assert!(report.diagnostics >= 1, "unresolved call is diagnosed");
+    let store = Store::open(&db).expect("open store");
+    let diags = store.load_diagnostics().expect("load diagnostics");
+    assert_eq!(diags.len(), report.diagnostics, "diagnostics persisted in full");
+    assert!(
+        diags.iter().any(|d| matches!(d, codetopo_core::Diagnostic::UnresolvedCall { .. })),
+        "the unresolved call is among them: {diags:?}"
+    );
+    drop(store);
+
+    // Define the function and reindex: the old diagnostics must be gone.
+    std::fs::write(repo.join("b.rs"), "fn missing() {}\n").expect("write b.rs");
+    let report2 = index_repo(&repo, &db, "fixture", None, None).expect("reindex");
+    assert_eq!(report2.diagnostics, 0, "fixed tree produces no diagnostics");
+    let store = Store::open(&db).expect("reopen store");
+    assert!(store.load_diagnostics().expect("reload").is_empty());
+
+    let _ = std::fs::remove_dir_all(&workdir);
+}
+
 /// `verify` must FAIL (Err -> non-zero exit) when the stored audit chain
 /// has been tampered with — printing "chain valid: false" and exiting 0
 /// would let a broken chain pass every script that checks the exit code.

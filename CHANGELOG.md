@@ -21,9 +21,24 @@ All notable changes to this project are documented here.
 - **CI added** (`.github/workflows/ci.yml`): `cargo test` +
   `cargo clippy -D warnings` on every PR and push to `main` — the
   repo's first automated gate.
+- **Reindexing replaces; restore refuses a union (final-shape W1).**
+  Reindexing an existing database now atomically *replaces* the stored
+  graph (`Store::replace_graph`) instead of unioning new rows into the
+  old index via `INSERT OR IGNORE` — a renamed or deleted symbol can no
+  longer survive as a stale row. Restoring a snapshot into a populated
+  database is refused with a usage error instead of silently merging
+  two graphs. The `symbols:` line printed at index time now counts
+  actual symbol nodes instead of repeating the total node count.
 
 ### Added
 
+- **Persisted diagnostics (final-shape W1).** Builder diagnostics are
+  stored with the index and replaced on reindex; the new
+  `codetopo diagnostics --db` command prints them after the fact
+  (previously only the count printed at index time existed). The store
+  now stamps a format version (`PRAGMA user_version`), tracks an index
+  generation per replacement, and refuses databases from newer formats.
+  All seven crates bumped `0.2.1` → `0.2.2`.
 - **Portfolio certification rollout.** `CONTRIBUTING.md` now documents
   the PR-flow discipline (draft PR → tests green → owner merges;
   every PR adds a CHANGELOG entry under Unreleased and bumps crate
