@@ -6,6 +6,17 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **Contract drift gate (final-shape, contracts).**
+  `scripts/check-contracts.py`, run in CI after the test/clippy
+  steps, compares the published contracts against the running code
+  and fails the build on any disagreement: the MCP tool catalogue
+  (`schemas/mcp-tools.json`) against the built `codetopo-mcp`
+  binary's live `tools/list` answer, the OpenAPI paths against the
+  routes the server actually registers, and the ACP agent's
+  advertised identity against its crate. The schemas README's own
+  counts and tables are corrected to match (ten graph reads plus
+  `/v1/schema`; twelve MCP tools and their HTTP twins).
+
 - **One surface, three doors (final-shape W3).** The CLI, HTTP API,
   and MCP server now answer the same questions with the same shapes:
   - *Discovery everywhere.* `Graph::search_symbols` (exact < prefix <
@@ -128,6 +139,19 @@ All notable changes to this project are documented here.
   every PR adds a CHANGELOG entry under Unreleased and bumps crate
   versions; merge commits reference PR numbers; releases tagged
   `vX.Y.Z`). All seven crates bumped `0.2.0` → `0.2.1`.
+
+### Fixed
+
+- **The ACP agent now advertises its real identity.** Its
+  `initialize` response claimed version "0.1.0" — frozen since the
+  first build while the crates moved to 0.2.x — and a string
+  protocol version "1.0". It now reports the crate version
+  (`env!("CARGO_PKG_VERSION")`) and `protocolVersion` 1, the public
+  ACP spec's integer. The phase-3 design doc carries a dated
+  amendment saying plainly which parts of the wire follow the spec
+  and which are a codetopo dialect; session indexing also uses the
+  shared package-name default like every other surface.
+  (No version bump in this PR.)
 
 ## [0.2.0] — 2026-10-05
 

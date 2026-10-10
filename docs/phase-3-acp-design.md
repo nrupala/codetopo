@@ -14,9 +14,23 @@ Agent: `codetopo-acp` (crate `codetopo-acp`), read-only ACP adapter.
 
 ## Capabilities advertised (initialize)
 - `agent`: "codetopo"
-- `protocolVersion`: "1.0"
+- `protocolVersion`: 1
 - `agentCapabilities`: `read_only`, `code_structure`, `session_based`, `tools`
-- `agentInfo`: `{name:"codetopo", version:"0.1.0"}`
+- `agentInfo`: `{name:"codetopo", version:<the crate version>}`
+
+> **Amendment (2026-10-10, contracts workstream).** Two identity
+> claims above were wrong in the original design and are corrected:
+> `protocolVersion` is the public ACP spec's *integer* (1), not the
+> string "1.0"; and `agentInfo.version` is the crate's real version
+> (`env!("CARGO_PKG_VERSION")`), not the frozen "0.1.0" the agent kept
+> advertising while the crates moved to 0.2.x. The drift gate
+> (`scripts/check-contracts.py`) now fails CI if either regresses.
+> Honest scope: framing, method names, and the initialize handshake
+> follow the public spec; the prompt/answer payloads and the
+> capability keys are a codetopo dialect (a prompt is plain text, an
+> answer is one text result). A real third-party client session is
+> the protocol-proof workstream's job, and until it runs, no
+> conformance claim beyond this paragraph is made.
 
 ## Session lifecycle
 - `session/new`: accepts `cwd`. Indexes via `codetopo_cli::index_repo()` into temp SQLite DB (`/tmp/codetopo-<pid>-<session>.sqlite`). Same extraction path CLI uses (no duplicated extraction).

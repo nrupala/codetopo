@@ -26,3 +26,7 @@ jobs:
         run: cargo test --workspace
       - name: Clippy (warnings are errors)
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Contract drift gate (schemas vs running code)
+        run: |
+          cargo build -p codetopo-mcp -p codetopo-acp
+          python3 scripts/check-contracts.py
