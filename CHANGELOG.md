@@ -6,6 +6,23 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **The store now replaces; it never silently unions.** Reindexing or
+  restoring into an existing database used `INSERT OR IGNORE`, so
+  stale symbols from an older graph survived forever. Indexing and
+  restore now go through `Store::replace_graph` — one transaction
+  that swaps the whole graph and advances a **graph generation**
+  counter; the store also carries a `meta` table with a schema
+  version (v1) from here on.
+- **Snapshot proofs are certificates, and restore verifies.**
+  `<snapshot>.proof` is now a structured certificate (format id,
+  algorithm, signer, the snapshot's SHA-256, audit head, and counts,
+  HMAC-signed) instead of a bare MAC. `codetopo restore` verifies
+  before writing: schema version, the snapshot's audit chain against
+  its declared head (always), and the certificate whenever one
+  exists (digest/head/counts/signature). Restoring without a
+  certificate requires the explicit `--allow-unverified` flag and is
+  loud about it. Regression tests cover reindex replacement and
+  every refusal path.
 - **Blast radius walked the wrong way.** `blast_radius` returned what a
   node *depends on*; it now returns what *depends on it* — the
   dependents that break when it changes — as DESIGN §3 promises.
@@ -21,24 +38,9 @@ All notable changes to this project are documented here.
 - **CI added** (`.github/workflows/ci.yml`): `cargo test` +
   `cargo clippy -D warnings` on every PR and push to `main` — the
   repo's first automated gate.
-- **Reindexing replaces; restore refuses a union (final-shape W1).**
-  Reindexing an existing database now atomically *replaces* the stored
-  graph (`Store::replace_graph`) instead of unioning new rows into the
-  old index via `INSERT OR IGNORE` — a renamed or deleted symbol can no
-  longer survive as a stale row. Restoring a snapshot into a populated
-  database is refused with a usage error instead of silently merging
-  two graphs. The `symbols:` line printed at index time now counts
-  actual symbol nodes instead of repeating the total node count.
 
 ### Added
 
-- **Persisted diagnostics (final-shape W1).** Builder diagnostics are
-  stored with the index and replaced on reindex; the new
-  `codetopo diagnostics --db` command prints them after the fact
-  (previously only the count printed at index time existed). The store
-  now stamps a format version (`PRAGMA user_version`), tracks an index
-  generation per replacement, and refuses databases from newer formats.
-  All seven crates bumped `0.2.1` → `0.2.2`.
 - **Portfolio certification rollout.** `CONTRIBUTING.md` now documents
   the PR-flow discipline (draft PR → tests green → owner merges;
   every PR adds a CHANGELOG entry under Unreleased and bumps crate

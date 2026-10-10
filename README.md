@@ -49,7 +49,7 @@ output of the CLI:
 $ codetopo index crates/codetopo-server/tests/fixture-repo --db graph.db
 files indexed: 3
 files failed: 0
-symbols: 6
+symbols: 15
 nodes: 15
 edges: 23
 diagnostics: 2
