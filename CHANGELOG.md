@@ -121,6 +121,26 @@ All notable changes to this project are documented here.
   `cargo clippy -D warnings` on every PR and push to `main` — the
   repo's first automated gate.
 
+- **README quickstart verified end-to-end; three drifts corrected**
+  (transcript in `docs/quickstart-verification.md`). The install
+  command now names the four packages — a bare
+  `cargo install --git https://github.com/nrupala/codetopo` fails with
+  cargo's "multiple packages with binaries found" error. The example
+  query id now matches what indexing `~/my-project` actually produces
+  (`my-project::…` — the directory name, hyphen included). The
+  `descendants` example output header now matches the binary
+  (`2 descendants of …`, count first). The fixture numbers (15 nodes /
+  23 edges and the full `stats` breakdown) were re-run against the
+  built CLI and confirmed exact, and the previously undocumented
+  `restore` command is now listed with the other queries. (Rebased
+  onto the final-shape main before merge: the `stats` breakdown's
+  `references` kind is `reads` since extractor conformance (W4) —
+  the README example line was updated to match the current binary
+  during the rebase, and the fixture was re-run to confirm it.) (The
+  `0.2.1` → `0.2.2` crate bump this change originally carried was
+  superseded while the PR waited: the final-shape work took the
+  crates to `0.2.3`, so this change ships no version bump.)
+
 ### Added
 
 - **Portfolio certification rollout.** `CONTRIBUTING.md` now documents
