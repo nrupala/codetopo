@@ -109,14 +109,16 @@ fn index_query_snapshot_restore_round_trip() {
         PathBuf::from(&proof_path).exists(),
         "proof file written alongside the snapshot"
     );
-    assert_eq!(
-        std::fs::read_to_string(&proof_path).expect("read proof").len(),
-        64,
-        "proof is hex HMAC-SHA256"
-    );
+    let cert: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&proof_path).expect("read proof"))
+            .expect("proof is a JSON certificate");
+    assert_eq!(cert["certificate"], "codetopo-snapshot-proof");
+    assert_eq!(cert["algorithm"], "HMAC-SHA256");
+    assert_eq!(cert["snapshot_sha256"].as_str().unwrap().len(), 64);
+    assert_eq!(cert["signature"].as_str().unwrap().len(), 64);
 
     // --- restore into a second db preserves counts ---
-    let stats = restore_snapshot(&snap, &db2).expect("restore succeeds");
+    let stats = restore_snapshot(&snap, &db2, Some(b"test-key"), false).expect("restore succeeds");
     let g1 = load_graph_from_db(&db).expect("reload db1");
     let g2 = load_graph_from_db(&db2).expect("reload db2");
     assert_eq!(g2.node_count(), g1.node_count(), "restore preserves node count");
@@ -187,4 +189,70 @@ fn verify_db_fails_on_tampered_chain() {
         verify_db(&db).is_err(),
         "verify_db must error on a tampered chain"
     );
+}
+
+/// Reindexing the same database with a different repo must REPLACE the
+/// graph, not union into it — a stale symbol from the first repo has
+/// no business surviving the second index.
+#[test]
+fn reindex_replaces_not_unions() {
+    let workdir = workdir("reindex-replaces");
+    let repo = fixture_repo(&workdir);
+    let db = workdir.join("index.db");
+    index_repo(&repo, &db, "fixture", None, None).expect("first index");
+    let g1 = load_graph_from_db(&db).expect("load first graph");
+    assert!(g1.nodes().any(|n| n.label == "a"));
+
+    // Second repo: only b.rs (no a, no c.ts).
+    let repo2 = workdir.join("repo2");
+    std::fs::create_dir_all(&repo2).expect("create repo2");
+    std::fs::write(repo2.join("b.rs"), "fn b() {}\n").expect("write b.rs");
+    index_repo(&repo2, &db, "fixture", None, None).expect("second index");
+    let g2 = load_graph_from_db(&db).expect("load second graph");
+    assert!(
+        !g2.nodes().any(|n| n.label == "a"),
+        "stale symbol 'a' survived a reindex (union semantics)"
+    );
+    assert!(g2.nodes().any(|n| n.label == "b"));
+}
+
+/// Restore verifies before it writes: wrong key, a tampered declared
+/// head, and a missing key are all refused; only the right key (or, for
+/// the chain alone, the explicit unverified flag) restores.
+#[test]
+fn restore_verification_gates() {
+    let workdir = workdir("restore-gates");
+    let repo = fixture_repo(&workdir);
+    let db = workdir.join("index.db");
+    let snap = workdir.join("snap.json");
+    index_repo(&repo, &db, "fixture", Some(&snap), Some(b"right-key")).expect("index");
+
+    // Proof exists, no key, no flag -> refused.
+    let db_a = workdir.join("a.db");
+    assert!(restore_snapshot(&snap, &db_a, None, false).is_err());
+    // Wrong key -> refused.
+    let db_b = workdir.join("b.db");
+    assert!(restore_snapshot(&snap, &db_b, Some(b"wrong-key"), false).is_err());
+    // Right key -> restores.
+    let db_c = workdir.join("c.db");
+    assert!(restore_snapshot(&snap, &db_c, Some(b"right-key"), false).is_ok());
+
+    // Tamper with the declared audit head: the chain gate must refuse
+    // even on the unverified path (the chain needs no key to check).
+    let text = std::fs::read_to_string(&snap).expect("read snapshot");
+    let head = codetopo_core::Snapshot::from_json(&text).unwrap().audit_head;
+    let tampered = text.replacen(
+        &format!("\"audit_head\": \"{head}\""),
+        "\"audit_head\": \"0000000000000000000000000000000000000000000000000000000000000000\"",
+        1,
+    );
+    assert_ne!(tampered, text, "tamper actually changed the snapshot");
+    let snap2 = workdir.join("snap-tampered.json");
+    std::fs::write(&snap2, &tampered).expect("write tampered snapshot");
+    // The tampered file has no matching proof next to it either; the
+    // chain gate fires first, so both paths must refuse.
+    let db_d = workdir.join("d.db");
+    assert!(restore_snapshot(&snap2, &db_d, Some(b"right-key"), false).is_err());
+    let db_e = workdir.join("e.db");
+    assert!(restore_snapshot(&snap2, &db_e, None, true).is_err());
 }

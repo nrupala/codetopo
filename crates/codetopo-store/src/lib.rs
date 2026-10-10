@@ -84,6 +84,10 @@ CREATE TABLE IF NOT EXISTS audit_log(
     prev_hash TEXT NOT NULL,
     hash TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS meta(
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_id);
 CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
 "#;
@@ -94,6 +98,21 @@ CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
 
 /// Seconds since the UNIX epoch, decimal string. std::time only — no chrono
 /// dependency, per the crate contract.
+/// Seed the meta table on open: schema version + graph generation.
+/// `INSERT OR IGNORE` keeps existing values — opening a database never
+/// resets its generation.
+fn seed_meta(conn: &rusqlite::Connection) -> Result<(), StoreError> {
+    conn.execute(
+        "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', '1')",
+        [],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO meta(key, value) VALUES ('graph_generation', '0')",
+        [],
+    )?;
+    Ok(())
+}
+
 fn now_ts() -> String {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -325,6 +344,11 @@ impl Default for AuditLog {
 // HMAC proof certificates
 // ---------------------------------------------------------------------------
 
+/// hex(SHA-256(data)). The content hash bound into proof certificates.
+pub fn sha256_hex(data: &[u8]) -> String {
+    hex::encode(Sha256::digest(data))
+}
+
 /// hex(HMAC-SHA256(key, message)). The proof primitive behind the audit
 /// certificates: binds an artifact (e.g. a snapshot JSON) to a signer key.
 pub fn hmac_proof(key: &[u8], message: &str) -> String {
@@ -395,6 +419,7 @@ impl Store {
         }
         let conn = rusqlite::Connection::open(path)?;
         conn.execute_batch(SCHEMA_SQL)?;
+        seed_meta(&conn)?;
         Ok(Store { conn })
     }
 
@@ -403,7 +428,87 @@ impl Store {
     pub fn open_in_memory() -> Result<Self, StoreError> {
         let conn = rusqlite::Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA_SQL)?;
+        seed_meta(&conn)?;
         Ok(Store { conn })
+    }
+
+    /// The store schema version (meta table). Version 1 is the first
+    /// versioned layout; databases created before versioning report 1 —
+    /// the layout is unchanged, versioning is additive.
+    pub fn schema_version(&self) -> Result<u32, StoreError> {
+        let v: String = self.conn.query_row(
+            "SELECT value FROM meta WHERE key = 'schema_version'",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(v.parse().unwrap_or(1))
+    }
+
+    /// How many times the graph has been atomically replaced
+    /// ([`Store::replace_graph`]). Plain `insert_graph` unions do not
+    /// count — a generation names a complete, coherent graph state.
+    pub fn graph_generation(&self) -> Result<u64, StoreError> {
+        let v: String = self.conn.query_row(
+            "SELECT value FROM meta WHERE key = 'graph_generation'",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(v.parse().unwrap_or(0))
+    }
+
+    /// Atomically replace the stored graph with `graph`: in a single
+    /// transaction, delete every node and edge, insert the new graph,
+    /// and advance the graph generation. A crash mid-replace rolls the
+    /// whole transaction back — the store always holds one complete
+    /// graph, never a union of two indexing runs. (Indexing and
+    /// restore both go through here; `insert_graph` remains the
+    /// low-level union primitive for callers that merge on purpose.)
+    pub fn replace_graph(&mut self, graph: &Graph) -> Result<InsertStats, StoreError> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM edges", [])?;
+        tx.execute("DELETE FROM nodes", [])?;
+        let mut stats = InsertStats { nodes: 0, edges: 0 };
+        {
+            let mut st = tx.prepare(
+                "INSERT INTO nodes(id, kind, label, file, line, col, tier, defines_json, refs_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )?;
+            for node in graph.nodes() {
+                stats.nodes += st.execute(rusqlite::params![
+                    node.id,
+                    node_kind_str(node.kind),
+                    node.label,
+                    node.loc.file,
+                    node.loc.line as i64,
+                    node.loc.column.map(|c| c as i64),
+                    tier_str(node.tier),
+                    serde_json::to_string(&node.defines)?,
+                    serde_json::to_string(&node.refs)?,
+                ])?;
+            }
+        }
+        {
+            let mut st = tx.prepare(
+                "INSERT INTO edges(from_id, to_id, kind, line, attrs_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?;
+            for e in graph.edges() {
+                stats.edges += st.execute(rusqlite::params![
+                    e.from,
+                    e.to,
+                    e.kind.as_str(),
+                    e.line.map(|l| l as i64),
+                    serde_json::to_string(&e.attrs)?,
+                ])?;
+            }
+        }
+        tx.execute(
+            "UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)
+             WHERE key = 'graph_generation'",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(stats)
     }
 
     /// Insert a graph, committing in fixed-size chunks. Nodes and edges are
@@ -690,6 +795,36 @@ mod tests {
         let (g, diags) = b.build();
         assert!(diags.is_empty(), "test fixture must be clean: {:?}", diags);
         g
+    }
+
+    #[test]
+    fn replace_graph_removes_stale_and_bumps_generation() {
+        let mut store = Store::open_in_memory().unwrap();
+        assert_eq!(store.schema_version().unwrap(), 1);
+        assert_eq!(store.graph_generation().unwrap(), 0);
+        let g = chain_graph();
+        store.insert_graph(&g).unwrap();
+        assert!(store.get_node("t::m::d").unwrap().is_some());
+        // A different, smaller graph replaces — never unions.
+        let mut b = GraphBuilder::new();
+        b.add_file(FileSymbols {
+            package: "t".to_string(),
+            file: "x.rs".to_string(),
+            module_id: "t::x".to_string(),
+            symbols: vec![sym("t::x::solo", NodeKind::Function, 1)],
+            imports: Vec::new(),
+            calls: Vec::new(),
+        });
+        let (g2, _) = b.build();
+        let stats = store.replace_graph(&g2).unwrap();
+        assert_eq!(stats.nodes, g2.node_count());
+        assert_eq!(store.counts().unwrap().0, g2.node_count());
+        assert!(store.get_node("t::m::d").unwrap().is_none(), "stale node must be gone");
+        assert!(store.get_node("t::x::solo").unwrap().is_some());
+        assert_eq!(store.graph_generation().unwrap(), 1);
+        store.replace_graph(&g).unwrap();
+        assert_eq!(store.graph_generation().unwrap(), 2);
+        assert!(store.get_node("t::m::d").unwrap().is_some());
     }
 
     #[test]

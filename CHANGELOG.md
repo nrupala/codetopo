@@ -6,6 +6,23 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- **The store now replaces; it never silently unions.** Reindexing or
+  restoring into an existing database used `INSERT OR IGNORE`, so
+  stale symbols from an older graph survived forever. Indexing and
+  restore now go through `Store::replace_graph` — one transaction
+  that swaps the whole graph and advances a **graph generation**
+  counter; the store also carries a `meta` table with a schema
+  version (v1) from here on.
+- **Snapshot proofs are certificates, and restore verifies.**
+  `<snapshot>.proof` is now a structured certificate (format id,
+  algorithm, signer, the snapshot's SHA-256, audit head, and counts,
+  HMAC-signed) instead of a bare MAC. `codetopo restore` verifies
+  before writing: schema version, the snapshot's audit chain against
+  its declared head (always), and the certificate whenever one
+  exists (digest/head/counts/signature). Restoring without a
+  certificate requires the explicit `--allow-unverified` flag and is
+  loud about it. Regression tests cover reindex replacement and
+  every refusal path.
 - **Blast radius walked the wrong way.** `blast_radius` returned what a
   node *depends on*; it now returns what *depends on it* — the
   dependents that break when it changes — as DESIGN §3 promises.

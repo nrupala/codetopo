@@ -64,8 +64,8 @@ enum Commands {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
-    /// Breakage propagation: descendants restricted to calls, inherits,
-    /// implements, reads/writes edges (imports alone does not break).
+    /// What breaks if this changes: the dependents of the id, over calls,
+    /// inherits, implements, reads/writes edges (imports alone does not break).
     #[command(name = "blast-radius")]
     BlastRadius {
         id: String,
@@ -102,12 +102,21 @@ enum Commands {
         #[arg(long, value_name = "KEY")]
         hmac_key: Option<String>,
     },
-    /// Restore a snapshot JSON file into a (fresh) database.
+    /// Restore a snapshot JSON file into a database (verified first:
+    /// schema, audit chain, and the proof certificate when present;
+    /// the stored graph is replaced, never unioned).
     Restore {
         #[arg(long)]
         snapshot: PathBuf,
         #[arg(long)]
         db: PathBuf,
+        /// HMAC key the snapshot's proof certificate was signed with
+        /// (else CODETOPO_HMAC_KEY env).
+        #[arg(long, value_name = "KEY")]
+        hmac_key: Option<String>,
+        /// Restore without proof verification (audit chain only).
+        #[arg(long)]
+        allow_unverified: bool,
     },
 }
 
@@ -158,8 +167,9 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
             let key = resolve_hmac_key(hmac_key.as_deref());
             snapshot_db(&db, &out, key.as_deref())?;
         }
-        Commands::Restore { snapshot, db } => {
-            restore_snapshot(&snapshot, &db)?;
+        Commands::Restore { snapshot, db, hmac_key, allow_unverified } => {
+            let key = resolve_hmac_key(hmac_key.as_deref());
+            restore_snapshot(&snapshot, &db, key.as_deref(), allow_unverified)?;
         }
     }
     Ok(())
