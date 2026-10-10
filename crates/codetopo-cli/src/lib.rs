@@ -16,7 +16,10 @@ use std::path::{Path, PathBuf};
 use codetopo_core::snapshot::SnapshotAuditEntry;
 use codetopo_core::{EdgeKind, Graph, GraphBuilder, Node, NodeKind, PathStep, Snapshot};
 use codetopo_extract::{extract_file, is_supported};
-use codetopo_store::{hmac_proof, sha256_hex, verify_proof, AuditLog, InsertStats, Store};
+use codetopo_store::{
+    is_legacy_proof, issue_certificate, verify_proof, AuditLog, CertStatus, InsertStats,
+    ProofCertificate, Store,
+};
 use rayon::prelude::*;
 use serde_json::json;
 use thiserror::Error;
@@ -54,6 +57,14 @@ impl CliError {
 // ---------------------------------------------------------------------------
 // HMAC key resolution
 // ---------------------------------------------------------------------------
+
+/// Seconds since the UNIX epoch (0 if the clock is somehow before it).
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
 
 /// Resolve the HMAC key for snapshot proof certificates: the `--hmac-key`
 /// flag first, then the `CODETOPO_HMAC_KEY` environment variable, else `None`
@@ -161,9 +172,13 @@ pub fn index_repo(
     }
     let (graph, diags) = builder.build();
 
-    // 4. Persist.
+    // 4. Persist. Replacement semantics: reindexing an existing database
+    //    must produce exactly the new graph — never a union with rows from
+    //    a previous index of a different tree state. Diagnostics belong to
+    //    this index and are replaced alongside it.
     let mut store = Store::open(db_path)?;
     let _inserted = store.replace_graph(&graph)?;
+    store.save_diagnostics(&diags)?;
 
     // 5. Audit: index_started then index_finished, then save the chain.
     let mut audit = AuditLog::new();
@@ -189,10 +204,25 @@ pub fn index_repo(
         write_snapshot_file(&graph, &audit.snapshot_entries(), sp, hmac_key)?;
     }
 
-    // 7. Aggregate-first output.
+    // 7. Aggregate-first output. `symbols` counts actual symbol nodes
+    //    (classes, interfaces, functions, methods, variables) — not the
+    //    structural package/module/file/external nodes included in `nodes`.
+    let symbols = graph
+        .nodes()
+        .filter(|n| {
+            matches!(
+                n.kind,
+                NodeKind::Class
+                    | NodeKind::Interface
+                    | NodeKind::Function
+                    | NodeKind::Method
+                    | NodeKind::Variable
+            )
+        })
+        .count();
     eprintln!("files indexed: {files_indexed}");
     eprintln!("files failed: {files_failed}");
-    eprintln!("symbols: {}", graph.node_count());
+    eprintln!("symbols: {symbols}");
     eprintln!("nodes: {}", graph.node_count());
     eprintln!("edges: {}", graph.edge_count());
     eprintln!("diagnostics: {}", diags.len());
@@ -210,50 +240,27 @@ pub fn index_repo(
 // snapshot / restore
 // ---------------------------------------------------------------------------
 
-/// The canonical string a proof certificate signs: the certificate
-/// format version, the snapshot's content hash, its audit head, and
-/// its size. Binding all four means a signature vouches for *this*
-/// snapshot — not for whatever file happens to sit next to it.
-fn proof_canonical(snapshot_sha256: &str, audit_head: &str, nodes: usize, edges: usize) -> String {
-    format!("codetopo-proof-v1\n{snapshot_sha256}\n{audit_head}\n{nodes}\n{edges}")
-}
-
 /// Write `Snapshot::from_graph(graph, audit_log)` as pretty JSON to `out`.
-/// When `hmac_key` is present, also write `<out>.proof`: a structured
-/// proof certificate (JSON) binding the snapshot's SHA-256, its audit
-/// head, and its node/edge counts under an HMAC-SHA256 signature —
-/// the DESIGN §0.5 certificate shape, not a bare MAC of the file.
-/// Without a key, a stderr note records that the snapshot ships
-/// without a proof.
+/// When `hmac_key` is present, also write `<out>.proof` containing a
+/// structured [`ProofCertificate`] (serial, issuer, signer fingerprint,
+/// artifact hash, audit head, validity window, signature); otherwise a
+/// stderr note records that the snapshot ships without a proof.
 pub fn write_snapshot_file(
     graph: &Graph,
     audit_log: &[SnapshotAuditEntry],
     out: &Path,
     hmac_key: Option<&[u8]>,
 ) -> Result<(), CliError> {
-    let snap = Snapshot::from_graph(graph, audit_log);
-    let json = snap.to_json_pretty()?;
+    let json = Snapshot::from_graph(graph, audit_log).to_json_pretty()?;
     std::fs::write(out, &json)?;
     match hmac_key {
         Some(key) => {
-            let digest = sha256_hex(json.as_bytes());
-            let canonical =
-                proof_canonical(&digest, &snap.audit_head, snap.nodes.len(), snap.edges.len());
-            let cert = serde_json::json!({
-                "certificate": "codetopo-snapshot-proof",
-                "version": 1,
-                "algorithm": "HMAC-SHA256",
-                "signer": "codetopo-cli",
-                "snapshot_sha256": digest,
-                "audit_head": snap.audit_head,
-                "nodes": snap.nodes.len(),
-                "edges": snap.edges.len(),
-                "signature": hmac_proof(key, &canonical),
-            });
-            std::fs::write(
-                format!("{}.proof", out.display()),
-                serde_json::to_string_pretty(&cert)?,
-            )?;
+            let head = audit_log
+                .last()
+                .map(|e| e.hash.clone())
+                .unwrap_or_default();
+            let cert = issue_certificate(key, &json, &head, now_unix());
+            std::fs::write(format!("{}.proof", out.display()), cert.to_json())?;
         }
         None => eprintln!("note: no HMAC key provided; snapshot written without proof"),
     }
@@ -271,116 +278,145 @@ pub fn snapshot_db(db_path: &Path, out: &Path, hmac_key: Option<&[u8]>) -> Resul
     Ok(())
 }
 
-/// Restore a snapshot JSON file into the store at `db_path`.
+/// Verify a snapshot's embedded audit chain recomputes and that its
+/// `audit_head` is that chain's head. Snapshots carrying no chain
+/// (pre-audit exports) skip this check — there is nothing to recompute.
+fn check_snapshot_chain(snap: &Snapshot) -> Result<(), CliError> {
+    if snap.audit_log.is_empty() {
+        return Ok(());
+    }
+    let log = AuditLog::from_snapshot_entries(&snap.audit_log);
+    if !log.verify() {
+        return Err(CliError::Usage(
+            "snapshot audit chain does not recompute — the snapshot has been altered".to_string(),
+        ));
+    }
+    if snap.audit_head != log.head() {
+        return Err(CliError::Usage(
+            "snapshot audit_head does not match its audit chain head".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Verify the `.proof` companion of the snapshot at `snapshot_path`
+/// against `key` and the snapshot's exact bytes. On success returns a
+/// one-line description of what attested the artifact; on failure a
+/// usage error naming the failed check. Accepts structured certificates
+/// and legacy bare-HMAC proofs (reported as legacy).
+fn verify_proof_companion(
+    snapshot_path: &Path,
+    data: &str,
+    key: &[u8],
+) -> Result<String, CliError> {
+    let proof_path = format!("{}.proof", snapshot_path.display());
+    let text = std::fs::read_to_string(&proof_path)?;
+    if let Some(cert) = ProofCertificate::from_json(&text) {
+        match cert.verify(key, data, now_unix()) {
+            CertStatus::Valid => Ok(format!(
+                "proof certificate {} valid (issuer {}, signer key {})",
+                cert.serial, cert.issuer, cert.signer_key_id
+            )),
+            status => Err(CliError::Usage(format!(
+                "proof certificate {} failed verification: {}",
+                cert.serial,
+                status.label()
+            ))),
+        }
+    } else if is_legacy_proof(&text) {
+        if verify_proof(key, data, text.trim()) {
+            Ok("legacy proof (bare HMAC) valid — pre-certificate format".to_string())
+        } else {
+            Err(CliError::Usage(
+                "legacy proof does not match the snapshot".to_string(),
+            ))
+        }
+    } else {
+        Err(CliError::Usage(format!(
+            "proof file {proof_path} is neither a proof certificate nor a legacy HMAC proof"
+        )))
+    }
+}
+
+/// Verify a snapshot end to end: schema version, embedded audit chain,
+/// and its proof companion. Prints a report; returns `Err` (non-zero
+/// exit) on the first failed check. This is the `verify-proof` command.
+pub fn verify_proof_file(snapshot_path: &Path, hmac_key: &[u8]) -> Result<(), CliError> {
+    let data = std::fs::read_to_string(snapshot_path)?;
+    let snap = Snapshot::from_json(&data)?;
+    snap.check_schema_version().map_err(CliError::Usage)?;
+    println!("schema version: {} (supported)", snap.schema_version);
+    if snap.audit_log.is_empty() {
+        println!("audit chain: not carried by this snapshot");
+    } else {
+        check_snapshot_chain(&snap)?;
+        println!(
+            "audit chain: valid ({} entries, head {})",
+            snap.audit_log.len(),
+            snap.audit_head
+        );
+    }
+    let line = verify_proof_companion(snapshot_path, &data, hmac_key)?;
+    println!("{line}");
+    println!("status: VALID");
+    Ok(())
+}
+
+/// Restore a snapshot JSON file into a (fresh) store at `db_path`.
+/// The snapshot's audit trail is replayed verbatim, so the restored database
+/// binds the same audit head the snapshot was exported under.
+/// Returns the insert stats; prints the round-trip counts.
 ///
-/// Verification comes first and is not optional about the parts that
-/// need no key: the schema version must be one this build speaks, and
-/// the snapshot's audit chain must recompute and end at the head the
-/// snapshot declares. The proof certificate (`<snapshot>.proof`) is
-/// verified whenever it exists — digest, head, counts, and signature
-/// under `hmac_key`. Restoring with no certificate at all, or with a
-/// certificate but no key, requires `allow_unverified` and is loud
-/// about it. Only a verified snapshot is written, and it REPLACES
-/// the stored graph atomically rather than unioning into it.
+/// Nothing is restored on trust: the schema version must be supported,
+/// the embedded audit chain must recompute and match the snapshot's
+/// audit head, and when a `.proof` companion exists it must verify
+/// against `hmac_key` (a missing key is an error — an unverifiable proof
+/// is not skipped). The destination must also be empty: restoring into
+/// a populated store would union two graphs into a state neither
+/// snapshot describes.
 pub fn restore_snapshot(
     snapshot_path: &Path,
     db_path: &Path,
     hmac_key: Option<&[u8]>,
-    allow_unverified: bool,
 ) -> Result<InsertStats, CliError> {
     let data = std::fs::read_to_string(snapshot_path)?;
     let snap = Snapshot::from_json(&data)?;
-    if snap.schema_version != codetopo_core::snapshot::SCHEMA_VERSION {
-        return Err(CliError::Usage(format!(
-            "unsupported snapshot schema '{}' (this build speaks '{}')",
-            snap.schema_version,
-            codetopo_core::snapshot::SCHEMA_VERSION
-        )));
-    }
-    let audit = AuditLog::from_snapshot_entries(&snap.audit_log);
-    if snap.audit_log.is_empty() {
-        // Nothing to recompute: a snapshot with no audit trail can only
-        // ever restore on the explicit unverified path.
-        if !allow_unverified {
-            return Err(CliError::Usage(
-                "snapshot carries no audit trail - nothing to verify it against (pass --allow-unverified to restore it anyway)".to_string(),
-            ));
-        }
-        eprintln!("warning: snapshot carries no audit trail - restoring unverified");
-    } else if !audit.verify() || audit.head() != snap.audit_head {
-        return Err(CliError::Usage(
-            "snapshot audit chain does not verify against its declared head — the snapshot has been altered or corrupted"
-                .to_string(),
-        ));
-    }
-    // Proof certificate gate.
+    snap.check_schema_version().map_err(CliError::Usage)?;
+    check_snapshot_chain(&snap)?;
     let proof_path = format!("{}.proof", snapshot_path.display());
-    let mut proof_note = "audit chain only — NO proof certificate".to_string();
-    match std::fs::read_to_string(&proof_path) {
-        Ok(cert_text) => {
-            let cert: serde_json::Value = serde_json::from_str(&cert_text)?;
-            let well_formed = cert["certificate"] == "codetopo-snapshot-proof"
-                && cert["version"] == 1
-                && cert["algorithm"] == "HMAC-SHA256";
-            if !well_formed {
+    if Path::new(&proof_path).exists() {
+        match hmac_key {
+            Some(key) => {
+                let line = verify_proof_companion(snapshot_path, &data, key)?;
+                eprintln!("{line}");
+            }
+            None => {
                 return Err(CliError::Usage(
-                    "proof file is not a codetopo proof certificate".to_string(),
+                    "snapshot carries a proof but no HMAC key was provided \
+                     (--hmac-key or CODETOPO_HMAC_KEY); refusing to restore unverified"
+                        .to_string(),
                 ));
             }
-            match hmac_key {
-                Some(key) => {
-                    let digest = sha256_hex(data.as_bytes());
-                    let canonical = proof_canonical(
-                        &digest,
-                        &snap.audit_head,
-                        snap.nodes.len(),
-                        snap.edges.len(),
-                    );
-                    let signature = cert["signature"].as_str().unwrap_or("");
-                    let binds = cert["snapshot_sha256"] == digest
-                        && cert["audit_head"] == snap.audit_head
-                        && cert["nodes"] == snap.nodes.len()
-                        && cert["edges"] == snap.edges.len();
-                    if !binds || !verify_proof(key, &canonical, signature) {
-                        return Err(CliError::Usage(
-                            "proof certificate does not verify for this snapshot (digest, head, counts, or signature mismatch)"
-                                .to_string(),
-                        ));
-                    }
-                    proof_note = "proof certificate verified".to_string();
-                }
-                None if allow_unverified => {
-                    eprintln!(
-                        "warning: proof certificate present but no key provided — restoring on audit-chain verification alone"
-                    );
-                }
-                None => {
-                    return Err(CliError::Usage(
-                        "proof certificate present but no HMAC key provided (pass --hmac-key / CODETOPO_HMAC_KEY, or --allow-unverified)"
-                            .to_string(),
-                    ));
-                }
-            }
         }
-        Err(_) if allow_unverified => {
-            eprintln!(
-                "warning: no proof certificate found — restoring on audit-chain verification alone"
-            );
-        }
-        Err(_) => {
-            return Err(CliError::Usage(
-                "no proof certificate found next to the snapshot (pass --allow-unverified to restore on audit-chain verification alone)"
-                    .to_string(),
-            ));
-        }
+    } else {
+        eprintln!(
+            "note: no proof alongside snapshot; restoring on schema + audit-chain verification only"
+        );
     }
     let graph = snap.to_graph();
     let mut store = Store::open(db_path)?;
-    let stats = store.replace_graph(&graph)?;
-    store.save_audit(&audit)?;
+    let (n, e) = store.counts()?;
+    if n != 0 || e != 0 {
+        return Err(CliError::Usage(format!(
+            "restore destination {} already holds a graph ({n} nodes, {e} edges); \
+             restore requires a fresh database — delete the file or choose a new --db path",
+            db_path.display()
+        )));
+    }
+    let stats = store.insert_graph(&graph)?;
+    store.save_audit(&AuditLog::from_snapshot_entries(&snap.audit_log))?;
     println!("restored nodes: {}", stats.nodes);
     println!("restored edges: {}", stats.edges);
-    println!("verified: {proof_note}");
     Ok(stats)
 }
 
@@ -485,6 +521,21 @@ pub fn print_stats(graph: &Graph) {
             println!("  {}: {n}", kind.as_str());
         }
     }
+}
+
+/// Print the diagnostics recorded when the index at `db_path` was built:
+/// the aggregate count first, then one line per diagnostic. Diagnostics
+/// are persisted with the index (see [`Store::save_diagnostics`]), so this
+/// works long after the indexing run — the count printed at index time is
+/// no longer the only trace.
+pub fn print_diagnostics(db_path: &Path) -> Result<(), CliError> {
+    let store = Store::open(db_path)?;
+    let diags = store.load_diagnostics()?;
+    println!("diagnostics: {}", diags.len());
+    for d in &diags {
+        println!("{d}");
+    }
+    Ok(())
 }
 
 /// Verify the tamper-evident audit chain: entry count, validity, head hash.

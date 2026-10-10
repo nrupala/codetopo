@@ -6,9 +6,14 @@
 //!
 //! Two halves:
 //! - [`Store`]: a rusqlite-backed store for [`Graph`] snapshots (nodes,
-//!   edges), free-text annotations on nodes, and the tamper-evident audit
-//!   log. Schema is created on open; graph inserts are chunked-transaction
-//!   `INSERT OR IGNORE` upserts.
+//!   edges), free-text annotations on nodes, builder diagnostics, and the
+//!   tamper-evident audit log. Schema is created on open. Two write paths:
+//!   [`Store::insert_graph`] (chunked `INSERT OR IGNORE` upsert — used for
+//!   restore into a verified-empty store) and [`Store::replace_graph`]
+//!   (atomic whole-graph replacement — used for (re)indexing, so a reindex
+//!   can never union stale rows from a previous index into the new graph).
+//!   The on-disk format carries a version (`PRAGMA user_version`); a
+//!   database written by a newer format is refused, never silently mangled.
 //! - Audit primitive: [`AuditLog`] (hash-chained append-only log) plus
 //!   [`hmac_proof`]/[`verify_proof`] (hex HMAC-SHA256 proof certificates).
 //!   This is the trust-primitive port (axiomcode pattern): every mutation of
@@ -20,14 +25,20 @@
 use std::path::Path;
 
 use codetopo_core::snapshot::{SnapshotAuditEntry, SCHEMA_VERSION};
-use codetopo_core::{Edge, Graph, Loc, Node, NodeKind, Snapshot, Tier};
+use codetopo_core::{Diagnostic, Edge, Graph, Loc, Node, NodeKind, Snapshot, Tier};
 use hmac::{Hmac, Mac};
+use rusqlite::OptionalExtension;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
+
+/// On-disk store format version, recorded in `PRAGMA user_version`.
+/// Bump when the table layout changes incompatibly; [`Store::open`]
+/// refuses databases from a newer format instead of mangling them.
+pub const STORE_FORMAT_VERSION: u32 = 1;
 
 /// Every fallible operation in this crate returns this error type.
 #[derive(Debug, Error)]
@@ -41,6 +52,10 @@ pub enum StoreError {
     /// Filesystem failure (creating parent directories for the DB path).
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    /// The database was written by a newer store format than this build
+    /// understands. Opening it anyway could corrupt the newer layout.
+    #[error("unsupported store format version {0} (this build understands up to {STORE_FORMAT_VERSION})")]
+    UnsupportedFormat(u32),
 }
 
 // ---------------------------------------------------------------------------
@@ -84,7 +99,12 @@ CREATE TABLE IF NOT EXISTS audit_log(
     prev_hash TEXT NOT NULL,
     hash TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS meta(
+CREATE TABLE IF NOT EXISTS diagnostics(
+    seq INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS index_meta(
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
@@ -92,27 +112,39 @@ CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_id);
 CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
 "#;
 
+/// Stamp/check the on-disk format version (`PRAGMA user_version`).
+/// A database with no stamp (fresh, or written before format versioning)
+/// is stamped with the current version. A database stamped *newer* than
+/// this build understands is refused.
+fn init_format_version(conn: &rusqlite::Connection) -> Result<(), StoreError> {
+    let v: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if v > STORE_FORMAT_VERSION {
+        return Err(StoreError::UnsupportedFormat(v));
+    }
+    if v < STORE_FORMAT_VERSION {
+        conn.execute_batch(&format!("PRAGMA user_version = {STORE_FORMAT_VERSION}"))?;
+    }
+    Ok(())
+}
+
+/// Snake_case tag for a [`Diagnostic`] variant (stored alongside the JSON
+/// payload so the table stays greppable without a JSON parser).
+fn diagnostic_kind(d: &Diagnostic) -> &'static str {
+    match d {
+        Diagnostic::MultiDefinition { .. } => "multi_definition",
+        Diagnostic::Cycle { .. } => "cycle",
+        Diagnostic::UnresolvedCall { .. } => "unresolved_call",
+        Diagnostic::InvalidAttribute { .. } => "invalid_attribute",
+        Diagnostic::UnknownSymbol { .. } => "unknown_symbol",
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /// Seconds since the UNIX epoch, decimal string. std::time only — no chrono
 /// dependency, per the crate contract.
-/// Seed the meta table on open: schema version + graph generation.
-/// `INSERT OR IGNORE` keeps existing values — opening a database never
-/// resets its generation.
-fn seed_meta(conn: &rusqlite::Connection) -> Result<(), StoreError> {
-    conn.execute(
-        "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', '1')",
-        [],
-    )?;
-    conn.execute(
-        "INSERT OR IGNORE INTO meta(key, value) VALUES ('graph_generation', '0')",
-        [],
-    )?;
-    Ok(())
-}
-
 fn now_ts() -> String {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -344,11 +376,6 @@ impl Default for AuditLog {
 // HMAC proof certificates
 // ---------------------------------------------------------------------------
 
-/// hex(SHA-256(data)). The content hash bound into proof certificates.
-pub fn sha256_hex(data: &[u8]) -> String {
-    hex::encode(Sha256::digest(data))
-}
-
 /// hex(HMAC-SHA256(key, message)). The proof primitive behind the audit
 /// certificates: binds an artifact (e.g. a snapshot JSON) to a signer key.
 pub fn hmac_proof(key: &[u8], message: &str) -> String {
@@ -379,6 +406,192 @@ pub fn verify_proof(key: &[u8], message: &str, hex_sig: &str) -> bool {
         diff |= a ^ b;
     }
     diff == 0
+}
+
+// ---------------------------------------------------------------------------
+// Proof certificates
+// ---------------------------------------------------------------------------
+
+/// Validity window of a proof certificate: one year from issuance.
+/// Expiry is what forces periodic re-verification of a snapshot instead
+/// of trusting an ancient attestation forever.
+pub const CERT_VALIDITY_SECS: u64 = 365 * 24 * 60 * 60;
+
+/// Domain separator for certificate signatures: an HMAC produced for a
+/// certificate can never be confused with a bare snapshot proof.
+const CERT_DOMAIN: &str = "codetopo-proof-v1";
+
+/// A structured proof certificate for a snapshot artifact.
+///
+/// Binds, in one signed document: the artifact's SHA-256, the audit-log
+/// head the snapshot was exported under, the signer (issuer + a key
+/// fingerprint — never the key), a serial number, and a validity window.
+/// This is the certificate shape the certification doctrine requires
+/// (serial, issuer, validity) — a bare HMAC hex string attests nothing
+/// about *what* was signed, *by whom*, or *until when*.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProofCertificate {
+    /// Certificate format version (1).
+    pub cert_version: u32,
+    /// `CT-<first 16 hex of the artifact hash>` — unique per artifact.
+    pub serial: String,
+    /// Who issued the certificate (`"codetopo"`).
+    pub issuer: String,
+    /// Fingerprint of the signing key: first 16 hex of its SHA-256.
+    pub signer_key_id: String,
+    /// SHA-256 (hex) of the exact snapshot JSON bytes certified.
+    pub artifact_sha256: String,
+    /// Audit-log head hash bound into the snapshot at export time.
+    pub audit_head: String,
+    /// Issuance time, seconds since the UNIX epoch.
+    pub issued_at: u64,
+    /// Expiry time, seconds since the UNIX epoch.
+    pub expires_at: u64,
+    /// hex(HMAC-SHA256(key, CERT_DOMAIN + "\n" + canonical body JSON)).
+    pub signature: String,
+}
+
+/// The outcome of verifying a [`ProofCertificate`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CertStatus {
+    Valid,
+    Expired,
+    SignatureInvalid,
+    ArtifactMismatch,
+    AuditHeadMismatch,
+}
+
+impl CertStatus {
+    /// Short human-readable label for reports and error messages.
+    pub fn label(&self) -> &'static str {
+        match self {
+            CertStatus::Valid => "valid",
+            CertStatus::Expired => "expired",
+            CertStatus::SignatureInvalid => "signature invalid",
+            CertStatus::ArtifactMismatch => "artifact mismatch",
+            CertStatus::AuditHeadMismatch => "audit head mismatch",
+        }
+    }
+}
+
+/// Fingerprint identifying a signing key without revealing it.
+fn signer_key_id(key: &[u8]) -> String {
+    hex::encode(&Sha256::digest(key)[..8])
+}
+
+/// SHA-256 (hex) of the exact artifact bytes.
+fn artifact_sha256(artifact: &str) -> String {
+    hex::encode(Sha256::digest(artifact.as_bytes()))
+}
+
+/// The signed body: every certificate field except the signature, as
+/// canonical JSON (struct field order is fixed, so serialization is
+/// deterministic).
+#[derive(serde::Serialize)]
+struct CertBody<'a> {
+    cert_version: u32,
+    serial: &'a str,
+    issuer: &'a str,
+    signer_key_id: &'a str,
+    artifact_sha256: &'a str,
+    audit_head: &'a str,
+    issued_at: u64,
+    expires_at: u64,
+}
+
+fn signing_input(body_json: &str) -> String {
+    format!("{CERT_DOMAIN}\n{body_json}")
+}
+
+/// Issue a certificate for `snapshot_json` (the exact artifact bytes),
+/// binding the audit head the snapshot carries. `issued_at` is seconds
+/// since the UNIX epoch — a parameter, not a clock read, so issuance is
+/// deterministic under test.
+pub fn issue_certificate(
+    key: &[u8],
+    snapshot_json: &str,
+    audit_head: &str,
+    issued_at: u64,
+) -> ProofCertificate {
+    let digest = artifact_sha256(snapshot_json);
+    let mut cert = ProofCertificate {
+        cert_version: 1,
+        serial: format!("CT-{}", &digest[..16]),
+        issuer: "codetopo".to_string(),
+        signer_key_id: signer_key_id(key),
+        artifact_sha256: digest,
+        audit_head: audit_head.to_string(),
+        issued_at,
+        expires_at: issued_at + CERT_VALIDITY_SECS,
+        signature: String::new(),
+    };
+    cert.signature = hmac_proof(key, &signing_input(&cert.body_json()));
+    cert
+}
+
+impl ProofCertificate {
+    fn body_json(&self) -> String {
+        let body = CertBody {
+            cert_version: self.cert_version,
+            serial: &self.serial,
+            issuer: &self.issuer,
+            signer_key_id: &self.signer_key_id,
+            artifact_sha256: &self.artifact_sha256,
+            audit_head: &self.audit_head,
+            issued_at: self.issued_at,
+            expires_at: self.expires_at,
+        };
+        serde_json::to_string(&body).expect("certificate body always serializes")
+    }
+
+    /// Serialize as pretty JSON (the `.proof` file format).
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).expect("certificate always serializes")
+    }
+
+    /// Parse a `.proof` file. Returns `None` when the text is not a
+    /// certificate (e.g. a legacy bare-HMAC proof) so callers can fall
+    /// back to the legacy check instead of failing opaquely.
+    pub fn from_json(s: &str) -> Option<Self> {
+        serde_json::from_str(s).ok()
+    }
+
+    /// Verify this certificate against `key` and the exact artifact
+    /// bytes at time `now` (seconds since the UNIX epoch). Checks, in
+    /// order: the key fingerprint, the artifact hash, the audit-head
+    /// binding (against the head recorded inside the snapshot itself),
+    /// the signature, and the validity window.
+    pub fn verify(&self, key: &[u8], snapshot_json: &str, now: u64) -> CertStatus {
+        if self.signer_key_id != signer_key_id(key) {
+            return CertStatus::SignatureInvalid;
+        }
+        if self.artifact_sha256 != artifact_sha256(snapshot_json) {
+            return CertStatus::ArtifactMismatch;
+        }
+        let snapshot_head = serde_json::from_str::<serde_json::Value>(snapshot_json)
+            .ok()
+            .and_then(|v| v.get("audit_head").and_then(|h| h.as_str()).map(str::to_string))
+            .unwrap_or_default();
+        if self.audit_head != snapshot_head {
+            return CertStatus::AuditHeadMismatch;
+        }
+        if !verify_proof(key, &signing_input(&self.body_json()), &self.signature) {
+            return CertStatus::SignatureInvalid;
+        }
+        if now > self.expires_at {
+            return CertStatus::Expired;
+        }
+        CertStatus::Valid
+    }
+}
+
+/// True when `s` is a legacy proof: a bare 64-char hex HMAC (the
+/// pre-certificate `.proof` format). Legacy proofs still verify — old
+/// snapshots must not become unverifiable — but they are reported as
+/// legacy, never dressed up as certificates.
+pub fn is_legacy_proof(s: &str) -> bool {
+    let t = s.trim();
+    t.len() == 64 && t.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 // ---------------------------------------------------------------------------
@@ -419,7 +632,7 @@ impl Store {
         }
         let conn = rusqlite::Connection::open(path)?;
         conn.execute_batch(SCHEMA_SQL)?;
-        seed_meta(&conn)?;
+        init_format_version(&conn)?;
         Ok(Store { conn })
     }
 
@@ -428,87 +641,8 @@ impl Store {
     pub fn open_in_memory() -> Result<Self, StoreError> {
         let conn = rusqlite::Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA_SQL)?;
-        seed_meta(&conn)?;
+        init_format_version(&conn)?;
         Ok(Store { conn })
-    }
-
-    /// The store schema version (meta table). Version 1 is the first
-    /// versioned layout; databases created before versioning report 1 —
-    /// the layout is unchanged, versioning is additive.
-    pub fn schema_version(&self) -> Result<u32, StoreError> {
-        let v: String = self.conn.query_row(
-            "SELECT value FROM meta WHERE key = 'schema_version'",
-            [],
-            |r| r.get(0),
-        )?;
-        Ok(v.parse().unwrap_or(1))
-    }
-
-    /// How many times the graph has been atomically replaced
-    /// ([`Store::replace_graph`]). Plain `insert_graph` unions do not
-    /// count — a generation names a complete, coherent graph state.
-    pub fn graph_generation(&self) -> Result<u64, StoreError> {
-        let v: String = self.conn.query_row(
-            "SELECT value FROM meta WHERE key = 'graph_generation'",
-            [],
-            |r| r.get(0),
-        )?;
-        Ok(v.parse().unwrap_or(0))
-    }
-
-    /// Atomically replace the stored graph with `graph`: in a single
-    /// transaction, delete every node and edge, insert the new graph,
-    /// and advance the graph generation. A crash mid-replace rolls the
-    /// whole transaction back — the store always holds one complete
-    /// graph, never a union of two indexing runs. (Indexing and
-    /// restore both go through here; `insert_graph` remains the
-    /// low-level union primitive for callers that merge on purpose.)
-    pub fn replace_graph(&mut self, graph: &Graph) -> Result<InsertStats, StoreError> {
-        let tx = self.conn.transaction()?;
-        tx.execute("DELETE FROM edges", [])?;
-        tx.execute("DELETE FROM nodes", [])?;
-        let mut stats = InsertStats { nodes: 0, edges: 0 };
-        {
-            let mut st = tx.prepare(
-                "INSERT INTO nodes(id, kind, label, file, line, col, tier, defines_json, refs_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            )?;
-            for node in graph.nodes() {
-                stats.nodes += st.execute(rusqlite::params![
-                    node.id,
-                    node_kind_str(node.kind),
-                    node.label,
-                    node.loc.file,
-                    node.loc.line as i64,
-                    node.loc.column.map(|c| c as i64),
-                    tier_str(node.tier),
-                    serde_json::to_string(&node.defines)?,
-                    serde_json::to_string(&node.refs)?,
-                ])?;
-            }
-        }
-        {
-            let mut st = tx.prepare(
-                "INSERT INTO edges(from_id, to_id, kind, line, attrs_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-            )?;
-            for e in graph.edges() {
-                stats.edges += st.execute(rusqlite::params![
-                    e.from,
-                    e.to,
-                    e.kind.as_str(),
-                    e.line.map(|l| l as i64),
-                    serde_json::to_string(&e.attrs)?,
-                ])?;
-            }
-        }
-        tx.execute(
-            "UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)
-             WHERE key = 'graph_generation'",
-            [],
-        )?;
-        tx.commit()?;
-        Ok(stats)
     }
 
     /// Insert a graph, committing in fixed-size chunks. Nodes and edges are
@@ -588,6 +722,113 @@ impl Store {
         }
 
         Ok(stats)
+    }
+
+    /// Atomically replace the whole stored graph with `graph`: in one
+    /// transaction, delete every stored node and edge, insert the new
+    /// graph, and advance the index generation. This is the (re)indexing
+    /// write path — a reindex of a changed tree must never leave rows from
+    /// the previous index behind (the failure mode of re-running
+    /// [`Store::insert_graph`] into a populated store, whose
+    /// `INSERT OR IGNORE` unions old and new). Annotations are user data,
+    /// not index data, and are preserved. The returned stats are the new
+    /// graph's full counts.
+    pub fn replace_graph(&mut self, graph: &Graph) -> Result<InsertStats, StoreError> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM nodes", [])?;
+        tx.execute("DELETE FROM edges", [])?;
+        {
+            let mut st = tx.prepare(
+                "INSERT INTO nodes(id, kind, label, file, line, col, tier, defines_json, refs_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )?;
+            for node in graph.nodes() {
+                st.execute(rusqlite::params![
+                    node.id,
+                    node_kind_str(node.kind),
+                    node.label,
+                    node.loc.file,
+                    node.loc.line as i64,
+                    node.loc.column.map(|c| c as i64),
+                    tier_str(node.tier),
+                    serde_json::to_string(&node.defines)?,
+                    serde_json::to_string(&node.refs)?,
+                ])?;
+            }
+        }
+        {
+            let mut st = tx.prepare(
+                "INSERT INTO edges(from_id, to_id, kind, line, attrs_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?;
+            for e in graph.edges() {
+                st.execute(rusqlite::params![
+                    e.from,
+                    e.to,
+                    e.kind.as_str(),
+                    e.line.map(|l| l as i64),
+                    serde_json::to_string(&e.attrs)?,
+                ])?;
+            }
+        }
+        tx.execute(
+            "INSERT INTO index_meta(key, value) VALUES('generation', '1')
+             ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(InsertStats {
+            nodes: graph.node_count(),
+            edges: graph.edge_count(),
+        })
+    }
+
+    /// The index generation: how many whole-graph replacements this store
+    /// has taken (0 for a store that has only ever been upserted into).
+    pub fn generation(&self) -> Result<u64, StoreError> {
+        let v: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM index_meta WHERE key = 'generation'", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(v.and_then(|s| s.parse().ok()).unwrap_or(0))
+    }
+
+    /// Replace the stored builder diagnostics with `diags` (one
+    /// transaction). Diagnostics belong to the index that produced them:
+    /// a reindex replaces them wholesale, exactly like the graph.
+    pub fn save_diagnostics(&mut self, diags: &[Diagnostic]) -> Result<(), StoreError> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM diagnostics", [])?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO diagnostics(seq, kind, payload) VALUES (?1, ?2, ?3)",
+            )?;
+            for (i, d) in diags.iter().enumerate() {
+                stmt.execute(rusqlite::params![
+                    i as i64,
+                    diagnostic_kind(d),
+                    serde_json::to_string(d)?,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The diagnostics recorded for the current index, in builder order.
+    /// Empty when the index produced none (or predates diagnostic storage).
+    pub fn load_diagnostics(&self) -> Result<Vec<Diagnostic>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT payload FROM diagnostics ORDER BY seq")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for payload in rows {
+            out.push(serde_json::from_str(&payload?)?);
+        }
+        Ok(out)
     }
 
     /// Look up one node by id. `Ok(None)` when the id is not stored.
@@ -798,36 +1039,6 @@ mod tests {
     }
 
     #[test]
-    fn replace_graph_removes_stale_and_bumps_generation() {
-        let mut store = Store::open_in_memory().unwrap();
-        assert_eq!(store.schema_version().unwrap(), 1);
-        assert_eq!(store.graph_generation().unwrap(), 0);
-        let g = chain_graph();
-        store.insert_graph(&g).unwrap();
-        assert!(store.get_node("t::m::d").unwrap().is_some());
-        // A different, smaller graph replaces — never unions.
-        let mut b = GraphBuilder::new();
-        b.add_file(FileSymbols {
-            package: "t".to_string(),
-            file: "x.rs".to_string(),
-            module_id: "t::x".to_string(),
-            symbols: vec![sym("t::x::solo", NodeKind::Function, 1)],
-            imports: Vec::new(),
-            calls: Vec::new(),
-        });
-        let (g2, _) = b.build();
-        let stats = store.replace_graph(&g2).unwrap();
-        assert_eq!(stats.nodes, g2.node_count());
-        assert_eq!(store.counts().unwrap().0, g2.node_count());
-        assert!(store.get_node("t::m::d").unwrap().is_none(), "stale node must be gone");
-        assert!(store.get_node("t::x::solo").unwrap().is_some());
-        assert_eq!(store.graph_generation().unwrap(), 1);
-        store.replace_graph(&g).unwrap();
-        assert_eq!(store.graph_generation().unwrap(), 2);
-        assert!(store.get_node("t::m::d").unwrap().is_some());
-    }
-
-    #[test]
     fn insert_graph_reports_counts_and_is_idempotent() {
         let mut store = Store::open_in_memory().unwrap();
         let g = chain_graph();
@@ -955,6 +1166,43 @@ mod tests {
     }
 
     #[test]
+    fn certificate_round_trip_and_statuses() {
+        let key = b"cert-signer-key";
+        let snap = r#"{"schema_version":"1.0-draft","nodes":[],"edges":[],"audit_head":"head123","audit_log":[]}"#;
+        let cert = issue_certificate(key, snap, "head123", 1_000_000);
+        assert!(cert.serial.starts_with("CT-"));
+        assert_eq!(cert.issuer, "codetopo");
+        assert_eq!(cert.expires_at, cert.issued_at + CERT_VALIDITY_SECS);
+        assert_eq!(cert.verify(key, snap, 1_000_100), CertStatus::Valid);
+
+        // JSON round-trip preserves verifiability.
+        let parsed = ProofCertificate::from_json(&cert.to_json()).expect("cert parses");
+        assert_eq!(parsed, cert);
+        assert_eq!(parsed.verify(key, snap, 1_000_100), CertStatus::Valid);
+
+        // Wrong key, tampered artifact, wrong head binding, expiry.
+        assert_eq!(cert.verify(b"other-key", snap, 1_000_100), CertStatus::SignatureInvalid);
+        let tampered = snap.replace("head123", "head999");
+        assert_eq!(cert.verify(key, &tampered, 1_000_100), CertStatus::ArtifactMismatch);
+        let mut wrong_head = cert.clone();
+        wrong_head.audit_head = "different".to_string();
+        assert_eq!(wrong_head.verify(key, snap, 1_000_100), CertStatus::AuditHeadMismatch);
+        let mut forged = cert.clone();
+        forged.issuer = "mallory".to_string();
+        assert_eq!(forged.verify(key, snap, 1_000_100), CertStatus::SignatureInvalid);
+        assert_eq!(
+            cert.verify(key, snap, cert.expires_at + 1),
+            CertStatus::Expired,
+            "past the validity window the certificate no longer attests"
+        );
+
+        // Legacy bare-HMAC detection.
+        assert!(is_legacy_proof(&hmac_proof(key, snap)));
+        assert!(!is_legacy_proof(&cert.to_json()));
+        assert!(ProofCertificate::from_json(&hmac_proof(key, snap)).is_none());
+    }
+
+    #[test]
     fn annotations_add_and_list() {
         let mut store = Store::open_in_memory().unwrap();
         let id1 = store.add_annotation("t::m::d", "entry point worth reviewing").unwrap();
@@ -1031,5 +1279,97 @@ mod tests {
                 "Serialize".to_string()
             )]))
         );
+    }
+
+    fn other_graph() -> Graph {
+        let mut b = GraphBuilder::new();
+        b.add_file(FileSymbols {
+            package: "u".to_string(),
+            file: "x.rs".to_string(),
+            module_id: "u::x".to_string(),
+            symbols: vec![sym("u::x::f", NodeKind::Function, 1)],
+            imports: Vec::new(),
+            calls: Vec::new(),
+        });
+        let (g, diags) = b.build();
+        assert!(diags.is_empty());
+        g
+    }
+
+    #[test]
+    fn replace_graph_drops_stale_rows_and_bumps_generation() {
+        let mut store = Store::open_in_memory().unwrap();
+        let g1 = chain_graph();
+        store.insert_graph(&g1).unwrap();
+        assert_eq!(store.generation().unwrap(), 0);
+
+        // Replace with a disjoint graph: no row of g1 may survive.
+        let g2 = other_graph();
+        let stats = store.replace_graph(&g2).unwrap();
+        assert_eq!(stats, InsertStats { nodes: g2.node_count(), edges: g2.edge_count() });
+        assert_eq!(store.counts().unwrap(), (g2.node_count(), g2.edge_count()));
+        assert!(store.get_node("t::m::b").unwrap().is_none(), "stale node gone");
+        assert!(store.get_node("u::x::f").unwrap().is_some(), "new node present");
+        assert_eq!(store.generation().unwrap(), 1);
+
+        // Replacing again advances the generation again.
+        store.replace_graph(&g1).unwrap();
+        assert_eq!(store.generation().unwrap(), 2);
+        assert!(store.get_node("u::x::f").unwrap().is_none());
+        assert!(store.get_node("t::m::b").unwrap().is_some());
+    }
+
+    #[test]
+    fn diagnostics_round_trip_and_replace() {
+        let mut store = Store::open_in_memory().unwrap();
+        assert!(store.load_diagnostics().unwrap().is_empty());
+
+        let diags = vec![
+            Diagnostic::UnknownSymbol { id: "u::x::nope".to_string() },
+            Diagnostic::UnresolvedCall {
+                from: "u::x::f".to_string(),
+                target: "missing".to_string(),
+                line: 7,
+            },
+        ];
+        store.save_diagnostics(&diags).unwrap();
+        assert_eq!(store.load_diagnostics().unwrap(), diags);
+
+        // A clean reindex clears the previous index's diagnostics.
+        store.save_diagnostics(&[]).unwrap();
+        assert!(store.load_diagnostics().unwrap().is_empty());
+    }
+
+    #[test]
+    fn format_version_is_stamped_and_newer_is_refused() {
+        let dir = std::env::temp_dir()
+            .join(format!("codetopo-store-fmt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("fmt.sqlite");
+
+        {
+            let _store = Store::open(&db).unwrap();
+        }
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        let v: u32 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, STORE_FORMAT_VERSION);
+
+        // A database stamped with a newer format must be refused.
+        conn.execute_batch(&format!(
+            "PRAGMA user_version = {}",
+            STORE_FORMAT_VERSION + 1
+        ))
+        .unwrap();
+        drop(conn);
+        match Store::open(&db) {
+            Err(StoreError::UnsupportedFormat(got)) => {
+                assert_eq!(got, STORE_FORMAT_VERSION + 1);
+            }
+            other => panic!("expected UnsupportedFormat, got {:?}", other.map(|_| "ok")),
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
