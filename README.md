@@ -25,8 +25,10 @@ Requires a stable Rust toolchain (install via [rustup](https://rustup.rs)).
 
 ```sh
 # Install the four binaries: codetopo (CLI), codetopo-server (HTTP API),
-# codetopo-mcp (stdio MCP server), codetopo-acp (stdio ACP agent)
-cargo install --git https://github.com/nrupala/codetopo
+# codetopo-mcp (stdio MCP server), codetopo-acp (stdio ACP agent).
+# The packages must be named — a bare install URL fails because the
+# repository contains multiple binary packages.
+cargo install --git https://github.com/nrupala/codetopo codetopo-cli codetopo-server codetopo-mcp codetopo-acp
 
 # Index a repository (Rust and TypeScript/JavaScript are parsed via tree-sitter)
 codetopo index ~/my-project --db graph.db
@@ -34,8 +36,9 @@ codetopo index ~/my-project --db graph.db
 # Find a symbol's id by name (every surface has this discovery step)
 codetopo search connect --db graph.db
 
-# Ask what calls what
-codetopo descendants myproject::net::Client::connect --db graph.db --expand
+# Ask what calls what (the package prefix is your directory's name,
+# exactly as indexed — hyphen included)
+codetopo descendants my-project::net::Client::connect --db graph.db --expand
 ```
 
 That's the whole loop: **index once, query as data.** Aggregate-first
@@ -66,11 +69,11 @@ nodes: 15
   external: 2
 edges: 23
   calls: 5
-  references: 6
   contains: 12
+  reads: 6
 
 $ codetopo descendants fixture-repo::alpha::entry --db graph.db --expand
-descendants of fixture-repo::alpha::entry 2
+2 descendants of fixture-repo::alpha::entry
 fixture-repo::alpha::helper_a
 fixture-repo::alpha::helper_b
 ```
@@ -83,6 +86,7 @@ codetopo blast-radius <node-id> --db graph.db  # what a failure here would take 
 codetopo path <from-id> <to-id> --db graph.db  # shortest typed path between two nodes
 codetopo verify --db graph.db                  # verify the hash-chained audit log
 codetopo snapshot --db graph.db --out g.json   # portable frozen JSON export of the whole graph
+codetopo restore --snapshot g.json --db g2.db  # restore a snapshot into a fresh database
 ```
 
 The `path` answer renders as typed steps, e.g. `a --calls--> x --imports--> b`
@@ -202,6 +206,7 @@ across this product line: a hash-chained, append-only record, verified by
 - [`docs/phase-2-verification.md`](docs/phase-2-verification.md) — end-to-end verification report (fixture numbers above come from here)
 - [`docs/phase-3-acp-design.md`](docs/phase-3-acp-design.md) — ACP agent design: wire protocol, intent routing, read-only guarantee
 - [`docs/phase-3-acp-verification.md`](docs/phase-3-acp-verification.md) — ACP verification report
+- [`docs/quickstart-verification.md`](docs/quickstart-verification.md) — clean-machine verification of the quickstart and example queries above
 - [`schemas/README.md`](schemas/README.md) — the two agent-facing contracts and where the spec departs from the design doc
 - [`CODE_SCHEMA.md`](CODE_SCHEMA.md) — the graph schema (§6 sets the aggregate-first rule)
 
