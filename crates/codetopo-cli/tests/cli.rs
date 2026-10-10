@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use codetopo_cli::{index_repo, load_graph_from_db, restore_snapshot, verify_db};
+use codetopo_cli::{index_repo, load_graph_from_db, restore_snapshot, verify_db, verify_proof_file};
 use codetopo_core::{EdgeKind, NodeKind};
 
 /// Fresh scratch dir per test: <temp>/codetopo-cli-test-<pid>-<name>/.
@@ -116,6 +116,16 @@ fn index_query_snapshot_restore_round_trip() {
     assert_eq!(cert["algorithm"], "HMAC-SHA256");
     assert_eq!(cert["snapshot_sha256"].as_str().unwrap().len(), 64);
     assert_eq!(cert["signature"].as_str().unwrap().len(), 64);
+    // v2 certificate fields: serial, issuer, signer-key fingerprint,
+    // and a validity window.
+    assert_eq!(cert["version"], 2);
+    assert_eq!(cert["issuer"], "codetopo");
+    assert_eq!(cert["signer"], "codetopo-cli");
+    assert_eq!(cert["signer_key_id"].as_str().unwrap().len(), 16);
+    assert!(cert["serial"].as_str().unwrap().starts_with("CT-"));
+    assert!(cert["expires_at"].as_u64().unwrap() > cert["issued_at"].as_u64().unwrap());
+    verify_proof_file(&snap, Some(b"test-key"), false)
+        .expect("verify-proof passes on a fresh snapshot");
 
     // --- restore into a second db preserves counts ---
     let stats = restore_snapshot(&snap, &db2, Some(b"test-key"), false).expect("restore succeeds");
@@ -255,6 +265,97 @@ fn restore_verification_gates() {
     assert!(restore_snapshot(&snap2, &db_d, Some(b"right-key"), false).is_err());
     let db_e = workdir.join("e.db");
     assert!(restore_snapshot(&snap2, &db_e, None, true).is_err());
+}
+
+/// An expired v2 certificate no longer attests: both verify-proof and
+/// restore must refuse it, naming the expiry.
+#[test]
+fn expired_certificate_is_refused() {
+    let workdir = workdir("expired-cert");
+    let repo = fixture_repo(&workdir);
+    let db = workdir.join("index.db");
+    let snap = workdir.join("snap.json");
+    index_repo(&repo, &db, "fixture", Some(&snap), Some(b"right-key")).expect("index");
+
+    // Re-issue the same certificate with a validity window in the past,
+    // signed correctly over the v2 canonical string.
+    let proof_path = format!("{}.proof", snap.display());
+    let mut cert: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&proof_path).expect("read proof"))
+            .expect("parse cert");
+    let canonical = format!(
+        "codetopo-proof-v2\n{}\n{}\n{}\n{}\n0\n1000",
+        cert["snapshot_sha256"].as_str().unwrap(),
+        cert["audit_head"].as_str().unwrap(),
+        cert["nodes"].as_u64().unwrap(),
+        cert["edges"].as_u64().unwrap()
+    );
+    cert["issued_at"] = serde_json::json!(0);
+    cert["expires_at"] = serde_json::json!(1000);
+    cert["signature"] =
+        serde_json::json!(codetopo_store::hmac_proof(b"right-key", &canonical));
+    std::fs::write(&proof_path, serde_json::to_string_pretty(&cert).unwrap())
+        .expect("write expired cert");
+
+    let err = verify_proof_file(&snap, Some(b"right-key"), false)
+        .expect_err("verify-proof must refuse an expired certificate");
+    assert!(err.to_string().contains("expired"), "error names expiry, got: {err}");
+    let db2 = workdir.join("restored.db");
+    let err = restore_snapshot(&snap, &db2, Some(b"right-key"), false)
+        .expect_err("restore must refuse an expired certificate");
+    assert!(err.to_string().contains("expired"), "error names expiry, got: {err}");
+
+    let _ = std::fs::remove_dir_all(&workdir);
+}
+
+/// Schema gate follows CODE_SCHEMA §8's major rule: a different major
+/// is rejected; same-major drift is tolerated.
+#[test]
+fn restore_schema_major_rule() {
+    let workdir = workdir("schema-major");
+    let repo = fixture_repo(&workdir);
+    let db = workdir.join("index.db");
+    let snap = workdir.join("snap.json");
+    index_repo(&repo, &db, "fixture", Some(&snap), None).expect("index without proof");
+    let text = std::fs::read_to_string(&snap).expect("read snapshot");
+
+    let snap2 = workdir.join("snap-v2.json");
+    std::fs::write(&snap2, text.replace("1.0-draft", "2.0")).expect("write v2 snapshot");
+    let db2 = workdir.join("v2.db");
+    let err = restore_snapshot(&snap2, &db2, None, true)
+        .expect_err("schema major 2 must be rejected");
+    assert!(
+        err.to_string().contains("schema_version"),
+        "error names the schema version, got: {err}"
+    );
+
+    let snap19 = workdir.join("snap-v19.json");
+    std::fs::write(&snap19, text.replace("1.0-draft", "1.9")).expect("write v1.9 snapshot");
+    let db19 = workdir.join("v19.db");
+    restore_snapshot(&snap19, &db19, None, true)
+        .expect("same-major snapshot restores on the explicit unverified path");
+
+    let _ = std::fs::remove_dir_all(&workdir);
+}
+
+/// verify-proof must fail when the snapshot's embedded audit chain was
+/// altered — the chain gate needs no key and fires before the proof.
+#[test]
+fn verify_proof_rejects_altered_audit_chain() {
+    let workdir = workdir("verify-altered-chain");
+    let repo = fixture_repo(&workdir);
+    let db = workdir.join("index.db");
+    let snap = workdir.join("snap.json");
+    index_repo(&repo, &db, "fixture", Some(&snap), Some(b"right-key")).expect("index");
+    let text = std::fs::read_to_string(&snap).expect("read snapshot");
+    std::fs::write(&snap, text.replace("index_started", "index_hacked"))
+        .expect("alter one audit entry's op");
+    assert!(
+        verify_proof_file(&snap, Some(b"right-key"), false).is_err(),
+        "an altered audit chain must fail verification"
+    );
+
+    let _ = std::fs::remove_dir_all(&workdir);
 }
 
 /// W1's scenario, kept alongside the repo-swap variant above: rename
