@@ -1,0 +1,40 @@
+# Copyright (C) 2026 Nrupal Akolkar
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: demo-graph
+
+# Keeps the public demo (codetopo.aimlds.org) current: on every push
+# to main, codetopo indexes this repository and sends the fresh graph
+# to the demo's ingest endpoint. The demo itself is read-only and
+# executes nothing; all building happens here, in CI.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pristine source copy for indexing (no build artifacts)
+        uses: actions/checkout@v4
+        with:
+          path: corpus
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build codetopo
+        run: cargo build --release
+      - name: Index this repository and export the graph
+        run: |
+          ./target/release/codetopo index --db demo.db corpus
+          ./target/release/codetopo snapshot --db demo.db --out graph.json
+      - name: Send the graph to the live demo
+        env:
+          INGEST_SECRET: ${{ secrets.CODETOPO_DEMO_INGEST_SECRET }}
+        run: |
+          curl -fsS -X POST https://codetopo.aimlds.org/ingest/graph \
+            -H "x-ingest-secret: $INGEST_SECRET" \
+            -H "x-commit-sha: ${{ github.sha }}" \
+            -H "content-type: application/json" \
+            --data-binary @graph.json
