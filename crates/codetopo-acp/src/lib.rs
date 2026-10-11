@@ -13,6 +13,8 @@ use serde_json::{json, Value};
 use std::path::Path;
 use codetopo_core::Graph;
 
+pub mod trust;
+
 /// Agent capabilities advertised on initialize, in the ACP wire
 /// shape. This agent cannot load sessions, and its prompts are
 /// text-only: no image or audio inputs, no embedded context.
@@ -37,17 +39,52 @@ pub struct PromptCapabilities {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SessionCapabilities {}
 
+/// Whether the client can run Terminal Auth methods. The spec
+/// nests the flag at `clientCapabilities.auth.terminal`; some
+/// clients (including the ACP Registry's verifier) send a flat
+/// `clientCapabilities.terminal` — either is an explicit opt-in.
+fn client_supports_terminal(client_params: &Value) -> bool {
+    let nested = client_params.pointer("/clientCapabilities/auth/terminal");
+    let flat = client_params.pointer("/clientCapabilities/terminal");
+    [nested, flat]
+        .iter()
+        .any(|v| v.and_then(|b| b.as_bool()) == Some(true))
+}
+
 /// The `initialize` handshake result (ACP protocol version 1 — an
 /// integer on the wire, as the spec requires; an earlier dialect of
 /// this agent sent the string "1.0", which strict clients reject).
 /// The agent version is the crate version
 /// (`env!("CARGO_PKG_VERSION")`) — never a hardcoded string that
 /// can drift from the shipped binary.
-pub fn initialize_result() -> Value {
+///
+/// `authMethods`: codetopo needs no authentication to use — every
+/// session works with zero setup. What it offers, until setup is
+/// recorded, is one Terminal Auth method: the proof-verification
+/// setup (see [`trust`]), advertised only to clients that declare
+/// terminal-auth support, as the spec requires. Once setup is
+/// recorded the list is empty again — nothing left to set up.
+pub fn initialize_result(client_params: &Value) -> Value {
+    initialize_result_in(client_params, &trust::config_dir())
+}
+
+/// [`initialize_result`] against an explicit config directory
+/// (the seam tests use).
+pub fn initialize_result_in(client_params: &Value, config_dir: &Path) -> Value {
+    let mut auth_methods = Vec::new();
+    if !trust::setup_recorded_in(config_dir) && client_supports_terminal(client_params) {
+        auth_methods.push(json!({
+            "id": "codetopo-trust-setup",
+            "name": "Set up proof verification",
+            "description": "codetopo has no account to sign in to and works without setup. This one-time terminal setup provisions the HMAC key that signs codetopo proof certificates, stored only on this machine; keyless setup is offered too.",
+            "type": "terminal",
+            "args": ["login"],
+        }));
+    }
     json!({
         "protocolVersion": 1,
         "agentCapabilities": AgentCapabilities::default(),
-        "authMethods": [],
+        "authMethods": auth_methods,
         "agentInfo": {
             "name": "codetopo",
             "title": "codetopo — read-only code-graph agent",
@@ -176,6 +213,28 @@ impl RefusalReply {
 }
 
 /// Execute an intent against a loaded graph, returning a result string.
+/// The sentence a snapshot answer adds about its proof certificate:
+/// the serial and signer fingerprint from the `.proof` sidecar when
+/// the snapshot was signed, or the honest note that it was not.
+fn snapshot_proof_note(snapshot_out: &Path, key_present: bool) -> String {
+    if !key_present {
+        return " No proof certificate (no signing key provisioned — run `codetopo-acp login`)."
+            .to_string();
+    }
+    let proof_path = format!("{}.proof", snapshot_out.display());
+    match std::fs::read_to_string(&proof_path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+    {
+        Some(cert) => format!(
+            " Proof certificate {} signed by key {} (HMAC-SHA256, one-year validity).",
+            cert["serial"].as_str().unwrap_or("?"),
+            cert["signer_key_id"].as_str().unwrap_or("?"),
+        ),
+        None => " Proof certificate was requested but its sidecar could not be read.".to_string(),
+    }
+}
+
 pub fn execute_intent(graph: &Graph, intent: &Intent, db_path: Option<&Path>) -> String {
     match intent {
         Intent::Descendants(ref id) => {
@@ -218,10 +277,15 @@ pub fn execute_intent(graph: &Graph, intent: &Intent, db_path: Option<&Path>) ->
             match db_path {
                 Some(p) => {
                     let temp_out = std::env::temp_dir().join(format!("codetopo-snap-{}.json", std::process::id()));
-                    match codetopo_cli::snapshot_db(p, &temp_out, None) {
+                    // The trust setup's key, when provisioned, signs
+                    // the snapshot's proof certificate; without one
+                    // the snapshot is unsigned, as it always was.
+                    let key = trust::hmac_key();
+                    match codetopo_cli::snapshot_db(p, &temp_out, key.as_deref()) {
                         Ok(_) => {
                             let size = std::fs::metadata(&temp_out).map(|m| m.len()).unwrap_or(0);
-                            format!("Snapshot written: {} ({} bytes)", temp_out.display(), size)
+                            let proof_note = snapshot_proof_note(&temp_out, key.is_some());
+                            format!("Snapshot written: {} ({} bytes).{}", temp_out.display(), size, proof_note)
                         }
                         Err(e) => format!("Snapshot failed: {}", e),
                     }
@@ -262,4 +326,60 @@ pub struct PromptAnswer {
     pub intent: String,
     pub result: String,
     pub streamed: bool,
+}
+
+#[cfg(test)]
+mod initialize_tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "codetopo-acp-init-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    const TERMINAL_CAPS: &str = r#"{"clientCapabilities":{"auth":{"terminal":true}}}"#;
+    const TERMINAL_CAPS_FLAT: &str = r#"{"clientCapabilities":{"terminal":true}}"#;
+    const NO_CAPS: &str = r#"{"clientCapabilities":{}}"#;
+
+    #[test]
+    fn terminal_method_offered_before_setup_to_terminal_clients() {
+        let dir = temp_dir("offered");
+        for caps in [TERMINAL_CAPS, TERMINAL_CAPS_FLAT] {
+            let params: Value = serde_json::from_str(caps).expect("caps json");
+            let result = initialize_result_in(&params, &dir);
+            let methods = result["authMethods"].as_array().expect("authMethods array");
+            assert_eq!(methods.len(), 1, "caps: {caps}");
+            assert_eq!(methods[0]["type"], "terminal");
+            assert_eq!(methods[0]["id"], "codetopo-trust-setup");
+            assert_eq!(methods[0]["args"], json!(["login"]));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn no_method_without_terminal_capability() {
+        // The spec: terminal methods are advertised only when the
+        // client opted in. A bare initialize gets an empty list —
+        // and loses nothing, since no setup is required to use the
+        // agent at all.
+        let dir = temp_dir("nocaps");
+        let params: Value = serde_json::from_str(NO_CAPS).expect("caps json");
+        let result = initialize_result_in(&params, &dir);
+        assert_eq!(result["authMethods"], json!([]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn no_method_after_setup_is_recorded() {
+        let dir = temp_dir("recorded");
+        trust::record_setup_in(&dir, None).expect("record keyless setup");
+        let params: Value = serde_json::from_str(TERMINAL_CAPS).expect("caps json");
+        let result = initialize_result_in(&params, &dir);
+        assert_eq!(result["authMethods"], json!([]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

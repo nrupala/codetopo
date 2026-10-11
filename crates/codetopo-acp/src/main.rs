@@ -18,6 +18,22 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 fn main() -> io::Result<()> {
+    // Terminal Auth entry point: ACP clients re-run this binary with
+    // `login` in an interactive terminal to run the proof-verification
+    // setup (see codetopo_acp::trust). A zero exit status is success.
+    // Any other argument is a usage error — the protocol loop itself
+    // takes no arguments.
+    match std::env::args().nth(1).as_deref() {
+        Some("login") | Some("--setup") => {
+            std::process::exit(codetopo_acp::trust::run_trust_setup());
+        }
+        Some(other) => {
+            eprintln!("codetopo-acp: unknown argument '{other}' — usage: codetopo-acp [login]");
+            std::process::exit(2);
+        }
+        None => {}
+    }
+
     // All logs/diagnostics to stderr; stdout sealed for protocol frames only.
     eprintln!("codetopo-acp starting (read-only mode) — direct ACP wire loop, no SDK");
 
@@ -65,10 +81,11 @@ fn main() -> io::Result<()> {
 
         match method {
             "initialize" => {
+                let params = req.get("params").cloned().unwrap_or(json!({}));
                 let resp = json!({
                     "jsonrpc":"2.0",
                     "id": id,
-                    "result": codetopo_acp::initialize_result()
+                    "result": codetopo_acp::initialize_result(&params)
                 });
                 let _ = writeln!(out, "{}", resp);
                 let _ = out.flush();
