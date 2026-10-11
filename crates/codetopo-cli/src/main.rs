@@ -107,6 +107,18 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Render the graph deterministically: a layout spec (JSON)
+    /// and/or an SVG drawing of it. Same graph → same bytes.
+    Render {
+        #[arg(long)]
+        db: PathBuf,
+        /// Write the layout spec JSON here (default: print to stdout).
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Write the SVG rendering here.
+        #[arg(long)]
+        svg: Option<PathBuf>,
+    },
     /// Verify the tamper-evident audit chain.
     Verify {
         #[arg(long)]
@@ -264,6 +276,27 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 print_stats_json(&graph);
             } else {
                 print_stats(&graph);
+            }
+        }
+        Commands::Render { db, out, svg } => {
+            let graph = load_graph_from_db(&db)?;
+            let spec = codetopo_core::layout(&graph);
+            let spec_json = serde_json::to_string_pretty(&spec)?;
+            match &out {
+                Some(path) => {
+                    std::fs::write(path, format!("{spec_json}\n"))?;
+                    eprintln!(
+                        "layout spec: {} nodes, {} edges → {}",
+                        spec.nodes.len(),
+                        spec.edges.len(),
+                        path.display()
+                    );
+                }
+                None => println!("{spec_json}"),
+            }
+            if let Some(path) = &svg {
+                std::fs::write(path, codetopo_core::render_svg(&spec))?;
+                eprintln!("svg: {}", path.display());
             }
         }
         Commands::Neighborhood { id, db, depth, json } => {

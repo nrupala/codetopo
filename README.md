@@ -202,6 +202,10 @@ across this product line: a hash-chained, append-only record, verified by
 
 ## Docs
 
+- [`docs/render.md`](docs/render.md) — deterministic render: the frozen layout spec (JSON) + SVG rules behind `codetopo render`
+- [`docs/protocol-proof.md`](docs/protocol-proof.md) — MCP/ACP conformance evidence: strict stdio clients + official-schema validation
+- [`docs/scale-gate.md`](docs/scale-gate.md) — the 10,000-file scale gate and its measured record
+- [`Dockerfile`](Dockerfile) + [`docker-compose.yml`](docker-compose.yml) — self-hosted container: the HTTP API over your own indexes
 - [`docs/phase-2-design.md`](docs/phase-2-design.md) — API design: endpoints, auth, metering, aggregate-first discipline
 - [`docs/phase-2-verification.md`](docs/phase-2-verification.md) — end-to-end verification report (fixture numbers above come from here)
 - [`docs/phase-3-acp-design.md`](docs/phase-3-acp-design.md) — ACP agent design: wire protocol, intent routing, read-only guarantee

@@ -4,6 +4,25 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **Deterministic render: `codetopo render`.** A layout spec
+  (JSON) and an SVG drawing that are pure functions of the stored
+  graph — same graph in, same bytes out, on any machine. Layers
+  follow the longest dependency path over the SCC-condensed
+  dependency DAG (cycles share a layer; containment is drawn but
+  never layers); in-layer order is by node id; coordinates are
+  integer grid cells. The spec is self-contained and versioned
+  (`layout_version: 1`); the SVG consumes the spec alone. Rules
+  and size behaviour: `docs/render.md`.
+- **Self-hosted container.** A multi-stage `Dockerfile` (four
+  binaries on a slim Debian runtime — they link only libc/libm)
+  and a `docker-compose.yml` that runs the HTTP API over a `/data`
+  volume, with the server's env contract
+  (`CODETOPO_BIND`/`DATA_DIR`/`KEYS_FILE`/`METERING_LOG`) wired in.
+  The server still refuses to start without a keys file.
+  Workspace crates version 0.2.8.
+
 ### Fixed
 
 - **MCP `tools/call` results are CallToolResults now.** Success

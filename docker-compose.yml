@@ -1,0 +1,22 @@
+# codetopo, self-hosted: the HTTP API over your own indexes.
+#
+#   echo "demo:$(openssl rand -hex 16)" > ./data/api_keys
+#   docker compose up --build
+#   curl -H "Authorization: Bearer demo:<secret>" localhost:8080/v1/graphs
+#
+# Index a repository into the shared volume (mount it read-only):
+#
+#   docker compose run --rm -v /path/to/repo:/repos/repo:ro server \
+#     codetopo index /repos/repo --db /data/repo.db
+#
+# The server refuses to start without a keys file — serving an API
+# that cannot authenticate would be worse than not serving.
+services:
+  server:
+    build: .
+    image: codetopo:local
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
