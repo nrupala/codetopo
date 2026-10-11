@@ -15,8 +15,11 @@ servers. They are not hand-written prose pretending to be a contract.
 
 ## `openapi.yaml`
 
-Describes `POST /v1/index` plus seven reads under `/v1/graphs/{id}/…`, all
-behind bearer auth, all read-only except the index call.
+Describes `POST /v1/index`, ten reads under `/v1/graphs/{id}/…`, and
+`GET /v1/schema`, all behind bearer auth, all read-only except the
+index call. (Prose counts corrected 2026-10-10: this README lagged the
+contracts it describes — the machine-checked files were gated by the
+contracts workstream, the prose was not.)
 
 ### Endpoints
 
@@ -30,6 +33,10 @@ behind bearer auth, all read-only except the index call.
 | `GET` | `/v1/graphs/{id}/stats` | Aggregate node and edge counts. |
 | `GET` | `/v1/graphs/{id}/verify` | Audit-chain verification for the index. |
 | `GET` | `/v1/graphs/{id}/snapshot` | Portable frozen export of the whole graph. |
+| `GET` | `/v1/graphs/{id}/neighborhood` | The subgraph around a node, both directions. |
+| `GET` | `/v1/graphs/{id}/symbol` | One node in full. |
+| `GET` | `/v1/graphs/{id}/search` | Find symbols by name. |
+| `GET` | `/v1/schema` | The schema this server speaks. |
 
 ### Authentication
 
@@ -119,7 +126,8 @@ The verbatim `result.tools` payload of a JSON-RPC `tools/list` call against
 `codetopo_index`, `codetopo_descendants`, `codetopo_ancestors`,
 `codetopo_blast_radius`, `codetopo_path`, `codetopo_stats`,
 `codetopo_verify`, `codetopo_snapshot`, `codetopo_neighborhood`,
-`codetopo_get_symbol`, `codetopo_search_symbols`, `codetopo_describe_schema`
+`codetopo_get_symbol`, `codetopo_search_symbols`,
+`codetopo_describe_schema`
 
 Regenerate with:
 
@@ -144,6 +152,10 @@ Every MCP tool has an HTTP twin:
 | `codetopo_stats` | `GET /v1/graphs/{id}/stats` |
 | `codetopo_verify` | `GET /v1/graphs/{id}/verify` |
 | `codetopo_snapshot` | `GET /v1/graphs/{id}/snapshot` |
+| `codetopo_neighborhood` | `GET /v1/graphs/{id}/neighborhood` |
+| `codetopo_get_symbol` | `GET /v1/graphs/{id}/symbol` |
+| `codetopo_search_symbols` | `GET /v1/graphs/{id}/search` |
+| `codetopo_describe_schema` | `GET /v1/schema` |
 
 The one asymmetry that remains runs in a single direction: the MCP surface is
 not wrapped by auth because a stdio server is reached by spawning the process,
