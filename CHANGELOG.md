@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+- Release binaries now also cover `codetopo-mcp`, and `scripts/package_smithery_mcpb.py` packages it as a Smithery MCPB bundle (all five platform binaries behind a zero-dependency Node launcher; tool schemas embedded from `schemas/mcp-tools.json`).
+
 
 - Added `SECURITY.md`: private vulnerability reporting (GitHub PVR) and the security scope notes for the read-only surfaces.
 

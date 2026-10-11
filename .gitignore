@@ -3,3 +3,4 @@ target/
 *.db-journal
 .snapshots/
 .corpus/
+dist/
