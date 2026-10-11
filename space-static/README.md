@@ -5,7 +5,7 @@ colorFrom: indigo
 colorTo: gray
 sdk: static
 pinned: false
-short_description: Static snapshot — codetopo's map of its own codebase, drawn by codetopo itself.
+short_description: codetopo's map of its own codebase — a static snapshot.
 ---
 
 # codetopo — static snapshot demo
