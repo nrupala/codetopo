@@ -26,3 +26,46 @@ jobs:
         run: cargo test --workspace
       - name: Clippy (warnings are errors)
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  container:
+    # Build-verify the product image and smoke it on its own
+    # binaries: CLI version, an in-container index of the MCP
+    # fixture, and the HTTP server's schema route behind Bearer
+    # auth (401 without). The image shipped in the render +
+    # container workstream without ever being built (no Docker
+    # daemon on the build VM); this job is what makes "the image
+    # works" a checked claim instead of a Dockerfile reading.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t codetopo:ci .
+      - name: CLI runs in the image
+        run: docker run --rm codetopo:ci codetopo --version
+      - name: Index inside the image
+        run: |
+          docker run --rm -v "$PWD/crates/codetopo-mcp/tests/fixture-repo:/work:ro" \
+              -v codetopo-ci-data:/data codetopo:ci \
+              codetopo index /work --db /data/fixture.db --package fixture
+          docker run --rm -v codetopo-ci-data:/data codetopo:ci \
+              codetopo stats --db /data/fixture.db
+      - name: Server answers behind auth
+        run: |
+          mkdir -p srvdata && printf 'ci:ci-secret\n' > srvdata/api_keys
+          chmod 777 srvdata && chmod 644 srvdata/api_keys
+          docker run -d --name codetopo-ci -p 18080:8080 \
+              -v "$PWD/srvdata:/data" codetopo:ci
+          ok=""
+          for i in $(seq 1 30); do
+            if curl -fsS -H 'Authorization: Bearer ci:ci-secret' \
+                http://127.0.0.1:18080/v1/schema > schema.json; then
+              ok=1; break
+            fi
+            sleep 1
+          done
+          test -n "$ok" || { docker logs codetopo-ci; exit 1; }
+          grep -q '"schema_version"' schema.json \
+            || { docker logs codetopo-ci; cat schema.json; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/v1/schema)
+          test "$code" = "401" || { echo "unauthenticated schema must 401, got $code"; exit 1; }
+          docker rm -f codetopo-ci
