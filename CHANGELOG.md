@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+- Added the missing root `LICENSE` file (canonical AGPL-3.0 text). The crates have always declared AGPL-3.0-or-later, but the license file itself was absent from the repository root — found by the docs-standard sweep's inventory scan; the ACP Registry submission's license_url pointed at it.
+
 - **codetopo-mcp 0.3.4 — Windows build fixed:** the stdio stdout seal used Unix-only fd APIs (`std::os::fd`, `libc::dup2`), so the crate never compiled on Windows. The seal now has a Win32 implementation (duplicate the stdout handle for the protocol writer; `SetStdHandle` to `NUL` before std's lazy first handle fetch), and CI gains a Windows check job for the two shipped agent binaries so this cannot regress silently. Found by the release-binaries pipeline — the first Windows build in the project's history.
 
 - Release binaries now also cover `codetopo-mcp`, and `scripts/package_smithery_mcpb.py` packages it as a Smithery MCPB bundle: five vendored binaries exceed Smithery's 25 MB limit, so the bundle's zero-dependency Node launcher downloads the pinned platform archive from the GitHub release on first run and refuses to run it unless its SHA-256 matches the pin baked in at pack time (verified then against the release's published sidecar). Tool schemas embedded from `schemas/mcp-tools.json`.
