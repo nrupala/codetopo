@@ -19,6 +19,15 @@
 #
 # The commit is made by github-actions[bot] under its own identity
 # — it is automation output, and it says so.
+#
+# PLATFORM RULE this design bends around: pushes made with the
+# default GITHUB_TOKEN do NOT trigger further workflow runs
+# (GitHub's recursion guard). The bot's data commit therefore
+# cannot wake hf-sync by itself — so after committing, this
+# workflow DISPATCHES hf-sync explicitly (workflow_dispatch is one
+# of the events GITHUB_TOKEN is allowed to fire). Without that
+# step the bundle lands on main and the Space still serves the
+# previous mirror.
 
 name: space-recapture
 
@@ -31,6 +40,7 @@ on:
 
 permissions:
   contents: write
+  actions: write # dispatch hf-sync after the data commit (see header)
 
 concurrency:
   group: space-recapture
@@ -63,6 +73,7 @@ jobs:
             target/release/codetopo-server "$GITHUB_WORKSPACE" "$CODE_SHA" space-static/data
 
       - name: Commit the refreshed bundle (if it changed)
+        id: commit
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -70,8 +81,18 @@ jobs:
           git add space-static/data
           if git diff --cached --quiet; then
             echo "bundle already current — nothing to commit"
+            echo "committed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           CODE_SHA="$(git log -1 --format=%H --invert-grep --grep='^data(space): recapture bundle')"
           git commit -m "data(space): recapture bundle at $CODE_SHA"
           git push origin main
+          echo "committed=true" >> "$GITHUB_OUTPUT"
+
+      # The bot's push cannot trigger hf-sync on its own (see the
+      # header's platform rule) — dispatch the mirror explicitly.
+      - name: Mirror the new bundle to the Space (dispatch hf-sync)
+        if: steps.commit.outputs.committed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run hf-sync.yml --ref main
