@@ -619,7 +619,22 @@ fn handle_tool_call(id: &Value, params: &Value) -> Value {
         .unwrap_or_else(|| json!({}));
 
     match call_tool(name, &args) {
-        Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
+        // A successful CallToolResult carries `content` (what strict
+        // MCP clients parse — the SDK result schemas require it) plus
+        // `structuredContent` with the same object for clients that
+        // consume it directly. Returning the bare object, as this
+        // server once did, parses as NO content in the official
+        // SDKs — in-house tests were green while real clients
+        // failed, which is exactly what the stdio conformance test
+        // (tests/stdio_strict.rs) now pins down.
+        Ok(result) => {
+            let text = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
+            json!({"jsonrpc": "2.0", "id": id, "result": {
+                "content": [{"type": "text", "text": text}],
+                "structuredContent": result,
+                "isError": false,
+            }})
+        }
         // A tool that cannot answer is a *result* with `isError`, per MCP:
         // the model should see the prose and retry, not the transport.
         Err(err) => json!({"jsonrpc": "2.0", "id": id, "result": err.to_result()}),

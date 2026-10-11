@@ -4,6 +4,29 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP `tools/call` results are CallToolResults now.** Success
+  results were the tool's bare JSON object; the MCP schema requires
+  a `content` array, and strict SDK clients parsed the old shape as
+  no content at all (in-house tests read the bare object and stayed
+  green — the defect class this fix's wire-level test exists to
+  catch). Results now carry `content` (the result JSON as a text
+  block) plus `structuredContent` with the same object.
+- **ACP speaks ACP.** The agent's wire protocol was a home-grown
+  dialect: `protocolVersion` as the string `"1.0"` (the spec's is
+  the integer `1`), string prompts (the spec's are content-block
+  arrays), invented `session/new` result fields, and answers in a
+  custom field instead of a streamed `agent_message_chunk` +
+  `stopReason`. Rewritten to ACP v1: spec handshake (integer
+  version, honest capabilities — no session loading, text-only
+  prompts, no auth methods), `{sessionId}` results, content-block
+  prompt text, streamed chunks, `end_turn`/`refusal` stop reasons,
+  and `session/cancel` handled as a notification. Workspace crates
+  version 0.2.7; live frames from both protocol binaries validate
+  against the protocols' official JSON schemas
+  (`docs/protocol-proof.md`).
+
 ### Added
 
 - **Real import resolution in the graph builder.** Discovery named

@@ -108,6 +108,15 @@ fn id_of(db_path: &Path, label: &str) -> String {
     id
 }
 
+/// The payload of a successful tools/call: the spec CallToolResult
+/// carries it as `structuredContent` (and serialized in the text
+/// content block). Tests read payloads through here, never off the
+/// bare result — the bare-object shape is what strict SDK clients
+/// rejected before the wire was fixed.
+fn body(resp: &Value) -> &Value {
+    &resp["result"]["structuredContent"]
+}
+
 #[test]
 fn stdout_is_json_only_while_a_tool_prints() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -129,7 +138,7 @@ fn stdout_is_json_only_while_a_tool_prints() {
             "arguments": {"repo_path": fixture_repo(), "db_path": db},
         }),
     );
-    let report = &indexed["result"];
+    let report = body(&indexed);
     assert!(
         report["files_indexed"].as_u64().expect("a count") > 0,
         "the fixture indexed no files: {indexed}"
@@ -189,7 +198,7 @@ fn a_session_answers_every_step_of_the_read_only_recipe() {
         json!({"name": "codetopo_stats", "arguments": {"db_path": db}}),
     );
     assert!(
-        stats["result"]["nodes"].as_u64().expect("a count") > 0,
+        body(&stats)["nodes"].as_u64().expect("a count") > 0,
         "{stats}"
     );
 
@@ -207,7 +216,7 @@ fn a_session_answers_every_step_of_the_read_only_recipe() {
             },
         }),
     );
-    let steps = chain["result"]["path"].as_array().expect("an array");
+    let steps = body(&chain)["path"].as_array().expect("an array");
     assert_eq!(
         steps.len(),
         3,
@@ -219,7 +228,7 @@ fn a_session_answers_every_step_of_the_read_only_recipe() {
         "tools/call",
         json!({"name": "codetopo_verify", "arguments": {"db_path": db}}),
     );
-    assert_eq!(verified["result"]["chain_valid"], json!(true), "{verified}");
+    assert_eq!(body(&verified)["chain_valid"], json!(true), "{verified}");
 
     // The export is the last step of the read-only recipe: it must carry the
     // whole graph and be bound to the audit head the previous call just
@@ -231,15 +240,15 @@ fn a_session_answers_every_step_of_the_read_only_recipe() {
     );
     assert_ne!(snapshot["result"]["isError"], json!(true), "{snapshot}");
     assert_eq!(
-        snapshot["result"]["audit_head"], verified["result"]["head"],
+        body(&snapshot)["audit_head"], body(&verified)["head"],
         "the snapshot must bind the verified head: {snapshot}"
     );
     assert_eq!(
-        snapshot["result"]["nodes"]
+        body(&snapshot)["nodes"]
             .as_array()
             .expect("an array")
             .len() as u64,
-        stats["result"]["nodes"].as_u64().expect("a count"),
+        body(&stats)["nodes"].as_u64().expect("a count"),
         "the snapshot must carry every node stats counted: {snapshot}"
     );
 

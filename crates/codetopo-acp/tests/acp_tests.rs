@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
 
-use codetopo_acp::{classify_intent, initialize_result, Intent, RefusalReply, AgentCapabilities, execute_intent};
+use codetopo_acp::{classify_intent, initialize_result, message_chunk, prompt_text, Intent, RefusalReply, AgentCapabilities, execute_intent};
+use serde_json::json;
 
 #[test]
 fn initialize_reports_the_crate_version() {
@@ -15,6 +16,40 @@ fn initialize_reports_the_crate_version() {
         env!("CARGO_PKG_VERSION"),
         "agentInfo version must be the crate version, not a hardcoded string"
     );
+}
+
+#[test]
+fn initialize_speaks_acp_v1() {
+    // The spec's protocolVersion is an INTEGER (1). A previous
+    // dialect sent the string "1.0", which strict clients reject.
+    let result = initialize_result();
+    assert_eq!(result["protocolVersion"], json!(1));
+    assert!(result["protocolVersion"].is_number());
+    let caps = &result["agentCapabilities"];
+    assert_eq!(caps["loadSession"], json!(false));
+    assert_eq!(caps["promptCapabilities"]["image"], json!(false));
+    assert_eq!(caps["promptCapabilities"]["audio"], json!(false));
+    assert_eq!(caps["promptCapabilities"]["embeddedContext"], json!(false));
+    assert_eq!(result["authMethods"], json!([]));
+}
+
+#[test]
+fn prompt_text_joins_text_blocks_only() {
+    let blocks = json!([
+        {"type": "text", "text": "first"},
+        {"type": "image", "data": "...", "mimeType": "image/png"},
+        {"type": "text", "text": "second"},
+    ]);
+    assert_eq!(prompt_text(&blocks), "first\nsecond");
+    assert_eq!(prompt_text(&json!([])), "");
+}
+
+#[test]
+fn message_chunk_is_the_spec_update_shape() {
+    let params = message_chunk("sess-1", "hello");
+    assert_eq!(params["sessionId"], "sess-1");
+    assert_eq!(params["update"]["sessionUpdate"], "agent_message_chunk");
+    assert_eq!(params["update"]["content"], json!({"type": "text", "text": "hello"}));
 }
 
 #[test]
@@ -44,10 +79,13 @@ fn intent_unknown_is_refused() {
 }
 
 #[test]
-fn capabilities_default_read_only() {
-    let c = AgentCapabilities::default();
-    assert!(c.read_only);
-    assert!(c.code_structure);
+fn capabilities_default_is_the_honest_minimum() {
+    // No session loading, text-only prompts — the struct serializes
+    // to exactly the wire shape initialize advertises.
+    let wire = serde_json::to_value(AgentCapabilities::default()).expect("serializes");
+    assert_eq!(wire["loadSession"], json!(false));
+    assert_eq!(wire["promptCapabilities"]["embeddedContext"], json!(false));
+    assert_eq!(wire["sessionCapabilities"], json!({}));
 }
 
 #[test]

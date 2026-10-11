@@ -26,6 +26,13 @@ fn main() -> io::Result<()> {
     let mut out = stdout.lock();
 
     let session_state: Arc<Mutex<HashMap<String, SessionInfo>>> = Arc::new(Mutex::new(HashMap::new()));
+    let mut session_counter: u64 = 0;
+    // Sessions whose in-flight turn was cancelled. Turns here are
+    // synchronous (one line at a time), so a cancel can only land
+    // *between* turns; it is recorded so the log tells the truth,
+    // and it never destroys the session — cancel ends a turn in
+    // ACP, not the session.
+    let mut cancelled: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for line in stdin.lock().lines() {
         let line = match line {
@@ -52,6 +59,9 @@ fn main() -> io::Result<()> {
 
         let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
         let id = req.get("id").cloned();
+        // A frame with no `id` is a notification: it is never
+        // answered, whatever it carries.
+        let is_notification = req.get("id").is_none();
 
         match method {
             "initialize" => {
@@ -67,8 +77,10 @@ fn main() -> io::Result<()> {
             "session/new" => {
                 let params = req.get("params").cloned().unwrap_or(json!({}));
                 let cwd = params.get("cwd").and_then(|v| v.as_str()).unwrap_or(".");
-                let provided = params.get("sessionId").and_then(|v| v.as_str());
-                let session_id = provided.map(|s| s.to_string()).unwrap_or_else(|| format!("sess-{}", std::process::id()));
+                // The agent mints the session id (the spec's
+                // session/new takes cwd + mcpServers, no id).
+                session_counter += 1;
+                let session_id = format!("sess-{}-{}", std::process::id(), session_counter);
                 // Index repo into temp SQLite DB using same path CLI uses.
                 let db_path = match index_session_db(cwd, &session_id) {
                     Ok(p) => p,
@@ -84,25 +96,19 @@ fn main() -> io::Result<()> {
                     let mut map = session_state.lock().unwrap();
                     map.insert(session_id.clone(), SessionInfo { db_path: db_path.clone() });
                 }
-                // Streamed updates
-                let update = json!({
-                    "jsonrpc":"2.0",
-                    "method":"session/update",
-                    "params":{"sessionId":session_id,"status":"indexing_complete","db":db_path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()}
-                });
-                let _ = writeln!(out, "{}", update);
-                let _ = out.flush();
                 eprintln!("session/new — session={} cwd={} db={:?}", session_id, cwd, db_path);
-                let resp = json!({"jsonrpc":"2.0","id":id,"result":{"sessionId":session_id,"status":"active","cwd":cwd}});
+                // The spec result is exactly { sessionId }.
+                let resp = json!({"jsonrpc":"2.0","id":id,"result":{"sessionId":session_id}});
                 let _ = writeln!(out, "{}", resp);
                 let _ = out.flush();
             }
             "session/prompt" => {
                 let params = req.get("params").cloned().unwrap_or(json!({}));
                 let session_id = params.get("sessionId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let prompt = params.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                // ACP prompts are content-block arrays, not strings.
+                let prompt = codetopo_acp::prompt_text(params.get("prompt").unwrap_or(&Value::Null));
                 if session_id.is_empty() || prompt.is_empty() {
-                    let resp = json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"missing sessionId or prompt"}});
+                    let resp = json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"missing sessionId or prompt text"}});
                     let _ = writeln!(out, "{}", resp);
                     let _ = out.flush();
                     continue;
@@ -121,27 +127,44 @@ fn main() -> io::Result<()> {
                         continue;
                     }
                 };
-                let graph_result = load_and_query(&info.db_path, &prompt);
-                let intent_str = match codetopo_acp::classify_intent(&prompt) {
-                    codetopo_acp::Intent::Edit(_) => "edit_request".into(),
-                    other => format!("{:?}", other),
-                };
-                // Streamed partial update
-                let stream_up = json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":session_id,"status":"processing","intent":intent_str}});
-                let _ = writeln!(out, "{}", stream_up);
-                let _ = out.flush();
-
-                let result_text = match graph_result {
+                if cancelled.remove(&session_id) {
+                    eprintln!("session/prompt — session={} had a cancelled turn; serving the new prompt", session_id);
+                }
+                let is_edit = matches!(codetopo_acp::classify_intent(&prompt), codetopo_acp::Intent::Edit(_));
+                let result_text = match load_and_query(&info.db_path, &prompt) {
                     Ok(text) => text,
                     Err(msg) => msg,
                 };
-                // Final response
-                let resp = json!({"jsonrpc":"2.0","id":id,"result":{"sessionId":session_id,"answer":result_text,"intent":intent_str,"streamed":true}});
+                // Stream the answer as one agent_message_chunk
+                // (session/update), then answer with the spec's
+                // stopReason — "refusal" for edit requests this
+                // read-only agent will not perform.
+                let update = json!({
+                    "jsonrpc":"2.0",
+                    "method":"session/update",
+                    "params": codetopo_acp::message_chunk(&session_id, &result_text),
+                });
+                let _ = writeln!(out, "{}", update);
+                let _ = out.flush();
+                let stop_reason = if is_edit { "refusal" } else { "end_turn" };
+                let resp = json!({"jsonrpc":"2.0","id":id,"result":{"stopReason":stop_reason}});
                 let _ = writeln!(out, "{}", resp);
                 let _ = out.flush();
-                eprintln!("session/prompt — session={} intent={} answer_len={}", session_id, intent_str, result_text.len());
+                eprintln!("session/prompt — session={} edit={} answer_len={}", session_id, is_edit, result_text.len());
+            }
+            "session/cancel" => {
+                let params = req.get("params").cloned().unwrap_or(json!({}));
+                if let Some(sid) = params.get("sessionId").and_then(|v| v.as_str()) {
+                    cancelled.insert(sid.to_string());
+                    eprintln!("session/cancel — session={} (notification, no response)", sid);
+                }
+                // Never answered: session/cancel is a notification.
             }
             _ => {
+                if is_notification {
+                    eprintln!("ignoring unknown notification: {}", method);
+                    continue;
+                }
                 // Unknown method — return error but keep sealed stdout
                 let resp = json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"Method not found"}});
                 let _ = writeln!(out, "{}", resp);
