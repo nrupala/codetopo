@@ -1,6 +1,6 @@
 [package]
 name = "codetopo-store"
-version = "0.3.0"
+version = "0.3.3"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -11,7 +11,7 @@ keywords.workspace = true
 categories = ["development-tools", "database-implementations"]
 
 [dependencies]
-codetopo-core = { version = "0.3.0", path = "../codetopo-core" }
+codetopo-core = { version = "0.3.3", path = "../codetopo-core" }
 rusqlite = { version = "0.32", features = ["bundled"] }
 sha2 = "0.10"
 hmac = "0.12"
