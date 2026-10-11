@@ -464,3 +464,60 @@ fn discovery_commands_and_json_output() {
 
     let _ = std::fs::remove_dir_all(&workdir);
 }
+
+/// Package/workspace discovery: files under a Cargo.toml
+/// `[package]` or a package.json `name` are indexed under that
+/// package with package-relative paths (the extract contract's
+/// terms); the nearest manifest wins; files under no manifest keep
+/// the caller's fallback package.
+#[test]
+fn index_discovers_packages_from_manifests() {
+    let work = workdir("packages");
+    let repo = work.join("repo");
+    // A virtual workspace root: [workspace] only, no package.
+    std::fs::create_dir_all(repo.join("crates/alpha/src")).expect("mkdir alpha");
+    std::fs::create_dir_all(repo.join("crates/alpha/nested/src")).expect("mkdir nested");
+    std::fs::create_dir_all(repo.join("web")).expect("mkdir web");
+    std::fs::write(repo.join("Cargo.toml"), "[workspace]\nmembers = [\"crates/*\"]\n")
+        .expect("write root manifest");
+    std::fs::write(repo.join("loose.rs"), "pub fn loose() {}\n").expect("write loose.rs");
+    std::fs::write(
+        repo.join("crates/alpha/Cargo.toml"),
+        "[package]\nname = \"alpha-pkg\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("write alpha manifest");
+    std::fs::write(repo.join("crates/alpha/src/lib.rs"), "pub fn alpha_fn() {}\n")
+        .expect("write lib.rs");
+    std::fs::write(
+        repo.join("crates/alpha/nested/Cargo.toml"),
+        "[package]\nname = \"nested-pkg\"\n",
+    )
+    .expect("write nested manifest");
+    std::fs::write(repo.join("crates/alpha/nested/src/deep.rs"), "pub fn deep_fn() {}\n")
+        .expect("write deep.rs");
+    std::fs::write(repo.join("web/package.json"), "{\"name\": \"web-pkg\"}\n")
+        .expect("write package.json");
+    std::fs::write(repo.join("web/app.ts"), "export function webFn() {}\n").expect("write app.ts");
+
+    let db = work.join("graph.db");
+    let report = index_repo(&repo, &db, "fallback-pkg", None, None).expect("index workspace");
+    assert_eq!(report.files_failed, 0, "no file may fail: {report:?}");
+    let graph = load_graph_from_db(&db).expect("load graph");
+
+    for package in ["alpha-pkg", "nested-pkg", "web-pkg", "fallback-pkg"] {
+        find_id(&graph, NodeKind::Package, package);
+    }
+    // Ids begin with the owning package, and module paths are
+    // package-relative (the extractor drops `src/` and treats
+    // lib.rs as the package root). Under the pre-discovery
+    // behaviour every one of these would have worn `fallback-pkg`
+    // and repo-relative module paths instead.
+    let alpha = find_id(&graph, NodeKind::Function, "alpha_fn");
+    assert_eq!(alpha, "alpha-pkg::alpha_fn");
+    let deep = find_id(&graph, NodeKind::Function, "deep_fn");
+    assert_eq!(deep, "nested-pkg::deep::deep_fn");
+    let web = find_id(&graph, NodeKind::Function, "webFn");
+    assert_eq!(web, "web-pkg::app::webFn");
+    let loose = find_id(&graph, NodeKind::Function, "loose");
+    assert_eq!(loose, "fallback-pkg::loose::loose");
+}

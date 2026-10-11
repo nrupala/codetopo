@@ -11,6 +11,7 @@
 //! Output discipline follows CODE_SCHEMA §6: aggregate-first. Every command
 //! prints counts/summaries; full id dumps require explicit `--expand`.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use codetopo_core::snapshot::SnapshotAuditEntry;
@@ -101,8 +102,123 @@ fn skipped_dir_name(name: &str) -> bool {
     matches!(name, ".git" | "target" | "node_modules" | ".corpus") || name.starts_with('.')
 }
 
+/// One discovered package: the directory a manifest lives in
+/// (relative to the repo root, empty for the root itself) and the
+/// package name that manifest declares.
+struct PackageRoot {
+    dir: PathBuf,
+    name: String,
+}
+
+/// The `name` from a Cargo.toml's `[package]` table, or `None` when
+/// the manifest declares no package (a virtual workspace root) or
+/// the name is not a plain quoted string. A line scan, deliberately:
+/// the name is the only field the indexer needs, and pulling in a
+/// TOML parser for one field would invert the dependency weight of
+/// this crate.
+fn cargo_package_name(text: &str) -> Option<String> {
+    let mut in_package = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_package = line == "[package]";
+            continue;
+        }
+        if in_package && line.starts_with("name") {
+            let value = line.split_once('=')?.1.trim();
+            let unquoted = value
+                .strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')));
+            if let Some(name) = unquoted {
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The `name` from a package.json, or `None`. Unlike the Cargo
+/// scan this parses for real — the file is JSON, and serde_json is
+/// already a dependency of everything in this workspace.
+fn package_json_name(text: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    value.get("name")?.as_str().filter(|n| !n.is_empty()).map(str::to_string)
+}
+
+/// Discover the package roots of a tree: every directory holding a
+/// Cargo.toml with a `[package]` name or a package.json with a
+/// `name`. The extract contract has always said a file's path is
+/// relative to *its package root* and its ids begin with *its
+/// package's name* — before this, the indexer passed one
+/// caller-chosen package and repo-relative paths for the whole
+/// tree, so a workspace's ids named the workspace root's directory
+/// (`corpus::crates::codetopo-core::src::…`) instead of the crate
+/// (`codetopo-core::src::…`).
+fn discover_packages(repo: &Path) -> Vec<PackageRoot> {
+    let mut roots = Vec::new();
+    for entry in WalkDir::new(repo).into_iter().filter_entry(|e| {
+        if e.file_type().is_dir() {
+            e.depth() == 0 || !skipped_dir_name(&e.file_name().to_string_lossy())
+        } else {
+            true
+        }
+    }) {
+        let Ok(entry) = entry else { continue };
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let file_name = entry.file_name().to_string_lossy();
+        let name = match file_name.as_ref() {
+            "Cargo.toml" => std::fs::read_to_string(entry.path())
+                .ok()
+                .and_then(|text| cargo_package_name(&text)),
+            "package.json" => std::fs::read_to_string(entry.path())
+                .ok()
+                .and_then(|text| package_json_name(&text)),
+            _ => None,
+        };
+        if let Some(name) = name {
+            let dir = entry
+                .path()
+                .parent()
+                .and_then(|parent| parent.strip_prefix(repo).ok())
+                .map(Path::to_path_buf)
+                .unwrap_or_default();
+            roots.push(PackageRoot { dir, name });
+        }
+    }
+    roots
+}
+
+/// Resolve a repo-relative file path to (package name, path
+/// relative to the package root): the *nearest* manifest directory
+/// wins; a file under no manifest keeps the caller's package and
+/// its repo-relative path, exactly as before discovery existed.
+fn package_for_file(
+    roots: &HashMap<PathBuf, String>,
+    rel: &Path,
+    fallback: &str,
+) -> (String, PathBuf) {
+    let mut ancestor = rel.parent().map(Path::to_path_buf);
+    while let Some(dir) = ancestor {
+        if let Some(name) = roots.get(&dir) {
+            let inner = rel.strip_prefix(&dir).unwrap_or(rel).to_path_buf();
+            return (name.clone(), inner);
+        }
+        ancestor = dir.parent().map(Path::to_path_buf);
+    }
+    (fallback.to_string(), rel.to_path_buf())
+}
+
 /// Walk `<repo>`, extract supported files in parallel, build the graph,
 /// persist it, record the audit entries, and optionally write a snapshot.
+///
+/// `package` is the fallback identity: files under a discovered
+/// manifest (Cargo.toml `[package]` / package.json `name`) belong
+/// to that package instead, with paths relative to its root.
 ///
 /// Prints the aggregate (CODE_SCHEMA §6 aggregate-first) and returns it.
 /// Extraction failures are non-fatal: the file is counted as failed, a
@@ -142,15 +258,26 @@ pub fn index_repo(
     }
     files.sort();
 
+    // 1b. Discover package roots (Cargo.toml / package.json). Files
+    //     under a manifest belong to that manifest's package, with
+    //     paths relative to its root — the extract contract's terms.
+    let package_roots: HashMap<PathBuf, String> = discover_packages(repo)
+        .into_iter()
+        .map(|root| (root.dir, root.name))
+        .collect();
+
     // 2. Read + extract in parallel. `par_iter` over a slice preserves order
     //    on collect, so downstream processing stays deterministic.
     let extracted: Vec<(PathBuf, Result<codetopo_core::FileSymbols, String>)> = files
         .par_iter()
         .map(|path| {
             let rel = path.strip_prefix(repo).unwrap_or(path).to_path_buf();
+            let (file_package, rel_in_package) = package_for_file(&package_roots, &rel, package);
             let result = std::fs::read_to_string(path)
                 .map_err(|e| format!("read error: {e}"))
-                .and_then(|src| extract_file(package, &rel, &src).map_err(|e| e.to_string()));
+                .and_then(|src| {
+                    extract_file(&file_package, &rel_in_package, &src).map_err(|e| e.to_string())
+                });
             (rel, result)
         })
         .collect();
@@ -741,5 +868,64 @@ pub fn verify_db(db_path: &Path) -> Result<(), CliError> {
              recompute; the database has been altered or corrupted"
                 .to_string(),
         ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cargo_name_comes_from_the_package_table_only() {
+        // A [workspace] manifest declares no package.
+        assert_eq!(cargo_package_name("[workspace]\nmembers = []\n"), None);
+        // The package name is found even with dependency tables after it.
+        let text = "[package]\nname = \"alpha-pkg\"\nversion = \"1.0.0\"\n\n[dependencies]\nserde = \"1\"\n";
+        assert_eq!(cargo_package_name(text).as_deref(), Some("alpha-pkg"));
+        // A `name` under any other table is not the package name.
+        let other = "[workspace.package]\nname = \"not-a-package\"\n";
+        assert_eq!(cargo_package_name(other), None);
+        // Single-quoted TOML strings work too.
+        assert_eq!(
+            cargo_package_name("[package]\nname = 'single'\n").as_deref(),
+            Some("single")
+        );
+    }
+
+    #[test]
+    fn package_json_name_reads_the_name_field() {
+        assert_eq!(
+            package_json_name(r#"{"name": "web-pkg", "private": true}"#).as_deref(),
+            Some("web-pkg")
+        );
+        assert_eq!(package_json_name(r#"{"private": true}"#), None);
+        assert_eq!(package_json_name("not json"), None);
+    }
+
+    #[test]
+    fn nearest_manifest_wins_and_fallback_covers_the_rest() {
+        let mut roots = HashMap::new();
+        roots.insert(PathBuf::from("crates/alpha"), "alpha-pkg".to_string());
+        roots.insert(
+            PathBuf::from("crates/alpha/nested"),
+            "nested-pkg".to_string(),
+        );
+        // Direct member of the outer package: path is package-relative.
+        let (pkg, rel) = package_for_file(&roots, Path::new("crates/alpha/src/lib.rs"), "fb");
+        assert_eq!(pkg, "alpha-pkg");
+        assert_eq!(rel, PathBuf::from("src/lib.rs"));
+        // The nested manifest is nearer and wins.
+        let (pkg, rel) =
+            package_for_file(&roots, Path::new("crates/alpha/nested/src/deep.rs"), "fb");
+        assert_eq!(pkg, "nested-pkg");
+        assert_eq!(rel, PathBuf::from("src/deep.rs"));
+        // No manifest ancestor: the caller's package, repo-relative path.
+        let (pkg, rel) = package_for_file(&roots, Path::new("loose.rs"), "fb");
+        assert_eq!(pkg, "fb");
+        assert_eq!(rel, PathBuf::from("loose.rs"));
     }
 }
