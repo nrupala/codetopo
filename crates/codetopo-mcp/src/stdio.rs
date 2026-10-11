@@ -24,9 +24,12 @@
 
 use std::fs::File;
 use std::io::{self, BufRead, Write};
+
+#[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 
 /// The descriptor stdout is moved aside from, and the one rebound to the sink.
+#[cfg(unix)]
 const STDOUT_FD: RawFd = 1;
 
 /// A server whose response channel is already separated from `println!`.
@@ -55,6 +58,7 @@ impl Write for Sealed {
 /// stdout is left in place and the returned writer is a harmless duplicate of
 /// it: a server that risks a stray progress line is recoverable, one that
 /// refuses to start is not.
+#[cfg(unix)]
 pub fn seal_stdout() -> io::Result<Sealed> {
     // SAFETY: `dup` takes only a descriptor, so it has no memory-safety
     // preconditions, and -1 on failure is checked by the caller.
@@ -81,6 +85,70 @@ pub fn seal_stdout() -> io::Result<Sealed> {
     drop(sink);
     if moved < 0 {
         return Ok(sealed);
+    }
+    Ok(sealed)
+}
+
+/// The Windows seal: the same separation through Win32 handles.
+///
+/// The protocol writer is a `DuplicateHandle` of the process's real
+/// stdout. The sink is the `NUL` device, installed with
+/// `SetStdHandle` *before anything has printed*: Rust's `std`
+/// resolves the standard-output handle lazily on first use, so every
+/// later `println!` in the process lands on `NUL` instead of the
+/// protocol stream. The sink handle is deliberately leaked — the
+/// std-handle slot must point at a live handle for the whole
+/// process, and one handle for a process lifetime is the honest
+/// price. As on Unix, a failed rebind degrades to the duplicate
+/// writer alone rather than refusing to start.
+#[cfg(windows)]
+pub fn seal_stdout() -> io::Result<Sealed> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows_sys::Win32::Foundation::{
+        DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::System::Console::{GetStdHandle, SetStdHandle, STD_OUTPUT_HANDLE};
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    // SAFETY: `GetStdHandle` returns the process's own stdout handle
+    // (or NULL / INVALID_HANDLE_VALUE when there is none); both
+    // failure values are checked before the handle is used.
+    let current = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
+    if current.is_null() || current == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    let mut dup: HANDLE = std::ptr::null_mut();
+    // SAFETY: both process arguments are the current process;
+    // `DuplicateHandle` with DUPLICATE_SAME_ACCESS creates a new,
+    // independently owned handle to the same device.
+    let ok = unsafe {
+        DuplicateHandle(
+            GetCurrentProcess(),
+            current,
+            GetCurrentProcess(),
+            &mut dup,
+            0,
+            0,
+            DUPLICATE_SAME_ACCESS,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `dup` is a fresh handle owned by nothing else; `File`
+    // takes its single ownership here.
+    let sealed = Sealed {
+        writer: unsafe { File::from_raw_handle(dup) },
+    };
+    match File::options().read(true).write(true).open("NUL") {
+        Ok(sink) => {
+            // SAFETY: `sink` is open; `SetStdHandle` only re-points
+            // the process's std-handle slot at it. The File is leaked
+            // so the handle outlives every later print (see above).
+            let _ = unsafe { SetStdHandle(STD_OUTPUT_HANDLE, sink.as_raw_handle()) };
+            std::mem::forget(sink);
+        }
+        Err(_) => return Ok(sealed),
     }
     Ok(sealed)
 }

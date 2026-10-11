@@ -27,6 +27,21 @@ jobs:
       - name: Clippy (warnings are errors)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+  check-windows:
+    # The two agent binaries ship for Windows (ACP Registry, Smithery
+    # bundle). codetopo-mcp silently failed to compile there for its
+    # whole history — its stdout seal used Unix-only fd APIs — because
+    # nothing ever built it on Windows. This job is the regression
+    # gate: a full build (not just check) of both binaries on the
+    # real MSVC toolchain.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the agent binaries for Windows
+        run: cargo build -p codetopo-mcp -p codetopo-acp
+
   container:
     # Build-verify the product image and smoke it on its own
     # binaries: CLI version, an in-container index of the MCP

@@ -141,7 +141,7 @@ def build_manifest(version: str) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("tag", nargs="?", default="v0.4.0",
+    ap.add_argument("tag", nargs="?", default="v0.3.4",
                     help="GitHub release tag holding the codetopo-mcp archives")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
