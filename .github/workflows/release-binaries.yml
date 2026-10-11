@@ -1,0 +1,99 @@
+# Copyright (C) 2026 Nrupal Akolkar
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
+#
+# Build codetopo-acp release binaries for every platform the ACP
+# Registry distributes to, and attach them (with SHA-256 sidecars)
+# to an existing GitHub release. Runs on a version-tag push, or
+# manually against an existing tag. The release itself (notes,
+# tagging) stays a deliberate, separate step — this workflow only
+# builds and uploads artifacts.
+name: release-binaries
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to attach binaries to"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+          - os: ubuntu-24.04-arm
+            platform: linux-aarch64
+          - os: macos-14
+            platform: darwin-aarch64
+            target: aarch64-apple-darwin
+          - os: macos-14
+            platform: darwin-x86_64
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            platform: windows-x86_64
+    steps:
+      - name: Resolve the tag
+        id: tag
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "value=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.value }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build codetopo-acp
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            cargo build --release -p codetopo-acp --target "${{ matrix.target }}"
+            echo "BIN_DIR=target/${{ matrix.target }}/release" >> "$GITHUB_ENV"
+          else
+            cargo build --release -p codetopo-acp
+            echo "BIN_DIR=target/release" >> "$GITHUB_ENV"
+          fi
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "$BIN_DIR/codetopo-acp" dist/
+          tar -czf "codetopo-acp-${{ matrix.platform }}.tar.gz" -C dist codetopo-acp
+          shasum -a 256 "codetopo-acp-${{ matrix.platform }}.tar.gz" > "codetopo-acp-${{ matrix.platform }}.tar.gz.sha256"
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "$env:BIN_DIR/codetopo-acp.exe" dist/
+          Compress-Archive -Path dist/codetopo-acp.exe -DestinationPath "codetopo-acp-${{ matrix.platform }}.zip"
+          (Get-FileHash "codetopo-acp-${{ matrix.platform }}.zip" -Algorithm SHA256).Hash.ToLower() + "  codetopo-acp-${{ matrix.platform }}.zip" | Out-File -Encoding ascii "codetopo-acp-${{ matrix.platform }}.zip.sha256"
+
+      - name: Upload to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ steps.tag.outputs.value }}" codetopo-acp-${{ matrix.platform }}.* --clobber
