@@ -1,0 +1,1 @@
+{"index_id":"bd726308-6daa-4b9a-9b28-fda56a9f1e04","nodes":{"total":2544,"by_kind":{"class":65,"doc":21,"external":1817,"file":59,"function":345,"method":148,"module":59,"package":1,"variable":29}},"edges":{"total":7131,"by_kind":{"calls":3454,"contains":726,"defines":410,"imports":148,"reads":2392,"writes":1}}}

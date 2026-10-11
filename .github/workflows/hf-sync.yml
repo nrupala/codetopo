@@ -1,0 +1,130 @@
+# Copyright (C) 2026 Nrupal Akolkar
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
+#
+# hf-sync — GitHub -> Hugging Face Space mirror (Move 6).
+#
+# MIRROR RULE: GitHub is the single source of truth. The Hugging Face Space
+# (https://huggingface.co/spaces/nrupala/codetopo) is a pure mirror: on
+# every run this workflow assembles the Space tree from this repository and
+# FORCE-PUSHES it over whatever is on the HF side. Commits or edits made
+# directly on Hugging Face are overwritten without warning — never edit
+# the Space there; change this repo instead.
+#
+# SYNC LAYOUT — SPACE_SRC (see the assemble step) selects which of the two
+# Space layouts in this repo gets mirrored:
+#
+#   "space-static" (ACTIVE): the Static Space layout. The contents of
+#   space-static/ become the Space repository root as-is:
+#     space-static/README.md  -> README.md   (sdk: static frontmatter)
+#     space-static/index.html -> index.html
+#     space-static/data/      -> data/       (captured snapshot responses)
+#   Hugging Face serves the static files directly; there is no server.
+#   This layout is active because Docker/Gradio Space creation is gated
+#   behind Hugging Face PRO and the owner declined that spend.
+#
+#   "space" (INACTIVE, kept ready): the Docker Space layout. The Space
+#   repository receives the WHOLE codetopo repo tree, with the contents of
+#   space/ overlaid at the root:
+#     space/README.md     -> README.md      (HF Space frontmatter)
+#     space/Dockerfile    -> Dockerfile     (HF builds the root Dockerfile)
+#     space/.dockerignore -> .dockerignore
+#     space/entrypoint.sh -> entrypoint.sh
+#     space/frontdoor.py  -> frontdoor.py
+#     space/index.html    -> index.html
+#   The engine source (Cargo.toml, crates/, schemas/, ...) therefore sits
+#   at the Space root too, which is exactly the build context
+#   space/Dockerfile expects, and the bundled corpus the demo indexes at
+#   container start.
+#
+# SWITCHING TO THE DOCKER LAYOUT LATER = change SPACE_SRC below from
+# "space-static" to "space" (and recreate/convert the Space on Hugging
+# Face with the Docker SDK). No other workflow change is needed: both
+# assemble paths live in the assemble step, and the push step is
+# layout-agnostic.
+#
+# AUTH: the HF_TOKEN repository secret (a Hugging Face write token for
+# nrupala) is read from the environment only. It is masked, and it is
+# passed to git as an HTTP Authorization header — it never appears in a
+# remote URL, a command echo, or this file.
+
+name: hf-sync
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hf-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the source of truth
+        uses: actions/checkout@v4
+
+      - name: Assemble the Space tree
+        env:
+          # ── SPACE LAYOUT SWITCH ──────────────────────────────────────
+          # "space-static" = free Static Space (ACTIVE — see header).
+          # "space"        = Docker Space (inactive; switch back by
+          #                  changing this one value).
+          SPACE_SRC: space-static
+        run: |
+          set -euo pipefail
+          rm -rf staging
+          mkdir staging
+          case "$SPACE_SRC" in
+            space-static)
+              # Static layout: the contents of space-static/ become the
+              # Space repository root, byte for byte.
+              cp -r space-static/. staging/
+              ;;
+            space)
+              # Docker layout (INACTIVE): whole repo tree, minus VCS
+              # metadata, build output, and the staging directory itself,
+              # with the Space packaging (space/) overlaid at the root.
+              tar --exclude='./.git' --exclude='./target' --exclude='./staging' -cf - . | tar -xf - -C staging
+              cp space/README.md staging/README.md
+              cp space/Dockerfile staging/Dockerfile
+              cp space/.dockerignore staging/.dockerignore
+              cp space/entrypoint.sh space/frontdoor.py space/index.html staging/
+              ;;
+            *)
+              echo "::error::SPACE_SRC must be 'space-static' or 'space', got '$SPACE_SRC'."
+              exit 1
+              ;;
+          esac
+          # Show exactly what will be mirrored (paths only, no contents).
+          (cd staging && find . -type f | sort)
+
+      - name: Force-push the mirror to Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HF_TOKEN:-}" ]; then
+            echo "::error::HF_TOKEN repository secret is not set; cannot sync the Space."
+            exit 1
+          fi
+          echo "::add-mask::$HF_TOKEN"
+          AUTH="$(printf 'nrupala:%s' "$HF_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$AUTH"
+          cd staging
+          git init -b main
+          git config user.name "Nrupal Akolkar"
+          git config user.email "51525601+nrupala@users.noreply.github.com"
+          git add -A
+          git commit -m "Mirror of nrupala/codetopo@${GITHUB_SHA}"
+          # The token travels in an Authorization header (Basic auth, the
+          # scheme HF's git endpoint expects), never in the remote URL.
+          git -c http.https://huggingface.co/.extraheader="Authorization: Basic ${AUTH}" \
+            push --force https://huggingface.co/spaces/nrupala/codetopo main
