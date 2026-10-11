@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-10
+
 ### Added
 
 - **The Space bundle recaptures itself.** The Hugging Face Space's
@@ -255,6 +257,16 @@ All notable changes to this project are documented here.
   every PR adds a CHANGELOG entry under Unreleased and bumps crate
   versions; merge commits reference PR numbers; releases tagged
   `vX.Y.Z`). All seven crates bumped `0.2.0` → `0.2.1`.
+
+### Changed
+
+- **Release 0.3.0 — first crates.io publication.** All seven
+  crates publish at 0.3.0 with full registry metadata
+  (descriptions, keywords, categories, homepage); internal
+  dependencies now carry registry versions alongside their paths.
+  Version, tag, changelog, GitHub release, and the crates.io
+  versions are reconciled at this gate — the v0.2.0 tag predates
+  the final 0.2.x line and remains as-is for history.
 
 ## [0.2.0] — 2026-10-05
 

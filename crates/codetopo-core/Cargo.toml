@@ -1,10 +1,14 @@
 [package]
 name = "codetopo-core"
-version = "0.2.8"
+version = "0.3.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Typed graph core for codetopo: schema types, validated builder, queries, snapshots"
+description = "Typed graph core for codetopo: schema types, validated builder, deterministic queries, snapshots, and layout/render"
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories = ["development-tools"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
