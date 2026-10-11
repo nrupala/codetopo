@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-10-10
+
+`codetopo-mcp` only; no code changes in any crate.
+
+- README carries the `mcp-name: io.github.nrupala/codetopo` ownership marker the official MCP Registry requires for Cargo packages, so v0.3.1 supersedes v0.3.0 for `codetopo-mcp` on crates.io. All other crates remain at 0.3.0.
+
 ## [0.3.0] — 2026-10-10
 
 ### Added
