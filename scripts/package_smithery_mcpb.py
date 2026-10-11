@@ -3,19 +3,26 @@
 # Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
 """Package codetopo-mcp as a Smithery MCPB bundle.
 
-Smithery distributes local stdio servers as a single .mcpb file. The
-MCPB manifest has an OS field but no CPU-architecture field, so the
-bundle carries the codetopo-mcp binary for every platform and a
-zero-dependency Node launcher (server/launcher.js) picks the native
-one at startup — the pattern compiled MCP servers ship on Smithery.
+Smithery distributes local stdio servers as a single .mcpb file with
+a 25 MB upload limit. Five stripped codetopo-mcp binaries are ~37 MB,
+so the bundle does not vendor them: it carries a zero-dependency Node
+launcher (server/launcher.js) plus a pin file (server/pins.json)
+with, per platform, the release archive URL and the SHA-256 this
+script verified against the release's published sidecar. On first
+run the launcher downloads its platform's archive from the pinned
+GitHub release, refuses to proceed unless the bytes match the pin,
+caches the binary under the user's cache directory, and execs it
+with stdio inherited — the same fetch-at-launch pattern other
+Smithery bundles use (e.g. uv-launched PyPI bundles). Every later
+run is fully offline against the cache.
 
 Inputs (all from artifacts this repo already publishes):
   - the codetopo-mcp release archives of a GitHub release tag
     (built by .github/workflows/release-binaries.yml), each verified
-    against its published .sha256 sidecar before it enters the bundle;
-  - the tool catalogue in schemas/mcp-tools.json (drift-gated against
-    the live server), embedded in the manifest with the inputSchema
-    Smithery requires on every tool.
+    against its published .sha256 sidecar at pack time;
+  - the tool catalogue in schemas/mcp-tools.json (drift-gated
+    against the live server), embedded in the manifest with the
+    inputSchema Smithery requires on every tool.
 
 Usage:
     python3 scripts/package_smithery_mcpb.py [release-tag]
@@ -27,11 +34,9 @@ manifest — never typed twice.
 
 import argparse
 import hashlib
-import io
 import json
 import re
 import sys
-import tarfile
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -49,38 +54,115 @@ PLATFORMS = {
 }
 
 LAUNCHER_JS = r"""#!/usr/bin/env node
-// codetopo-mcp launcher: the MCPB manifest has no CPU-architecture
-// field, so the bundle carries one native binary per platform and
-// this zero-dependency script starts the right one, inheriting
-// stdio so the MCP wire passes through untouched.
+// codetopo-mcp launcher.
+//
+// The bundle does not vendor the server binaries (five platforms at
+// ~8 MB each exceed Smithery's 25 MB bundle limit). Instead, on
+// first run this zero-dependency script downloads the pinned
+// platform archive from the codetopo GitHub release, verifies its
+// SHA-256 against the pin baked into pins.json at pack time, caches
+// the extracted binary, and starts it with stdio inherited so the
+// MCP wire passes through untouched. Later runs are offline.
 'use strict';
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
+const https = require('https');
+const os = require('os');
 const path = require('path');
 
+const pins = require('./pins.json');
 const key = `${process.platform}-${process.arch}`;
-const exe = process.platform === 'win32' ? 'codetopo-mcp.exe' : 'codetopo-mcp';
-const bin = path.join(__dirname, 'bin', key, exe);
+const pin = pins.platforms[key];
 
-if (!fs.existsSync(bin)) {
-  process.stderr.write(`codetopo: no bundled binary for this platform (${key}).\n`);
-  process.stderr.write('Supported: darwin-arm64, darwin-x64, linux-arm64, linux-x64, win32-x64.\n');
-  process.stderr.write('Alternatively install from crates.io: cargo install codetopo-mcp\n');
+function fail(msg) {
+  process.stderr.write(`codetopo: ${msg}\n`);
   process.exit(1);
 }
 
-const child = spawn(bin, process.argv.slice(2), { stdio: 'inherit' });
-child.on('error', (err) => {
-  process.stderr.write(`codetopo: failed to start ${bin}: ${err.message}\n`);
-  process.exit(1);
-});
-child.on('exit', (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
+if (!pin) {
+  fail(`no codetopo-mcp build for this platform (${key}). ` +
+    'Supported: darwin-arm64, darwin-x64, linux-arm64, linux-x64, win32-x64. ' +
+    'Alternatively install from crates.io: cargo install codetopo-mcp');
+}
+
+function cacheDir() {
+  const base =
+    process.env.CODETOPO_MCPB_CACHE ||
+    (process.platform === 'darwin'
+      ? path.join(os.homedir(), 'Library', 'Caches', 'codetopo-mcpb')
+      : process.platform === 'win32'
+        ? path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'codetopo-mcpb')
+        : path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'codetopo-mcpb'));
+  return path.join(base, pins.version, key);
+}
+
+function download(url, dest) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { headers: { 'User-Agent': 'codetopo-mcpb-launcher' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        download(res.headers.location, dest).then(resolve, reject);
+        return;
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        reject(new Error(`download failed: HTTP ${res.statusCode} for ${url}`));
+        return;
+      }
+      const out = fs.createWriteStream(dest);
+      res.pipe(out);
+      out.on('finish', () => out.close(resolve));
+      out.on('error', reject);
+    }).on('error', reject);
+  });
+}
+
+function sha256(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function extract(archive, dir) {
+  if (archive.endsWith('.zip')) {
+    const r = spawnSync('powershell', ['-NoProfile', '-Command',
+      `Expand-Archive -Force -Path '${archive}' -DestinationPath '${dir}'`],
+      { stdio: 'inherit' });
+    if (r.status !== 0) throw new Error('Expand-Archive failed');
   } else {
-    process.exit(code === null ? 1 : code);
+    const r = spawnSync('tar', ['-xzf', archive, '-C', dir], { stdio: 'inherit' });
+    if (r.status !== 0) throw new Error('tar extraction failed');
   }
-});
+}
+
+async function ensureBinary() {
+  const dir = cacheDir();
+  const exePath = path.join(dir, pin.exe);
+  if (fs.existsSync(exePath)) return exePath;
+  fs.mkdirSync(dir, { recursive: true });
+  const archiveName = pin.url.split('/').pop();
+  const archivePath = path.join(dir, archiveName);
+  process.stderr.write(`codetopo: first run — downloading codetopo-mcp ${pins.version} for ${key}...\n`);
+  await download(pin.url, archivePath);
+  const digest = sha256(archivePath);
+  if (digest !== pin.sha256) {
+    fs.rmSync(archivePath, { force: true });
+    fail(`downloaded archive failed its SHA-256 check (expected ${pin.sha256}, got ${digest}). Refusing to run it.`);
+  }
+  extract(archivePath, dir);
+  fs.rmSync(archivePath, { force: true });
+  if (!fs.existsSync(exePath)) fail(`archive did not contain ${pin.exe}.`);
+  if (process.platform !== 'win32') fs.chmodSync(exePath, 0o755);
+  return exePath;
+}
+
+ensureBinary().then((bin) => {
+  const child = spawn(bin, process.argv.slice(2), { stdio: 'inherit' });
+  child.on('error', (err) => fail(`failed to start the server binary: ${err.message}`));
+  child.on('exit', (code, signal) => {
+    if (signal) process.kill(process.pid, signal);
+    else process.exit(code === null ? 1 : code);
+  });
+}).catch((err) => fail(err.message));
 """
 
 
@@ -93,16 +175,6 @@ def fetch(url: str) -> bytes:
 def mcp_version() -> str:
     text = (REPO / "crates" / "codetopo-mcp" / "Cargo.toml").read_text()
     return re.search(r'^version\s*=\s*"([^"]+)"', text, re.M).group(1)
-
-
-def extract_binary(archive: bytes, ext: str, exe: str) -> bytes:
-    if ext == "tar.gz":
-        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tf:
-            member = next(m for m in tf.getmembers() if Path(m.name).name == exe)
-            return tf.extractfile(member).read()
-    with zipfile.ZipFile(io.BytesIO(archive)) as zf:
-        name = next(n for n in zf.namelist() if Path(n).name == exe)
-        return zf.read(name)
 
 
 def build_manifest(version: str) -> dict:
@@ -151,30 +223,25 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     base = f"https://github.com/{OWNER_REPO}/releases/download/{args.tag}"
 
-    binaries: dict[str, bytes] = {}
+    pins = {"version": version, "platforms": {}}
     for key, (platform, ext, exe) in PLATFORMS.items():
         fname = f"codetopo-mcp-{platform}.{ext}"
-        print(f"{key}: downloading {fname}")
-        archive = fetch(f"{base}/{fname}")
-        sidecar = fetch(f"{base}/{fname}.sha256").decode().split()[0]
+        url = f"{base}/{fname}"
+        print(f"{key}: verifying {fname} against its published sidecar")
+        archive = fetch(url)
+        sidecar = fetch(f"{url}.sha256").decode().split()[0]
         digest = hashlib.sha256(archive).hexdigest()
         if digest != sidecar:
             print(f"  SHA-256 MISMATCH (published {sidecar}, got {digest}) — aborting")
             return 1
-        binaries[key] = extract_binary(archive, ext, exe)
-        print(f"  sha256 verified; binary {len(binaries[key])} bytes")
+        pins["platforms"][key] = {"url": url, "sha256": digest, "exe": exe}
+        print(f"  pinned sha256 {digest[:16]}...")
 
     manifest = build_manifest(version)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))
-        info = zipfile.ZipInfo("server/launcher.js")
-        info.external_attr = 0o644 << 16
-        zf.writestr(info, LAUNCHER_JS)
-        for key, data in binaries.items():
-            exe = "codetopo-mcp.exe" if key.startswith("win32") else "codetopo-mcp"
-            info = zipfile.ZipInfo(f"server/bin/{key}/{exe}")
-            info.external_attr = 0o755 << 16
-            zf.writestr(info, data)
+        zf.writestr("server/launcher.js", LAUNCHER_JS)
+        zf.writestr("server/pins.json", json.dumps(pins, indent=2))
     size = out.stat().st_size
     print(f"bundle: {out} ({size} bytes, sha256 {hashlib.sha256(out.read_bytes()).hexdigest()})")
     if size > 25 * 1024 * 1024:
