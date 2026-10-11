@@ -1,16 +1,4 @@
 <!DOCTYPE html>
-<!--
-  Copyright (C) 2026 Nrupal Akolkar
-  SPDX-License-Identifier: AGPL-3.0-or-later
-  Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
-
-  Static snapshot page for the codetopo Hugging Face Space. There is no
-  server behind this page: every number on it is rendered in the browser
-  from the bundled API responses under data/ — genuine output captured
-  from one real run of codetopo-server against codetopo's own source
-  (provenance in data/ABOUT.json). The page never invents data; if a
-  data file fails to load, the affected section says so.
--->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -143,9 +131,9 @@ async function loadStats() {
     const files = (s.nodes.by_kind && s.nodes.by_kind.file) || 0;
     el.innerHTML =
       '<div class="cards">' +
-      '<div class="card"><div class="n">' + files + '</div><div class="k">files indexed</div></div>' +
-      '<div class="card"><div class="n">' + s.nodes.total + '</div><div class="k">nodes</div></div>' +
-      '<div class="card"><div class="n">' + s.edges.total + '</div><div class="k">edges</div></div>' +
+      '<div class="card"><div class="n">' + files.toLocaleString("en-US") + '</div><div class="k">files indexed</div></div>' +
+      '<div class="card"><div class="n">' + s.nodes.total.toLocaleString("en-US") + '</div><div class="k">nodes</div></div>' +
+      '<div class="card"><div class="n">' + s.edges.total.toLocaleString("en-US") + '</div><div class="k">edges</div></div>' +
       "</div>" +
       "<h3>Nodes by kind</h3>" + kindTable(s.nodes.by_kind) +
       "<h3>Edges by kind</h3>" + kindTable(s.edges.by_kind) +
@@ -203,7 +191,7 @@ async function loadSnapshot() {
       descendants(node.id).size + " descendants · " + ancestors(node.id).size +
       " ancestors (computed from the snapshot)</span></div>"
     ).join("") +
-    "<p>" + SNAP.nodes.length + " nodes and " + SNAP.edges.length + " edges in the bundled snapshot; the table above ranks nodes by their calls/imports connections — the edges dependency closures travel.</p>";
+    "<p>" + SNAP.nodes.length.toLocaleString("en-US") + " nodes and " + SNAP.edges.length.toLocaleString("en-US") + " edges in the bundled snapshot; the table above ranks nodes by their calls/imports connections — the edges dependency closures travel.</p>";
   } catch (e) {
     topEl.innerHTML = "<p>The bundled graph (data/snapshot.json) failed to load, so the topology browser is unavailable. The stats and audit sections above come from separate captured files and are unaffected.</p>";
   }
@@ -238,5 +226,17 @@ loadStats();
 loadVerify();
 loadSnapshot();
 </script>
+<!--
+  Copyright (C) 2026 Nrupal Akolkar
+  SPDX-License-Identifier: AGPL-3.0-or-later
+  Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
+
+  Static snapshot page for the codetopo Hugging Face Space. There is no
+  server behind this page: every number on it is rendered in the browser
+  from the bundled API responses under data/ — genuine output captured
+  from one real run of codetopo-server against codetopo's own source
+  (provenance in data/ABOUT.json). The page never invents data; if a
+  data file fails to load, the affected section says so.
+-->
 </body>
 </html>
