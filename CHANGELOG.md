@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-10-10
+
+All seven crates; no code changes. Fixes how the crates appear on crates.io.
+
+- The hand-rolled crates.io publisher sent the README *filename* where the registry protocol expects the README *content*, so every version up to 0.3.2 renders a one-line placeholder instead of the README on its crates.io page. 0.3.3 is published with the corrected publisher; the full README (including the MCP Registry identity line) now renders. Functionality is identical to 0.3.0.
+- `codetopo-mcp` 0.3.1 and 0.3.2 were registry-listing iterations on the way here (ownership marker, then the marker as visible text); 0.3.3 supersedes them and restores one version across the workspace.
+
 ## [0.3.2] — 2026-10-10
 
 `codetopo-mcp` only; no code changes in any crate.
