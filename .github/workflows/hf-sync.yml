@@ -11,18 +11,37 @@
 # directly on Hugging Face are overwritten without warning — never edit
 # the Space there; change this repo instead.
 #
-# SYNC LAYOUT (must match space/Dockerfile, which is written for it):
-# the Space repository receives the WHOLE codetopo repo tree, with the
-# contents of space/ overlaid at the root:
-#   space/README.md     -> README.md      (HF Space frontmatter lives here)
-#   space/Dockerfile    -> Dockerfile     (HF builds the root Dockerfile)
-#   space/.dockerignore -> .dockerignore
-#   space/entrypoint.sh -> entrypoint.sh
-#   space/frontdoor.py  -> frontdoor.py
-#   space/index.html    -> index.html
-# The engine source (Cargo.toml, crates/, schemas/, ...) therefore sits at
-# the Space root too, which is exactly the build context the Dockerfile
-# expects, and the bundled corpus the demo indexes at container start.
+# SYNC LAYOUT — SPACE_SRC (see the assemble step) selects which of the two
+# Space layouts in this repo gets mirrored:
+#
+#   "space-static" (ACTIVE): the Static Space layout. The contents of
+#   space-static/ become the Space repository root as-is:
+#     space-static/README.md  -> README.md   (sdk: static frontmatter)
+#     space-static/index.html -> index.html
+#     space-static/data/      -> data/       (captured snapshot responses)
+#   Hugging Face serves the static files directly; there is no server.
+#   This layout is active because Docker/Gradio Space creation is gated
+#   behind Hugging Face PRO and the owner declined that spend.
+#
+#   "space" (INACTIVE, kept ready): the Docker Space layout. The Space
+#   repository receives the WHOLE codetopo repo tree, with the contents of
+#   space/ overlaid at the root:
+#     space/README.md     -> README.md      (HF Space frontmatter)
+#     space/Dockerfile    -> Dockerfile     (HF builds the root Dockerfile)
+#     space/.dockerignore -> .dockerignore
+#     space/entrypoint.sh -> entrypoint.sh
+#     space/frontdoor.py  -> frontdoor.py
+#     space/index.html    -> index.html
+#   The engine source (Cargo.toml, crates/, schemas/, ...) therefore sits
+#   at the Space root too, which is exactly the build context
+#   space/Dockerfile expects, and the bundled corpus the demo indexes at
+#   container start.
+#
+# SWITCHING TO THE DOCKER LAYOUT LATER = change SPACE_SRC below from
+# "space-static" to "space" (and recreate/convert the Space on Hugging
+# Face with the Docker SDK). No other workflow change is needed: both
+# assemble paths live in the assemble step, and the push step is
+# layout-agnostic.
 #
 # AUTH: the HF_TOKEN repository secret (a Hugging Face write token for
 # nrupala) is read from the environment only. It is masked, and it is
@@ -53,18 +72,37 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Assemble the Space tree
+        env:
+          # ── SPACE LAYOUT SWITCH ──────────────────────────────────────
+          # "space-static" = free Static Space (ACTIVE — see header).
+          # "space"        = Docker Space (inactive; switch back by
+          #                  changing this one value).
+          SPACE_SRC: space-static
         run: |
           set -euo pipefail
           rm -rf staging
           mkdir staging
-          # Whole repo tree, minus VCS metadata, build output, and the
-          # staging directory itself.
-          tar --exclude='./.git' --exclude='./target' --exclude='./staging' -cf - . | tar -xf - -C staging
-          # Overlay the Space packaging (space/) at the Space repo root.
-          cp space/README.md staging/README.md
-          cp space/Dockerfile staging/Dockerfile
-          cp space/.dockerignore staging/.dockerignore
-          cp space/entrypoint.sh space/frontdoor.py space/index.html staging/
+          case "$SPACE_SRC" in
+            space-static)
+              # Static layout: the contents of space-static/ become the
+              # Space repository root, byte for byte.
+              cp -r space-static/. staging/
+              ;;
+            space)
+              # Docker layout (INACTIVE): whole repo tree, minus VCS
+              # metadata, build output, and the staging directory itself,
+              # with the Space packaging (space/) overlaid at the root.
+              tar --exclude='./.git' --exclude='./target' --exclude='./staging' -cf - . | tar -xf - -C staging
+              cp space/README.md staging/README.md
+              cp space/Dockerfile staging/Dockerfile
+              cp space/.dockerignore staging/.dockerignore
+              cp space/entrypoint.sh space/frontdoor.py space/index.html staging/
+              ;;
+            *)
+              echo "::error::SPACE_SRC must be 'space-static' or 'space', got '$SPACE_SRC'."
+              exit 1
+              ;;
+          esac
           # Show exactly what will be mirrored (paths only, no contents).
           (cd staging && find . -type f | sort)
 

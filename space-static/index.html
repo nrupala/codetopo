@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<!--
+  Copyright (C) 2026 Nrupal Akolkar
+  SPDX-License-Identifier: AGPL-3.0-or-later
+  Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
+
+  Static snapshot page for the codetopo Hugging Face Space. There is no
+  server behind this page: every number on it is rendered in the browser
+  from the bundled API responses under data/ — genuine output captured
+  from one real run of codetopo-server against codetopo's own source
+  (provenance in data/ABOUT.json). The page never invents data; if a
+  data file fails to load, the affected section says so.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>codetopo — static snapshot</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+         margin: 0 auto; max-width: 880px; padding: 24px 16px 48px;
+         background: #0d1117; color: #e6edf3; line-height: 1.5; }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 28px 0 8px; }
+  .sub { color: #9da7b3; margin: 0 0 16px; }
+  .honest { border: 1px solid #d29922; border-radius: 8px; padding: 10px 14px;
+            background: #2a2107; font-size: 14px; }
+  .cards { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
+  .card { border: 1px solid #30363d; border-radius: 8px; padding: 12px 16px; min-width: 140px; }
+  .card .n { font-size: 26px; font-weight: 700; }
+  .card .k { color: #9da7b3; font-size: 13px; }
+  table { border-collapse: collapse; font-size: 14px; }
+  td, th { border: 1px solid #30363d; padding: 4px 10px; text-align: left; }
+  input[type="search"] { width: 100%; box-sizing: border-box; padding: 10px;
+    font: inherit; background: #161b22; color: inherit; border: 1px solid #30363d; border-radius: 8px; }
+  .result { padding: 8px 0; border-bottom: 1px solid #21262d; cursor: pointer; }
+  .result .label { font-weight: 700; }
+  .result .meta { color: #9da7b3; font-size: 13px; word-break: break-all; }
+  .ok { color: #3fb950; } .bad { color: #f85149; }
+  details { margin-top: 8px; } summary { cursor: pointer; color: #9da7b3; font-size: 13px; }
+  pre { overflow-x: auto; background: #161b22; padding: 10px; border-radius: 8px; font-size: 12px; }
+  a { color: #58a6ff; }
+  footer { margin-top: 40px; color: #9da7b3; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>codetopo</h1>
+<p class="sub">See your codebase the way an agent sees it — a queryable code graph: symbols, calls, references, structure.</p>
+
+<p class="honest" id="caption"><strong>Static snapshot — not a live server.</strong> Loading capture details…</p>
+
+<h2>The graph of codetopo itself</h2>
+<div id="stats"><p>Loading snapshot stats…</p></div>
+
+<h2>Audit chain</h2>
+<div id="verify"><p>Loading…</p></div>
+
+<h2>Most connected symbols in the snapshot</h2>
+<div id="top"><p>Loading the bundled graph…</p></div>
+
+<h2>Search the snapshot</h2>
+<form id="search-form">
+  <input type="search" id="q" placeholder="Try: index_repo, GraphBuilder, verify_proof…" aria-label="Search symbols in the snapshot">
+</form>
+<p class="sub" style="font-size:13px">Search runs in your browser against the bundled snapshot only — it covers exactly the nodes listed in <code>data/snapshot.json</code>, nothing else.</p>
+<div id="results"></div>
+
+<footer>
+  <p>Engine: AGPL-3.0-or-later · API contract: <a href="data/schema.json">data/schema.json</a> (Apache-2.0) ·
+  Raw snapshot data: <a href="data/stats.json">stats</a> · <a href="data/verify.json">verify</a> · <a href="data/snapshot.json">snapshot</a> · <a href="data/ABOUT.json">capture provenance</a></p>
+  <p>Source of truth: <a href="https://github.com/nrupala/codetopo">github.com/nrupala/codetopo</a> (this Space is an automated mirror).</p>
+  <p>Owned by Nrupal Akolkar · Built with Muse by Meta.</p>
+</footer>
+
+<script>
+"use strict";
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function rawDetails(data) {
+  return "<details><summary>raw captured API response</summary><pre>" + esc(JSON.stringify(data, null, 2)) + "</pre></details>";
+}
+function kindTable(byKind) {
+  const rows = Object.entries(byKind).sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => "<tr><td>" + esc(k) + "</td><td>" + v + "</td></tr>").join("");
+  return "<table><tr><th>kind</th><th>count</th></tr>" + rows + "</table>";
+}
+
+let SNAP = null;      // parsed data/snapshot.json
+let BY_ID = new Map(); // node id -> node
+let OUT = new Map();   // id -> [ids it points to]   (edge.from -> edge.to)
+let IN = new Map();    // id -> [ids pointing to it] (edge.to -> edge.from)
+
+function closure(start, adj) {
+  const seen = new Set();
+  const stack = [...(adj.get(start) || [])];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    for (const nxt of adj.get(cur) || []) if (!seen.has(nxt)) stack.push(nxt);
+  }
+  seen.delete(start);
+  return seen;
+}
+// Dependency closures, exactly as the live API defines them
+// (CODE_SCHEMA §6): descendants/ancestors are transitive closures over
+// calls+imports edges only — structural edges (contains, defines, …) do
+// not propagate dependency. Descendants follow out-edges (what a node
+// transitively calls/imports); ancestors follow in-edges (what
+// transitively calls/imports it). At capture time these totals were
+// cross-checked against the server's own /descendants and /ancestors
+// endpoints for a sample of nodes and matched exactly.
+function descendants(id) { return closure(id, OUT); }
+function ancestors(id) { return closure(id, IN); }
+
+async function loadCaption() {
+  const el = document.getElementById("caption");
+  try {
+    const a = await getJSON("data/ABOUT.json");
+    el.innerHTML = "<strong>Static snapshot — not a live server.</strong> " +
+      "This page renders a snapshot of <em>codetopo analyzing its own repository</em>, captured on " +
+      esc(a.captured_at) + " from source commit <code>" + esc(String(a.source_commit).slice(0, 12)) + "…</code> " +
+      "with codetopo " + esc(a.tool) + ". The numbers below are the genuine API responses from that run, " +
+      "bundled under <code>data/</code>. Search and browsing happen in your browser against that snapshot only. " +
+      "The full live demo — a server that indexes the source and answers queries in real time — is the Docker Space.";
+  } catch (e) {
+    el.innerHTML = "<strong>Static snapshot — not a live server.</strong> The capture-provenance file (data/ABOUT.json) failed to load, so this page cannot state its capture date or source commit.";
+  }
+}
+
+async function loadStats() {
+  const el = document.getElementById("stats");
+  try {
+    const s = await getJSON("data/stats.json");
+    const files = (s.nodes.by_kind && s.nodes.by_kind.file) || 0;
+    el.innerHTML =
+      '<div class="cards">' +
+      '<div class="card"><div class="n">' + files + '</div><div class="k">files indexed</div></div>' +
+      '<div class="card"><div class="n">' + s.nodes.total + '</div><div class="k">nodes</div></div>' +
+      '<div class="card"><div class="n">' + s.edges.total + '</div><div class="k">edges</div></div>' +
+      "</div>" +
+      "<h3>Nodes by kind</h3>" + kindTable(s.nodes.by_kind) +
+      "<h3>Edges by kind</h3>" + kindTable(s.edges.by_kind) +
+      rawDetails(s);
+  } catch (e) {
+    el.innerHTML = "<p>The captured stats file (data/stats.json) failed to load.</p>";
+  }
+}
+
+async function loadVerify() {
+  const el = document.getElementById("verify");
+  try {
+    const v = await getJSON("data/verify.json");
+    el.innerHTML = "<p>Audit chain at capture time: " + (v.chain_valid
+      ? '<span class="ok">valid</span>'
+      : '<span class="bad">INVALID</span>') +
+      " · " + v.entries + " entries · head <code>" + esc(String(v.head).slice(0, 16)) + "…</code></p>" + rawDetails(v);
+  } catch (e) {
+    el.innerHTML = "<p>The captured verification file (data/verify.json) failed to load.</p>";
+  }
+}
+
+function nodeLine(n) {
+  return '<span class="label">' + esc(n.label) + "</span> " +
+    '<span class="meta">' + esc(n.kind) + " · " + esc(n.loc.file) + ":" + n.loc.line + "</span><br>" +
+    '<span class="meta">' + esc(n.id) + "</span>";
+}
+
+async function loadSnapshot() {
+  const topEl = document.getElementById("top");
+  try {
+    SNAP = await getJSON("data/snapshot.json");
+    BY_ID = new Map(SNAP.nodes.map(n => [n.id, n]));
+    OUT = new Map(); IN = new Map();
+    const degree = new Map();
+    // Adjacency and ranking use calls+imports edges only — the same
+    // edge set the descendants/ancestors closures are defined over.
+    for (const e of SNAP.edges) {
+      if (e.kind !== "calls" && e.kind !== "imports") continue;
+      if (!OUT.has(e.from)) OUT.set(e.from, []);
+      OUT.get(e.from).push(e.to);
+      if (!IN.has(e.to)) IN.set(e.to, []);
+      IN.get(e.to).push(e.from);
+      degree.set(e.from, (degree.get(e.from) || 0) + 1);
+      degree.set(e.to, (degree.get(e.to) || 0) + 1);
+    }
+    const ranked = [...degree.entries()]
+      .map(([id, d]) => ({ node: BY_ID.get(id), d }))
+      .filter(x => x.node)
+      .sort((a, b) => b.d - a.d || a.node.label.localeCompare(b.node.label))
+      .slice(0, 25);
+    topEl.innerHTML = ranked.map(({ node, d }) =>
+      '<div class="result" data-id="' + esc(node.id) + '">' + nodeLine(node) + "<br>" +
+      '<span class="meta">' + d + " calls/imports links · " +
+      descendants(node.id).size + " descendants · " + ancestors(node.id).size +
+      " ancestors (computed from the snapshot)</span></div>"
+    ).join("") +
+    "<p>" + SNAP.nodes.length + " nodes and " + SNAP.edges.length + " edges in the bundled snapshot; the table above ranks nodes by their calls/imports connections — the edges dependency closures travel.</p>";
+  } catch (e) {
+    topEl.innerHTML = "<p>The bundled graph (data/snapshot.json) failed to load, so the topology browser is unavailable. The stats and audit sections above come from separate captured files and are unaffected.</p>";
+  }
+}
+
+function runSearch(q) {
+  const el = document.getElementById("results");
+  if (!q) { el.innerHTML = ""; return; }
+  if (!SNAP) { el.innerHTML = "<p>The snapshot is still loading — try again in a moment.</p>"; return; }
+  const needle = q.toLowerCase();
+  const hits = SNAP.nodes.filter(n => n.label.toLowerCase().includes(needle)).slice(0, 20);
+  if (!hits.length) { el.innerHTML = "<p>No symbols in the snapshot match.</p>"; return; }
+  el.innerHTML = hits.map(n =>
+    '<div class="result" data-id="' + esc(n.id) + '">' + nodeLine(n) + "<br>" +
+    '<span class="meta deps">click to count descendants / ancestors in the snapshot</span></div>'
+  ).join("");
+  el.querySelectorAll(".result").forEach(r => {
+    r.addEventListener("click", () => {
+      const slot = r.querySelector(".deps");
+      slot.textContent = descendants(r.dataset.id).size + " descendants · " +
+        ancestors(r.dataset.id).size + " ancestors (computed from the bundled snapshot)";
+    });
+  });
+}
+
+document.getElementById("search-form").addEventListener("submit", ev => {
+  ev.preventDefault();
+  runSearch(document.getElementById("q").value.trim());
+});
+loadCaption();
+loadStats();
+loadVerify();
+loadSnapshot();
+</script>
+</body>
+</html>
