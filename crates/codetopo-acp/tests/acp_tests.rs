@@ -9,7 +9,7 @@ use serde_json::json;
 fn initialize_reports_the_crate_version() {
     // Version honesty: the handshake must claim the version of the
     // crate it ships in — it previously hardcoded 0.1.0.
-    let result = initialize_result();
+    let result = initialize_result(&json!({}));
     assert_eq!(result["agentInfo"]["name"], "codetopo");
     assert_eq!(
         result["agentInfo"]["version"],
@@ -22,7 +22,7 @@ fn initialize_reports_the_crate_version() {
 fn initialize_speaks_acp_v1() {
     // The spec's protocolVersion is an INTEGER (1). A previous
     // dialect sent the string "1.0", which strict clients reject.
-    let result = initialize_result();
+    let result = initialize_result(&json!({}));
     assert_eq!(result["protocolVersion"], json!(1));
     assert!(result["protocolVersion"].is_number());
     let caps = &result["agentCapabilities"];
