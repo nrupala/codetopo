@@ -6,6 +6,21 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **Real import resolution in the graph builder.** Discovery named
+  the packages; this makes their imports *link*. `use a::b::Item`
+  now lands on module `a::b` (the longest module prefix — before,
+  every Rust `use` of an item became an external stub); bare
+  workspace-package imports (npm `from 'ui-kit'`, cross-crate
+  `use`) resolve through their bindings to the defining module,
+  with hyphen/underscore normalization; an extractor's
+  `external::` pre-mark no longer doubles (`external::external::std`
+  is gone); a package's root module is its package node — the id
+  collision that silently dropped root modules and rejected their
+  imports with `UnknownSymbol` is fixed; and `crate::`-qualified
+  calls resolve into the caller's package. Also: `pyproject.toml`
+  (`[project]` / `[tool.poetry]`) joins Cargo.toml and package.json
+  as a discovery manifest (CODE_SCHEMA names PyPI projects as
+  packages). Rules documented in CODE_SCHEMA §3.1.
 - **Package/workspace discovery in the indexer.** Indexing now
   finds the manifest that owns each file — a Cargo.toml
   `[package]` name or a package.json `name`, nearest manifest
