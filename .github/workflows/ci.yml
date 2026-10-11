@@ -64,7 +64,7 @@ jobs:
             sleep 1
           done
           test -n "$ok" || { docker logs codetopo-ci; exit 1; }
-          grep -q '"version"' schema.json \
+          grep -q '"schema_version"' schema.json \
             || { docker logs codetopo-ci; cat schema.json; exit 1; }
           code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/v1/schema)
           test "$code" = "401" || { echo "unauthenticated schema must 401, got $code"; exit 1; }
