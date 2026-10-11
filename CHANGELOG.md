@@ -1,3 +1,7 @@
+## [Unreleased]
+
+- Added `SECURITY.md`: private vulnerability reporting (GitHub PVR) and the security scope notes for the read-only surfaces.
+
 # Changelog
 
 All notable changes to this project are documented here.
