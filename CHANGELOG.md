@@ -6,6 +6,19 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **The Space bundle recaptures itself.** The Hugging Face Space's
+  data (`space-static/data/`) was a one-time capture from 0.2.5;
+  the demo-graph workflow refreshed only the aimlds demo, so the
+  Space kept rendering the old snapshot after merges. A new
+  `space-recapture` workflow now rebuilds `codetopo-server` from
+  every merge to main, re-indexes this repository with it, and
+  commits a fresh byte-for-byte capture
+  (`scripts/capture-space-bundle.sh`) — but only after the honesty
+  gates pass (snapshot counts equal stats totals; snapshot audit
+  head equals the verify head with a valid chain). The bot's data
+  commit is what `hf-sync` then mirrors to the Space; two guards
+  (paths-ignore + a head-commit check) keep the workflow from
+  re-triggering on its own output.
 - **Deterministic render: `codetopo render`.** A layout spec
   (JSON) and an SVG drawing that are pure functions of the stored
   graph — same graph in, same bytes out, on any machine. Layers

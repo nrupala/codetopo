@@ -1,0 +1,77 @@
+# Copyright (C) 2026 Nrupal Akolkar
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
+#
+# space-recapture — keeps the Hugging Face Space's data bundle
+# (space-static/data/) a capture of CURRENT main instead of a
+# one-time snapshot. On every merge to main: build codetopo-server
+# from the tree, index this repository with it, save the API
+# responses byte-for-byte (scripts/capture-space-bundle.sh runs
+# the honesty gates — counts and audit head — before anything is
+# written), and commit the refreshed bundle. That commit is what
+# hf-sync mirrors to the Space.
+#
+# Loop safety, two independent guards:
+#   - paths-ignore: a commit touching ONLY space-static/data/**
+#     (i.e. this workflow's own output) never re-triggers it;
+#   - the job condition skips runs whose head commit is a
+#     recapture commit, whatever else it touched.
+#
+# The commit is made by github-actions[bot] under its own identity
+# — it is automation output, and it says so.
+
+name: space-recapture
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'space-static/data/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: space-recapture
+  cancel-in-progress: false
+
+jobs:
+  recapture:
+    if: ${{ !startsWith(github.event.head_commit.message, 'data(space): recapture bundle') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: the recorded source_commit is the newest
+          # non-recapture commit, found by walking the log.
+          fetch-depth: 0
+          ref: main
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build codetopo-server from this tree
+        run: cargo build --release --locked -p codetopo-server
+
+      - name: Capture the bundle (honesty gates inside the script)
+        run: |
+          set -euo pipefail
+          CODE_SHA="$(git log -1 --format=%H --invert-grep --grep='^data(space): recapture bundle')"
+          echo "capturing code commit $CODE_SHA"
+          scripts/capture-space-bundle.sh \
+            target/release/codetopo-server "$GITHUB_WORKSPACE" "$CODE_SHA" space-static/data
+
+      - name: Commit the refreshed bundle (if it changed)
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add space-static/data
+          if git diff --cached --quiet; then
+            echo "bundle already current — nothing to commit"
+            exit 0
+          fi
+          CODE_SHA="$(git log -1 --format=%H --invert-grep --grep='^data(space): recapture bundle')"
+          git commit -m "data(space): recapture bundle at $CODE_SHA"
+          git push origin main
