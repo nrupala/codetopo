@@ -38,7 +38,7 @@ concurrency:
 
 jobs:
   recapture:
-    if: ${{ !startsWith(github.event.head_commit.message, 'data(space): recapture bundle') }}
+    if: "${{ !startsWith(github.event.head_commit.message, 'data(space): recapture bundle') }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
