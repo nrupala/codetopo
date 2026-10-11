@@ -35,7 +35,9 @@ enum Commands {
         /// SQLite database path for the graph + audit log.
         #[arg(long)]
         db: PathBuf,
-        /// Package name for symbol ids (default: file stem of <repo>).
+        /// Fallback package name for symbol ids (default: file stem of
+        /// <repo>). Files under a Cargo.toml / package.json manifest
+        /// belong to that manifest's package instead.
         #[arg(long)]
         package: Option<String>,
         /// Also write a JSON snapshot of the graph to this path.

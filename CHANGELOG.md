@@ -6,6 +6,21 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- **Package/workspace discovery in the indexer.** Indexing now
+  finds the manifest that owns each file — a Cargo.toml
+  `[package]` name or a package.json `name`, nearest manifest
+  wins — and indexes the file under that package with paths
+  relative to the package root, which is what the extract
+  contract always specified. Until now one caller-chosen package
+  and repo-relative paths covered the whole tree, so a workspace
+  indexed as `corpus::crates::codetopo-core::src::…`; ids now
+  read `codetopo-core::…`. Files under no manifest keep the
+  caller's package (`--package`, defaulting to the repo
+  directory name) exactly as before. Workspace crates version
+  0.2.6.
+
+### Added
+
 - **Scale gate passed at 10,000 files** (`docs/scale-gate.md`). A
   deterministic 10k-file fixture (generator:
   `scripts/gen_scale_fixture.py`; gate test:
