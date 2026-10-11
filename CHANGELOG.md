@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-10-10
+
+`codetopo-mcp` only; no code changes in any crate.
+
+- The MCP Registry ownership marker in the README is now a visible line: the registry validates against crates.io's *rendered* README, which strips HTML comments, so the comment form in 0.3.1 did not validate. All other crates remain at 0.3.0; `codetopo-mcp` 0.3.1 is superseded by 0.3.2.
+
 ## [0.3.1] — 2026-10-10
 
 `codetopo-mcp` only; no code changes in any crate.

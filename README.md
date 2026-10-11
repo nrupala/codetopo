@@ -1,6 +1,6 @@
 # codetopo
 
-<!-- mcp-name: io.github.nrupala/codetopo -->
+Registry identity: mcp-name: io.github.nrupala/codetopo
 
 **See your codebase the way an agent sees it.** codetopo turns a source
 repository into a queryable code graph — symbols, calls, references, and
