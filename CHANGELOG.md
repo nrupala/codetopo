@@ -1,6 +1,5 @@
 ## [Unreleased]
 
-- **codetopo-acp 0.4.0 — ACP Terminal Auth (trust setup):** the agent now advertises one terminal auth method, `codetopo-trust-setup`, until setup is recorded (and only to clients declaring terminal-auth support, per the spec). `codetopo-acp login` provisions the HMAC proof-verification key locally (0600, hidden entry; keyless setup offered) — codetopo has no accounts, and the one secret in its trust model is that key. Snapshots the agent takes are signed when a key is provisioned, and answers cite the certificate serial and signer fingerprint. Design: `docs/acp-trust-setup.md`. Other crates unchanged at 0.3.3.
 
 - Added `SECURITY.md`: private vulnerability reporting (GitHub PVR) and the security scope notes for the read-only surfaces.
 
@@ -9,6 +8,10 @@
 All notable changes to this project are documented here.
 
 ## [Unreleased]
+
+## [0.4.0] — 2026-10-10
+
+- **codetopo-acp 0.4.0 — ACP Terminal Auth (trust setup):** the agent now advertises one terminal auth method, `codetopo-trust-setup`, until setup is recorded (and only to clients declaring terminal-auth support, per the spec). `codetopo-acp login` provisions the HMAC proof-verification key locally (0600, hidden entry; keyless setup offered) — codetopo has no accounts, and the one secret in its trust model is that key. Snapshots the agent takes are signed when a key is provisioned, and answers cite the certificate serial and signer fingerprint. Design: `docs/acp-trust-setup.md`. Other crates unchanged at 0.3.3.
 
 ## [0.3.3] — 2026-10-10
 
