@@ -13,39 +13,79 @@ use serde_json::{json, Value};
 use std::path::Path;
 use codetopo_core::Graph;
 
-/// Read-only agent capabilities advertised on initialize.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+/// Agent capabilities advertised on initialize, in the ACP wire
+/// shape. This agent cannot load sessions, and its prompts are
+/// text-only: no image or audio inputs, no embedded context.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentCapabilities {
-    pub read_only: bool,
-    pub code_structure: bool,
-    pub session_based: bool,
+    pub load_session: bool,
+    pub prompt_capabilities: PromptCapabilities,
+    pub session_capabilities: SessionCapabilities,
 }
 
-impl Default for AgentCapabilities {
-    fn default() -> Self {
-        Self {
-            read_only: true,
-            code_structure: true,
-            session_based: true,
-        }
-    }
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptCapabilities {
+    pub image: bool,
+    pub audio: bool,
+    pub embedded_context: bool,
 }
 
-/// The `initialize` handshake result. The agent version is the crate
-/// version (`env!("CARGO_PKG_VERSION")`) — never a hardcoded string
-/// that can drift from the shipped binary (it previously claimed
-/// 0.1.0 while the crate shipped 0.2.x).
+/// No optional session capabilities are offered (no session list,
+/// no session fork/resume) — the empty object is the honest answer.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct SessionCapabilities {}
+
+/// The `initialize` handshake result (ACP protocol version 1 — an
+/// integer on the wire, as the spec requires; an earlier dialect of
+/// this agent sent the string "1.0", which strict clients reject).
+/// The agent version is the crate version
+/// (`env!("CARGO_PKG_VERSION")`) — never a hardcoded string that
+/// can drift from the shipped binary.
 pub fn initialize_result() -> Value {
     json!({
-        "agent": "codetopo",
-        "protocolVersion": "1.0",
-        "agentCapabilities": {
-            "read_only": true,
-            "code_structure": true,
-            "session_based": true,
-            "tools": []
-        },
-        "agentInfo": {"name": "codetopo", "version": env!("CARGO_PKG_VERSION")}
+        "protocolVersion": 1,
+        "agentCapabilities": AgentCapabilities::default(),
+        "authMethods": [],
+        "agentInfo": {
+            "name": "codetopo",
+            "title": "codetopo — read-only code-graph agent",
+            "version": env!("CARGO_PKG_VERSION"),
+        }
+    })
+}
+
+/// Concatenate the text of a `session/prompt` `prompt` array (ACP
+/// content blocks). Non-text blocks contribute nothing: the agent
+/// advertises text-only prompt capabilities, so a conforming client
+/// never sends anything else.
+pub fn prompt_text(blocks: &Value) -> String {
+    let mut out = String::new();
+    if let Some(arr) = blocks.as_array() {
+        for block in arr {
+            if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                    if !out.is_empty() {
+                        out.push('\n');
+                    }
+                    out.push_str(text);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The `params` of a `session/update` notification carrying one
+/// agent message chunk — the only update kind this agent streams.
+pub fn message_chunk(session_id: &str, text: &str) -> Value {
+    json!({
+        "sessionId": session_id,
+        "update": {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {"type": "text", "text": text}
+        }
     })
 }
 

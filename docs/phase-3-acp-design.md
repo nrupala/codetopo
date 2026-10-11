@@ -13,19 +13,43 @@ Agent: `codetopo-acp` (crate `codetopo-acp`), read-only ACP adapter.
 - Implementation: direct stdio loop; protocol framing matches public spec.
 
 ## Capabilities advertised (initialize)
-- `agent`: "codetopo"
-- `protocolVersion`: "1.0"
-- `agentCapabilities`: `read_only`, `code_structure`, `session_based`, `tools`
-- `agentInfo`: `{name:"codetopo", version:"0.1.0"}`
+Rewritten to the wire protocol, 0.2.7: the first implementation spoke
+a home-grown dialect in the spec's clothing (string `"1.0"`, string
+prompts, custom result fields) that no real client could drive. It
+now speaks ACP v1:
+- `protocolVersion`: `1` (an integer, as the spec requires)
+- `agentCapabilities`: `{loadSession: false, promptCapabilities:
+  {image: false, audio: false, embeddedContext: false},
+  sessionCapabilities: {}}`
+- `authMethods`: `[]`
+- `agentInfo`: `{name: "codetopo", title: …, version: <crate
+  version>}` — the version is `env!("CARGO_PKG_VERSION")`, never a
+  hardcoded string.
 
 ## Session lifecycle
-- `session/new`: accepts `cwd`. Indexes via `codetopo_cli::index_repo()` into temp SQLite DB (`/tmp/codetopo-<pid>-<session>.sqlite`). Same extraction path CLI uses (no duplicated extraction).
-- `session/prompt`: loads graph via `codetopo_cli::load_graph_from_db()`, classifies with `codetopo_acp::classify_intent()`, executes via `codetopo_acp::execute_intent()` against `Graph` (with `db_path` for Snapshot/Verify).
+- `session/new`: accepts `cwd` (+ ignores `mcpServers`). The agent
+  mints the session id; the result is exactly `{sessionId}`.
+  Indexes via `codetopo_cli::index_repo()` into temp SQLite DB
+  (`/tmp/codetopo-<pid>-<session>.sqlite`). Same extraction path
+  CLI uses (no duplicated extraction).
+- `session/prompt`: the prompt is a content-block array; text
+  blocks are concatenated (`codetopo_acp::prompt_text`), classified
+  with `classify_intent()`, executed via `execute_intent()` against
+  `Graph` (with `db_path` for Snapshot/Verify). The answer streams
+  as a `session/update` carrying an `agent_message_chunk`, and the
+  turn ends with `{stopReason: "end_turn"}` — or `"refusal"` for
+  edit requests, whose streamed text is `RefusalReply::standard()`.
+- `session/cancel`: a notification, recorded and never answered
+  (turns are synchronous, so a cancel can only land between turns;
+  it ends a turn, never the session).
 - Snapshot (`Intent::Snapshot`): calls `codetopo_cli::snapshot_db(&db_path, &temp_out, None)`; reports temp path + file size honestly (or error).
 - Verify (`Intent::Verify`): opens session store (`codetopo_store::Store::open`) and runs `audit.verify()`; reports PASS/FAIL honestly (or error).
-- Streamed updates: `session/update` notifications before final prompt response.
-- Edit requests (`rename`, `refactor`, `fix`): honest refusal from `RefusalReply::standard()`.
 - Unknown node / empty index: honest error text (no fabricated data).
+- Conformance: `crates/codetopo-acp/tests/stdio_conformance.rs`
+  drives the shipped binary over stdio through the whole session;
+  live frames from the binary validate against the official ACP v1
+  JSON schema (`schema/v1/schema.json` of the protocol repo) —
+  `docs/protocol-proof.md` records the evidence.
 
 ## Stdout seal
 - Only JSON-RPC frames written to stdout (`writeln!` with `serde_json::Value`).
