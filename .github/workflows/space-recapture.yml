@@ -59,7 +59,7 @@ jobs:
           set -euo pipefail
           CODE_SHA="$(git log -1 --format=%H --invert-grep --grep='^data(space): recapture bundle')"
           echo "capturing code commit $CODE_SHA"
-          scripts/capture-space-bundle.sh \
+          bash scripts/capture-space-bundle.sh \
             target/release/codetopo-server "$GITHUB_WORKSPACE" "$CODE_SHA" space-static/data
 
       - name: Commit the refreshed bundle (if it changed)
