@@ -1,0 +1,9 @@
+# Build-context hygiene for the assembled Space repository (the whole
+# codetopo tree with space/ overlaid at the root — see hf-sync.yml).
+# The Dockerfile also prunes target/ and .git from the runtime corpus;
+# excluding them here keeps them out of the build context entirely.
+.git
+target
+**/*.db
+.snapshots
+.corpus

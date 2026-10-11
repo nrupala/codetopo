@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<!--
+  Copyright (C) 2026 Nrupal Akolkar
+  SPDX-License-Identifier: AGPL-3.0-or-later
+  Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
+
+  Landing page for the codetopo Hugging Face Space. Every number on this
+  page is fetched live from the demo's own API (codetopo's graph of its
+  own source, indexed at container start). Nothing is hard-coded, and if
+  the API has not finished indexing yet the page says so and offers a
+  retry — it never invents data.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>codetopo — live demo</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+         margin: 0 auto; max-width: 880px; padding: 24px 16px 48px;
+         background: #0d1117; color: #e6edf3; line-height: 1.5; }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 28px 0 8px; }
+  .sub { color: #9da7b3; margin: 0 0 16px; }
+  .honest { border: 1px solid #2f81f7; border-radius: 8px; padding: 10px 14px;
+            background: #0f1d33; font-size: 14px; }
+  .cards { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
+  .card { border: 1px solid #30363d; border-radius: 8px; padding: 12px 16px; min-width: 140px; }
+  .card .n { font-size: 26px; font-weight: 700; }
+  .card .k { color: #9da7b3; font-size: 13px; }
+  table { border-collapse: collapse; font-size: 14px; }
+  td, th { border: 1px solid #30363d; padding: 4px 10px; text-align: left; }
+  input[type="search"] { width: 100%; box-sizing: border-box; padding: 10px;
+    font: inherit; background: #161b22; color: inherit; border: 1px solid #30363d; border-radius: 8px; }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid #30363d;
+           background: #21262d; color: inherit; cursor: pointer; }
+  .result { padding: 8px 0; border-bottom: 1px solid #21262d; cursor: pointer; }
+  .result .label { font-weight: 700; }
+  .result .meta { color: #9da7b3; font-size: 13px; word-break: break-all; }
+  .ok { color: #3fb950; } .bad { color: #f85149; }
+  details { margin-top: 8px; } summary { cursor: pointer; color: #9da7b3; font-size: 13px; }
+  pre { overflow-x: auto; background: #161b22; padding: 10px; border-radius: 8px; font-size: 12px; }
+  a { color: #58a6ff; }
+  footer { margin-top: 40px; color: #9da7b3; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>codetopo</h1>
+<p class="sub">See your codebase the way an agent sees it — a queryable code graph: symbols, calls, references, structure.</p>
+
+<p class="honest"><strong>Live, read-only demo.</strong> When this Space's container started, codetopo indexed the copy of <em>its own source code</em> bundled in the Space. Every number below is a real answer from that graph, fetched from the demo API as this page loaded. The demo indexes nothing else, accepts no uploads, and runs no visitor code.</p>
+
+<h2>The graph of codetopo itself</h2>
+<div id="stats"><p>Loading live stats… <button id="retry" hidden>Retry</button></p></div>
+
+<h2>Audit chain</h2>
+<div id="verify"><p>Loading…</p></div>
+
+<h2>Search codetopo's symbols</h2>
+<form id="search-form">
+  <input type="search" id="q" placeholder="Try: index_repo, GraphBuilder, verify_proof…" aria-label="Search symbols">
+</form>
+<div id="results"></div>
+
+<footer>
+  <p>Engine: AGPL-3.0-or-later · Contracts (<a href="/v1/schema">/v1/schema</a>): Apache-2.0 ·
+  Source of truth: <a href="https://github.com/nrupala/codetopo">github.com/nrupala/codetopo</a> (this Space is an automated mirror).</p>
+  <p>Owned by Nrupal Akolkar · Built with Muse by Meta.</p>
+</footer>
+
+<script>
+"use strict";
+const DEMO = "/v1/graphs/demo";
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function rawDetails(data) {
+  return "<details><summary>raw API response</summary><pre>" + esc(JSON.stringify(data, null, 2)) + "</pre></details>";
+}
+function kindTable(byKind) {
+  const rows = Object.entries(byKind).sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => "<tr><td>" + esc(k) + "</td><td>" + v + "</td></tr>").join("");
+  return "<table><tr><th>kind</th><th>count</th></tr>" + rows + "</table>";
+}
+
+async function loadStats() {
+  const el = document.getElementById("stats");
+  try {
+    const s = await getJSON(DEMO + "/stats");
+    el.innerHTML =
+      '<div class="cards">' +
+      '<div class="card"><div class="n">' + s.nodes.total + '</div><div class="k">nodes</div></div>' +
+      '<div class="card"><div class="n">' + s.edges.total + '</div><div class="k">edges</div></div>' +
+      "</div>" +
+      "<h3>Nodes by kind</h3>" + kindTable(s.nodes.by_kind) +
+      "<h3>Edges by kind</h3>" + kindTable(s.edges.by_kind) +
+      rawDetails(s);
+  } catch (e) {
+    el.innerHTML = "<p>The demo API is still starting — it indexes codetopo's source at container start. <button onclick='loadStats()'>Retry</button></p>";
+  }
+}
+
+async function loadVerify() {
+  const el = document.getElementById("verify");
+  try {
+    const v = await getJSON(DEMO + "/verify");
+    el.innerHTML = "<p>Audit chain: " + (v.chain_valid
+      ? '<span class="ok">valid</span>'
+      : '<span class="bad">INVALID</span>') +
+      " · " + v.entries + " entries · head <code>" + esc(String(v.head).slice(0, 16)) + "…</code></p>" + rawDetails(v);
+  } catch (e) {
+    el.innerHTML = "<p>Not available yet. <button onclick='loadVerify()'>Retry</button></p>";
+  }
+}
+
+async function showDependents(nodeId, slot) {
+  slot.textContent = "counting…";
+  try {
+    const [d, a] = await Promise.all([
+      getJSON(DEMO + "/descendants?node=" + encodeURIComponent(nodeId)),
+      getJSON(DEMO + "/ancestors?node=" + encodeURIComponent(nodeId))
+    ]);
+    slot.textContent = d.total + " descendants · " + a.total + " ancestors (live counts from the graph)";
+  } catch (e) {
+    slot.textContent = "could not load counts";
+  }
+}
+
+async function runSearch(q) {
+  const el = document.getElementById("results");
+  if (!q) { el.innerHTML = ""; return; }
+  el.innerHTML = "<p>Searching…</p>";
+  try {
+    const s = await getJSON(DEMO + "/search?q=" + encodeURIComponent(q) + "&limit=20");
+    if (!s.results.length) { el.innerHTML = "<p>No symbols match.</p>"; return; }
+    el.innerHTML = s.results.map(n =>
+      '<div class="result" data-id="' + esc(n.id) + '">' +
+      '<span class="label">' + esc(n.label) + "</span> " +
+      '<span class="meta">' + esc(n.kind) + " · " + esc(n.loc.file) + ":" + n.loc.line + "</span><br>" +
+      '<span class="meta">' + esc(n.id) + '</span><br>' +
+      '<span class="meta deps">click to count descendants / ancestors</span></div>'
+    ).join("") + "<p>" + s.total + " match(es) in the live index.</p>" + rawDetails(s);
+    el.querySelectorAll(".result").forEach(r => {
+      r.addEventListener("click", () => showDependents(r.dataset.id, r.querySelector(".deps")));
+    });
+  } catch (e) {
+    el.innerHTML = "<p>Search failed — the API may still be starting.</p>";
+  }
+}
+
+document.getElementById("search-form").addEventListener("submit", ev => {
+  ev.preventDefault();
+  runSearch(document.getElementById("q").value.trim());
+});
+loadStats();
+loadVerify();
+</script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+# Copyright (C) 2026 Nrupal Akolkar
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
+#
+# hf-sync — GitHub -> Hugging Face Space mirror (Move 6).
+#
+# MIRROR RULE: GitHub is the single source of truth. The Hugging Face Space
+# (https://huggingface.co/spaces/nrupala/codetopo) is a pure mirror: on
+# every run this workflow assembles the Space tree from this repository and
+# FORCE-PUSHES it over whatever is on the HF side. Commits or edits made
+# directly on Hugging Face are overwritten without warning — never edit
+# the Space there; change this repo instead.
+#
+# SYNC LAYOUT (must match space/Dockerfile, which is written for it):
+# the Space repository receives the WHOLE codetopo repo tree, with the
+# contents of space/ overlaid at the root:
+#   space/README.md     -> README.md      (HF Space frontmatter lives here)
+#   space/Dockerfile    -> Dockerfile     (HF builds the root Dockerfile)
+#   space/.dockerignore -> .dockerignore
+#   space/entrypoint.sh -> entrypoint.sh
+#   space/frontdoor.py  -> frontdoor.py
+#   space/index.html    -> index.html
+# The engine source (Cargo.toml, crates/, schemas/, ...) therefore sits at
+# the Space root too, which is exactly the build context the Dockerfile
+# expects, and the bundled corpus the demo indexes at container start.
+#
+# AUTH: the HF_TOKEN repository secret (a Hugging Face write token for
+# nrupala) is read from the environment only. It is masked, and it is
+# passed to git as an HTTP Authorization header — it never appears in a
+# remote URL, a command echo, or this file.
+
+name: hf-sync
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hf-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the source of truth
+        uses: actions/checkout@v4
+
+      - name: Assemble the Space tree
+        run: |
+          set -euo pipefail
+          rm -rf staging
+          mkdir staging
+          # Whole repo tree, minus VCS metadata, build output, and the
+          # staging directory itself.
+          tar --exclude='./.git' --exclude='./target' --exclude='./staging' -cf - . | tar -xf - -C staging
+          # Overlay the Space packaging (space/) at the Space repo root.
+          cp space/README.md staging/README.md
+          cp space/Dockerfile staging/Dockerfile
+          cp space/.dockerignore staging/.dockerignore
+          cp space/entrypoint.sh space/frontdoor.py space/index.html staging/
+          # Show exactly what will be mirrored (paths only, no contents).
+          (cd staging && find . -type f | sort)
+
+      - name: Force-push the mirror to Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HF_TOKEN:-}" ]; then
+            echo "::error::HF_TOKEN repository secret is not set; cannot sync the Space."
+            exit 1
+          fi
+          echo "::add-mask::$HF_TOKEN"
+          AUTH="$(printf 'nrupala:%s' "$HF_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$AUTH"
+          cd staging
+          git init -b main
+          git config user.name "Nrupal Akolkar"
+          git config user.email "51525601+nrupala@users.noreply.github.com"
+          git add -A
+          git commit -m "Mirror of nrupala/codetopo@${GITHUB_SHA}"
+          # The token travels in an Authorization header (Basic auth, the
+          # scheme HF's git endpoint expects), never in the remote URL.
+          git -c http.https://huggingface.co/.extraheader="Authorization: Basic ${AUTH}" \
+            push --force https://huggingface.co/spaces/nrupala/codetopo main
