@@ -50,6 +50,38 @@ any code, versioned independently of any implementation.
 
 Everything else (signatures, docstrings, complexity) is a derived view, not the write path.
 
+## 3.1 Package discovery and import resolution
+
+Indexing assigns each file to a **package** before extraction:
+
+- The nearest ancestor directory (within the indexed tree) carrying a
+  manifest with a package name wins: `Cargo.toml` (`[package] name`),
+  `package.json` (`"name"`), `pyproject.toml` (`[project]` or
+  `[tool.poetry]` name). A Cargo `[workspace]`-only manifest names no
+  package — its members declare their own.
+- Discovered files are extracted under their real package name with
+  paths relative to the package root, so ids read the way the
+  ecosystem names them — and node locations use that same
+  package-relative path (the §3 record's form). Files with no
+  manifest ancestor keep the caller-supplied package name and
+  repo-relative paths.
+- A package's **root module** (a crate's `lib.rs`, a package's
+  `index.ts`) shares the package's id: the package node doubles as
+  its root module for containment and import resolution.
+
+Imports resolve at graph-build time, in this order: the target
+verbatim when it is a module; the **longest module prefix** of the
+target (`use a::b::Item` imports module `a::b`); a **workspace
+package** named by the target's first segment (hyphen/underscore
+insensitive — Cargo writes `my-crate`, Rust paths write `my_crate`;
+`@scope/name` counts as one name), resolving bare references through
+the imported bindings to the defining module; otherwise an
+`external::` stub. An extractor's pre-applied `external::` marker
+means "unresolved", never a doubled prefix — a workspace package of
+that name wins over the stub. Path-qualified calls resolve the same
+way: `crate` substitutes the caller's package root, then the tiered
+suffix match applies to the last segment.
+
 ## 4. Edge kinds (typed, kind-scoped attributes)
 
 | Edge | From → To | Attributes |

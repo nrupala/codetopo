@@ -182,13 +182,19 @@ impl GraphBuilder {
             refs: Vec::new(),
         });
 
-        self.push_edge(Edge {
-            from: package.clone(),
-            to: module_id.clone(),
-            kind: EdgeKind::Contains,
-            line: None,
-            attrs: Default::default(),
-        });
+        // A package's root module shares the package's id (extractors
+        // name a lib.rs / index root module after its package); that
+        // node doubles as the module, so there is no package→module
+        // self-edge — the module→file edge below is the package's.
+        if module_id != package {
+            self.push_edge(Edge {
+                from: package.clone(),
+                to: module_id.clone(),
+                kind: EdgeKind::Contains,
+                line: None,
+                attrs: Default::default(),
+            });
+        }
         self.push_edge(Edge {
             from: module_id.clone(),
             to: file_id.clone(),
@@ -271,9 +277,7 @@ impl GraphBuilder {
         self.pending_heritage.extend(fs.heritage);
 
         for imp in fs.imports {
-            let known_module =
-                matches!(self.nodes.get(&imp.from_module_id), Some(n) if n.kind == NodeKind::Module);
-            if !known_module {
+            if !self.is_module(&imp.from_module_id) {
                 self.diagnostics.push(Diagnostic::UnknownSymbol {
                     id: imp.from_module_id.clone(),
                 });
@@ -302,12 +306,120 @@ impl GraphBuilder {
         self.diagnostics[mark..].to_vec()
     }
 
+    /// Is `id` a module in this graph? A package's root module shares
+    /// the package's id and its Package node doubles as the module —
+    /// so module identity is "a Module node, or an id registered as a
+    /// module whose node exists under another kind".
+    fn is_module(&self, id: &str) -> bool {
+        match self.nodes.get(id) {
+            Some(n) if n.kind == NodeKind::Module => true,
+            Some(_) => self.module_package.contains_key(id),
+            None => false,
+        }
+    }
+
+    /// The longest prefix of `path` (`::`-separated) that is a module
+    /// in this graph, if any. `a::b::Item` resolves to module `a::b`
+    /// — a `use` of an item is an import of its module.
+    fn longest_module_prefix(&self, path: &str) -> Option<String> {
+        let mut candidate = path;
+        loop {
+            if self.is_module(candidate) {
+                return Some(candidate.to_string());
+            }
+            let idx = candidate.rfind("::")?;
+            candidate = &candidate[..idx];
+        }
+    }
+
+    /// Resolve an import's target to the node its `imports` edge points
+    /// at. Extractors emit several shapes; all are tried in order:
+    ///
+    /// 1. The target verbatim, when it is a module id.
+    /// 2. The longest module prefix of the target — `use a::b::Item`
+    ///    links to module `a::b`, not to an external stub.
+    /// 3. A workspace-package target: the first segment names a package
+    ///    present in this graph (hyphen/underscore-insensitive — Cargo
+    ///    names use `-`, Rust paths use `_`; `@scope/name` counts as
+    ///    one name). A deeper path retargets through the real package
+    ///    name and retries (2); a bare package reference resolves
+    ///    through the imported bindings to the module that defines one
+    ///    of them in that package, else the package's root module,
+    ///    else the package node itself.
+    /// 4. Otherwise an `external::` stub id (the caller materializes
+    ///    it). An extractor's pre-applied `external::` marker means
+    ///    "unresolved", never a doubled prefix: `external::std`
+    ///    resolves to the stub `external::std`, and a workspace package
+    ///    named `std` would win over the stub.
+    fn import_target(&self, imp: &crate::emit::RawImport) -> String {
+        let raw = imp.to_module_id.as_str();
+        if self.is_module(raw) {
+            return raw.to_string();
+        }
+        let stripped = raw.strip_prefix("external::").unwrap_or(raw);
+        let path = stripped.replace('/', "::");
+        if let Some(m) = self.longest_module_prefix(&path) {
+            return m;
+        }
+        // Split off the would-be package name (`@scope/name` spans two
+        // segments); the remainder is "" or starts with "::".
+        let segments: Vec<&str> = path.split("::").collect();
+        let root_len =
+            if segments.first().is_some_and(|s| s.starts_with('@')) && segments.len() > 1 {
+                2
+            } else {
+                1
+            };
+        let root = segments[..root_len].join("::");
+        let rest = &path[root.len()..];
+        let mut packages: Vec<&str> =
+            self.module_package.values().map(String::as_str).collect();
+        packages.sort();
+        packages.dedup();
+        let norm = |s: &str| s.replace('-', "_");
+        if let Some(pkg) = packages.iter().find(|p| norm(p) == norm(&root)) {
+            let pkg = (*pkg).to_string();
+            if !rest.is_empty() {
+                if let Some(m) = self.longest_module_prefix(&format!("{pkg}{rest}")) {
+                    return m;
+                }
+            } else {
+                for binding in &imp.bindings {
+                    let mut candidates: Vec<&String> = self
+                        .name_index
+                        .get(binding)
+                        .map(|v| v.iter().collect())
+                        .unwrap_or_default();
+                    candidates.sort();
+                    for cand in candidates {
+                        if let Some(module) = self.symbol_module.get(cand) {
+                            if self
+                                .module_package
+                                .get(module)
+                                .is_some_and(|p| p == &pkg)
+                            {
+                                return module.clone();
+                            }
+                        }
+                    }
+                }
+                // Root module (id == package name) when one exists;
+                // otherwise the package node itself. Both are `pkg`.
+                return pkg;
+            }
+        }
+        format!("external::{stripped}")
+    }
+
     /// Resolve calls, detect cycles, return (graph, diagnostics).
     ///
-    /// - Imports: `to_module_id` links to the known module node, else an
-    ///   `external::{to_module_id}` `External` stub is created — no diagnostic
-    ///   (external dependencies are normal). Duplicate (from, to) imports
-    ///   merge: bindings union (sorted), smallest line kept.
+    /// - Imports: `to_module_id` resolves via
+    ///   [`GraphBuilder::import_target`] — an exact module, the longest
+    ///   module prefix of the target path, or a workspace package
+    ///   present in the graph; otherwise an `external::` stub is
+    ///   created — no diagnostic (external dependencies are normal).
+    ///   Duplicate (from, to) imports merge: bindings union (sorted),
+    ///   smallest line kept.
     /// - Calls resolve via [`GraphBuilder::resolve`]; failures create/reuse an
     ///   `external::{to_name}` stub, record ONE deduped
     ///   [`Diagnostic::UnresolvedCall`] per distinct target name, and still
@@ -327,16 +439,13 @@ impl GraphBuilder {
         // 1. Imports (all modules are known now).
         let mut import_acc: HashMap<(String, String), (Vec<String>, u32)> = HashMap::new();
         for imp in std::mem::take(&mut self.pending_imports) {
-            let to_id = match self.nodes.get(&imp.to_module_id) {
-                Some(n) if n.kind == NodeKind::Module => imp.to_module_id.clone(),
-                // A node with that id exists but is not a module (or nothing
-                // exists): imports reference modules, so this becomes an
-                // external stub rather than a bogus link.
-                _ => {
-                    let ext = format!("external::{}", imp.to_module_id);
-                    self.ensure_external(&ext, &imp.to_module_id);
-                    ext
+            let to_id = {
+                let target = self.import_target(&imp);
+                if let Some(name) = target.strip_prefix("external::") {
+                    let name = name.to_string();
+                    self.ensure_external(&target, &name);
                 }
+                target
             };
             let acc = import_acc
                 .entry((imp.from_module_id.clone(), to_id))
@@ -478,17 +587,41 @@ impl GraphBuilder {
         if self.nodes.contains_key(name) {
             return Some(name.to_string());
         }
+        // Path-qualified names are recorded as written (`crate::config::load()`).
+        // `crate` names the caller's own package root: substitute it and
+        // retry the exact match. Any remaining qualified name falls back
+        // to the tiered suffix match on its last segment — the same
+        // heuristic bare names already get.
+        let mut lookup: &str = name;
+        let substituted: String;
+        if let Some(rest) = name.strip_prefix("crate::") {
+            if let Some(pkg) = self
+                .symbol_module
+                .get(from_id)
+                .and_then(|m| self.module_package.get(m))
+            {
+                substituted = format!("{pkg}::{rest}");
+                if self.nodes.contains_key(&substituted) {
+                    return Some(substituted);
+                }
+                lookup = &substituted;
+            }
+        }
+        if lookup.contains("::") {
+            lookup = lookup.rsplit("::").next().unwrap_or(lookup);
+        }
         let module = self.symbol_module.get(from_id);
         let package = module.and_then(|m| self.module_package.get(m));
         let module_prefix = module.map(|m| format!("{}::", m));
         let package_prefix = package.map(|p| format!("{}::", p));
         // tiers[0] = same module, tiers[1] = same package, tiers[2] = rest.
         let mut tiers: [Vec<(&String, u8)>; 3] = [Vec::new(), Vec::new(), Vec::new()];
-        // Candidate set: ids whose last `::`-segment is `name`. Exact-match
-        // ids (step 1) already returned, and `::`-less ids never match a
-        // `::{name}` suffix, so this is exactly the old scan's set.
+        // Candidate set: ids whose last `::`-segment is the lookup name.
+        // Exact-match ids (step 1) already returned, and `::`-less ids
+        // never match a `::{name}` suffix, so this is exactly the old
+        // scan's set.
         let empty: Vec<String> = Vec::new();
-        let candidates = self.name_index.get(name).unwrap_or(&empty);
+        let candidates = self.name_index.get(lookup).unwrap_or(&empty);
         for id in candidates {
             let tier = if module_prefix.as_ref().is_some_and(|p| id.starts_with(p)) {
                 0
@@ -1256,6 +1389,170 @@ mod tests {
         let ext = g.get("external::serde").expect("external stub created");
         assert_eq!(ext.kind, NodeKind::External);
         assert_eq!(g.edge_count_by_kind(EdgeKind::Imports), 1);
+    }
+
+    #[test]
+    fn use_of_an_item_links_to_its_module() {
+        // `use p::config::Config` names module + item; the imports edge
+        // must land on the module, not on an external stub (the
+        // pre-discovery behavior, which left every Rust `use` unlinked).
+        let mut b = GraphBuilder::new();
+        b.add_file(file(
+            "p",
+            "config.rs",
+            "p::config",
+            vec![sym("p::config::Config", NodeKind::Class, 1)],
+            vec![],
+            vec![],
+        ));
+        b.add_file(file(
+            "p",
+            "a.rs",
+            "p::a",
+            vec![sym("p::a::x", NodeKind::Function, 1)],
+            vec![RawImport {
+                from_module_id: "p::a".to_string(),
+                to_module_id: "p::config::Config".to_string(),
+                bindings: vec!["Config".to_string()],
+                line: 1,
+            }],
+            vec![],
+        ));
+        let (g, _) = b.build();
+        assert!(g.get("external::p::config::Config").is_none(), "no stub for an in-graph use");
+        assert!(
+            g.edges().any(|e| e.kind == EdgeKind::Imports && e.from == "p::a" && e.to == "p::config"),
+            "imports edge lands on the module: {:?}",
+            g.edges().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn pre_marked_external_keeps_a_single_prefix() {
+        // The Rust extractor pre-marks std roots as `external::std`;
+        // the builder must not double the prefix.
+        let mut b = GraphBuilder::new();
+        b.add_file(file(
+            "p",
+            "a.rs",
+            "p::a",
+            vec![sym("p::a::x", NodeKind::Function, 1)],
+            vec![RawImport {
+                from_module_id: "p::a".to_string(),
+                to_module_id: "external::std".to_string(),
+                bindings: vec!["Duration".to_string()],
+                line: 1,
+            }],
+            vec![],
+        ));
+        let (g, _) = b.build();
+        assert!(g.get("external::std").is_some(), "single-prefix stub exists");
+        assert!(g.get("external::external::std").is_none(), "never a doubled prefix");
+    }
+
+    #[test]
+    fn cross_package_bare_import_links_by_binding() {
+        // npm shape: `import { thing } from 'alpha'` — extractor emits
+        // `external::alpha` with bindings; alpha is a workspace package
+        // here, so the edge lands on the module defining `thing`.
+        let mut b = GraphBuilder::new();
+        b.add_file(file(
+            "alpha",
+            "src/index.ts",
+            "alpha::src",
+            vec![sym("alpha::src::thing", NodeKind::Function, 1)],
+            vec![],
+            vec![],
+        ));
+        b.add_file(file(
+            "beta",
+            "src/main.ts",
+            "beta::src",
+            vec![sym("beta::src::main", NodeKind::Function, 1)],
+            vec![RawImport {
+                from_module_id: "beta::src".to_string(),
+                to_module_id: "external::alpha".to_string(),
+                bindings: vec!["thing".to_string()],
+                line: 1,
+            }],
+            vec![],
+        ));
+        let (g, _) = b.build();
+        assert!(g.get("external::alpha").is_none(), "workspace package is not external");
+        assert!(
+            g.edges().any(|e| e.kind == EdgeKind::Imports && e.from == "beta::src" && e.to == "alpha::src"),
+            "edge lands on the defining module"
+        );
+    }
+
+    #[test]
+    fn crate_qualified_call_resolves_into_own_package() {
+        // `crate::config::load()` is recorded as written; `crate` is
+        // the caller's package root, so the call resolves exactly —
+        // no external stub, no UnresolvedCall.
+        let mut b = GraphBuilder::new();
+        b.add_file(file(
+            "p",
+            "config.rs",
+            "p::config",
+            vec![sym("p::config::load", NodeKind::Function, 1)],
+            vec![],
+            vec![],
+        ));
+        b.add_file(file(
+            "p",
+            "client.rs",
+            "p::client",
+            vec![sym("p::client::run", NodeKind::Function, 1)],
+            vec![],
+            vec![RawCall {
+                from_id: "p::client::run".to_string(),
+                to_name: "crate::config::load".to_string(),
+                line: 1,
+            }],
+        ));
+        let (g, diags) = b.build();
+        assert!(
+            g.edges().any(|e| e.kind == EdgeKind::Calls && e.from == "p::client::run" && e.to == "p::config::load"),
+            "call resolves into the own package"
+        );
+        assert!(g.get("external::crate::config::load").is_none());
+        assert!(
+            !diags.iter().any(|d| matches!(d, Diagnostic::UnresolvedCall { .. })),
+            "no unresolved-call diagnostic: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn cross_crate_use_links_through_hyphen_underscore_normalization() {
+        // Cargo names the crate `my-crate`; Rust writes `my_crate`.
+        let mut b = GraphBuilder::new();
+        b.add_file(file(
+            "my-crate",
+            "src/lib.rs",
+            "my-crate",
+            vec![sym("my-crate::Widget", NodeKind::Class, 1)],
+            vec![],
+            vec![],
+        ));
+        b.add_file(file(
+            "app",
+            "src/main.rs",
+            "app::main",
+            vec![sym("app::main::main", NodeKind::Function, 1)],
+            vec![RawImport {
+                from_module_id: "app::main".to_string(),
+                to_module_id: "my_crate::Widget".to_string(),
+                bindings: vec!["Widget".to_string()],
+                line: 1,
+            }],
+            vec![],
+        ));
+        let (g, _) = b.build();
+        assert!(
+            g.edges().any(|e| e.kind == EdgeKind::Imports && e.from == "app::main" && e.to == "my-crate"),
+            "edge lands on the crate root module"
+        );
     }
 
     #[test]

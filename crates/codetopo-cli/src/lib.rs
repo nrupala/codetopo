@@ -148,9 +148,39 @@ fn package_json_name(text: &str) -> Option<String> {
     value.get("name")?.as_str().filter(|n| !n.is_empty()).map(str::to_string)
 }
 
+/// The `name` from a pyproject.toml's `[project]` table (PEP 621),
+/// or the legacy `[tool.poetry]` table. Same line-scan discipline
+/// as the Cargo reader, for the same reason.
+fn pyproject_package_name(text: &str) -> Option<String> {
+    for table in ["[project]", "[tool.poetry]"] {
+        let mut in_table = false;
+        for line in text.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                in_table = line == table;
+                continue;
+            }
+            if in_table && line.starts_with("name") {
+                let value = line.split_once('=')?.1.trim();
+                let unquoted = value
+                    .strip_prefix('"')
+                    .and_then(|v| v.strip_suffix('"'))
+                    .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')));
+                if let Some(name) = unquoted {
+                    if !name.is_empty() {
+                        return Some(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Discover the package roots of a tree: every directory holding a
-/// Cargo.toml with a `[package]` name or a package.json with a
-/// `name`. The extract contract has always said a file's path is
+/// Cargo.toml with a `[package]` name, a package.json with a
+/// `name`, or a pyproject.toml with a `[project]`/`[tool.poetry]`
+/// name. The extract contract has always said a file's path is
 /// relative to *its package root* and its ids begin with *its
 /// package's name* — before this, the indexer passed one
 /// caller-chosen package and repo-relative paths for the whole
@@ -178,6 +208,9 @@ fn discover_packages(repo: &Path) -> Vec<PackageRoot> {
             "package.json" => std::fs::read_to_string(entry.path())
                 .ok()
                 .and_then(|text| package_json_name(&text)),
+            "pyproject.toml" => std::fs::read_to_string(entry.path())
+                .ok()
+                .and_then(|text| pyproject_package_name(&text)),
             _ => None,
         };
         if let Some(name) = name {
@@ -258,9 +291,10 @@ pub fn index_repo(
     }
     files.sort();
 
-    // 1b. Discover package roots (Cargo.toml / package.json). Files
-    //     under a manifest belong to that manifest's package, with
-    //     paths relative to its root — the extract contract's terms.
+    // 1b. Discover package roots (Cargo.toml / package.json /
+    //     pyproject.toml). Files under a manifest belong to that
+    //     manifest's package, with paths relative to its root — the
+    //     extract contract's terms.
     let package_roots: HashMap<PathBuf, String> = discover_packages(repo)
         .into_iter()
         .map(|root| (root.dir, root.name))
@@ -894,6 +928,24 @@ mod tests {
             cargo_package_name("[package]\nname = 'single'\n").as_deref(),
             Some("single")
         );
+    }
+
+    #[test]
+    fn pyproject_package_name_reads_project_then_poetry() {
+        assert_eq!(
+            pyproject_package_name("[project]\nname = \"py-pkg\"\n").as_deref(),
+            Some("py-pkg")
+        );
+        assert_eq!(
+            pyproject_package_name("[tool.poetry]\nname = 'poetry-pkg'\n").as_deref(),
+            Some("poetry-pkg")
+        );
+        // A name in an unrelated table is not a package name.
+        assert_eq!(
+            pyproject_package_name("[tool.black]\nname = \"nope\"\n"),
+            None
+        );
+        assert_eq!(pyproject_package_name("[project]\ndescription = \"x\"\n"), None);
     }
 
     #[test]
