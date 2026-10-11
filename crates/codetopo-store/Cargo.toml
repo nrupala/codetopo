@@ -1,12 +1,17 @@
 [package]
 name = "codetopo-store"
-version = "0.2.8"
+version = "0.3.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+description = "SQLite store for codetopo: graph persistence, hash-chained audit log, and HMAC proof certificates with verified restore"
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories = ["development-tools", "database-implementations"]
 
 [dependencies]
-codetopo-core = { path = "../codetopo-core" }
+codetopo-core = { version = "0.3.0", path = "../codetopo-core" }
 rusqlite = { version = "0.32", features = ["bundled"] }
 sha2 = "0.10"
 hmac = "0.12"
