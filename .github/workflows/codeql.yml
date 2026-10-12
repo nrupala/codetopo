@@ -6,6 +6,12 @@
 # analysis for the Rust workspace, complementing the clippy quality
 # gate in ci.yml. Runs on every push to main, every pull request,
 # and weekly; findings land in the code-scanning dashboard.
+#
+# Rust extraction uses build-mode "none": CodeQL's Rust extractor
+# does not support traced (manual/autobuild) builds — database init
+# fails fatally if a build mode is requested. Extraction resolves
+# the workspace through cargo metadata instead, so no build step
+# runs in this job.
 name: "CodeQL"
 
 on:
@@ -34,12 +40,7 @@ jobs:
         uses: github/codeql-action/init@v4
         with:
           languages: rust
-          build-mode: manual
-      - uses: dtolnay/rust-toolchain@stable
-      # No build cache on purpose: CodeQL must observe a full, clean
-      # compile of the workspace to extract from it.
-      - name: Build the workspace
-        run: cargo build --workspace
+          build-mode: none
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
