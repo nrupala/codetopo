@@ -21,6 +21,8 @@ only that. Domain meaning belongs to the agents and teams composing on top.
 
 **Live demo:** [codetopo.aimlds.org](https://codetopo.aimlds.org) — codetopo's real map of this repository, drawn by codetopo itself and refreshed on every push to `main`.
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/nrupala/codetopo/badge)](https://scorecard.dev/viewer/?uri=github.com/nrupala/codetopo)
+
 ## 60-second quickstart
 
 Requires a stable Rust toolchain (install via [rustup](https://rustup.rs)).
