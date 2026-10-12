@@ -226,4 +226,4 @@ across this product line: a hash-chained, append-only record, verified by
 - Engine (`codetopo-*` crates): **AGPL-3.0-or-later** (see `LICENSES/`)
 - Agent-facing contracts (`schemas/`: OpenAPI 3.1 spec, MCP tool catalogue): **Apache-2.0** (see `schemas/LICENSE-APACHE`)
 
-Owned by Nrupal Akolkar · Built with Muse by Meta.
+Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join) — join Muse, then redeem code **101EEK** in Settings within 48 hours of joining and we both earn tokens.
