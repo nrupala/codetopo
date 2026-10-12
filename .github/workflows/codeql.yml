@@ -1,0 +1,46 @@
+# Copyright (C) 2026 Nrupal Akolkar
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
+#
+# CodeQL (https://codeql.github.com): vulnerability-focused static
+# analysis for the Rust workspace, complementing the clippy quality
+# gate in ci.yml. Runs on every push to main, every pull request,
+# and weekly; findings land in the code-scanning dashboard.
+name: "CodeQL"
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '23 3 * * 1'
+
+permissions: read-all
+
+jobs:
+  analyze:
+    name: Analyze (rust)
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed for Code scanning upload
+      security-events: write
+      # Needed to fetch CodeQL bundles / internal workflow status
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: rust
+          build-mode: manual
+      - uses: dtolnay/rust-toolchain@stable
+      # No build cache on purpose: CodeQL must observe a full, clean
+      # compile of the workspace to extract from it.
+      - name: Build the workspace
+        run: cargo build --workspace
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:rust"
