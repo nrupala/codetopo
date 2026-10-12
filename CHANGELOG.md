@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+- Added the OpenSSF Scorecard workflow (`.github/workflows/scorecard.yml`, `publish_results: true`) and the Scorecard badge in the README, so the repository's security posture is scanned on every push to `main` and weekly, with results published to api.scorecard.dev and the code-scanning dashboard.
+
 - Added the missing root `LICENSE` file (canonical AGPL-3.0 text). The crates have always declared AGPL-3.0-or-later, but the license file itself was absent from the repository root — found by the docs-standard sweep's inventory scan; the ACP Registry submission's license_url pointed at it.
 
 - **codetopo-mcp 0.3.4 — Windows build fixed:** the stdio stdout seal used Unix-only fd APIs (`std::os::fd`, `libc::dup2`), so the crate never compiled on Windows. The seal now has a Win32 implementation (duplicate the stdout handle for the protocol writer; `SetStdHandle` to `NUL` before std's lazy first handle fetch), and CI gains a Windows check job for the two shipped agent binaries so this cannot regress silently. Found by the release-binaries pipeline — the first Windows build in the project's history.
