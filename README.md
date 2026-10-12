@@ -6,6 +6,11 @@ Registry identity: mcp-name: io.github.nrupala/codetopo
 repository into a queryable code graph — symbols, calls, references, and
 structure — with JSON answers an AI coding agent can act on directly.
 
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15421/badge)](https://www.bestpractices.dev/projects/15421)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/nrupala/codetopo/badge)](https://scorecard.dev/viewer/?uri=github.com/nrupala/codetopo)
+
+codetopo holds the [OpenSSF Best Practices Passing badge](https://www.bestpractices.dev/en/projects/15421) — 100% of 67 criteria.
+
 You are here because an agent just touched your codebase and you want to
 answer structural questions fast: *what calls this function? what breaks if
 I change this? how are these two modules connected?* codetopo indexes the
@@ -20,9 +25,6 @@ only that. Domain meaning belongs to the agents and teams composing on top.
 ![Illustrative mock-up of a codetopo dependency graph (not actual tool output)](assets/codetopo-demo.svg)
 
 **Live demo:** [codetopo.aimlds.org](https://codetopo.aimlds.org) — codetopo's real map of this repository, drawn by codetopo itself and refreshed on every push to `main`.
-
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/nrupala/codetopo/badge)](https://scorecard.dev/viewer/?uri=github.com/nrupala/codetopo)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15421/badge)](https://www.bestpractices.dev/projects/15421)
 
 ## 60-second quickstart
 
@@ -224,4 +226,4 @@ across this product line: a hash-chained, append-only record, verified by
 - Engine (`codetopo-*` crates): **AGPL-3.0-or-later** (see `LICENSES/`)
 - Agent-facing contracts (`schemas/`: OpenAPI 3.1 spec, MCP tool catalogue): **Apache-2.0** (see `schemas/LICENSE-APACHE`)
 
-Owned by Nrupal Akolkar · Built with Muse by Meta.
+Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join) — join Muse, then redeem code **101EEK** in Settings within 48 hours of joining and we both earn tokens.
