@@ -129,7 +129,7 @@ function extract(archive, dir) {
       { stdio: 'inherit' });
     if (r.status !== 0) throw new Error('Expand-Archive failed');
   } else {
-    const r = spawnSync('tar', ['-xzf', archive, '-C', dir], { stdio: 'inherit' });
+    const r = spawnSync('tar', ['--no-same-owner', '-xzf', archive, '-C', dir], { stdio: 'inherit' });
     if (r.status !== 0) throw new Error('tar extraction failed');
   }
 }
@@ -213,15 +213,17 @@ def build_manifest(version: str) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("tag", nargs="?", default="v0.3.4",
-                    help="GitHub release tag holding the codetopo-mcp archives")
+    ap.add_argument("tag", nargs="?", default=None,
+                    help="GitHub release tag holding the codetopo-mcp archives "
+                         "(default: v<crate version>)")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
     version = mcp_version()
+    tag = args.tag or f"v{version}"
     out = Path(args.out) if args.out else REPO / "dist" / f"codetopo-{version}.mcpb"
     out.parent.mkdir(parents=True, exist_ok=True)
-    base = f"https://github.com/{OWNER_REPO}/releases/download/{args.tag}"
+    base = f"https://github.com/{OWNER_REPO}/releases/download/{tag}"
 
     pins = {"version": version, "platforms": {}}
     for key, (platform, ext, exe) in PLATFORMS.items():
