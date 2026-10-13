@@ -1,6 +1,7 @@
 ## [Unreleased]
 
 - Added glama.json for the Glama directory listing.
+- Added a Gemini CLI extension manifest (`gemini-extension.json`) and context file (`GEMINI.md`) at the repository root. With the `gemini-cli-extension` GitHub topic set, the repository is indexed by the Gemini CLI extensions gallery, and Gemini CLI users can enable codetopo as an extension. The extension launches the `codetopo-mcp` binary over stdio; installing it first (`cargo install codetopo-mcp`) is the one prerequisite, stated in the manifest description and in `GEMINI.md`.
 
 - Added the OpenSSF Scorecard workflow (`.github/workflows/scorecard.yml`, `publish_results: true`) and the Scorecard badge in the README, so the repository's security posture is scanned on every push to `main` and weekly, with results published to api.scorecard.dev and the code-scanning dashboard.
 
