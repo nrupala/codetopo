@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+- MCPB bundle: the manifest now carries each tool's `title` and `annotations` from the catalogue, an `icon` (the node-graph glyph, `assets/icon-512.png`, shipped in the bundle as `icon.png`), and a `privacy_policies` entry pointing at the README's Privacy Policy section — the Claude directory's requirements for local connectors.
+
 - MCPB bundle launcher: extract release archives with `tar --no-same-owner`. The archives carry the build runner's uid/gid, and tar running as root (e.g. in a container) failed the extraction trying to restore that ownership, even though the binary extracted fine. Also, the packager's default release tag now derives from the crate version instead of a pinned literal.
 
 - Added glama.json for the Glama directory listing.
