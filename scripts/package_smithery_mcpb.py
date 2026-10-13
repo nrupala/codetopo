@@ -179,14 +179,20 @@ def mcp_version() -> str:
 
 def build_manifest(version: str) -> dict:
     catalogue = json.loads((REPO / "schemas" / "mcp-tools.json").read_text())
-    tools = [
-        {
+    tools = []
+    for t in catalogue["tools"]:
+        tool = {
             "name": t["name"],
             "description": t["description"],
             "inputSchema": t["inputSchema"],
         }
-        for t in catalogue["tools"]
-    ]
+        # Directory conformance fields ride along when the catalogue
+        # carries them (codetopo-mcp >= 0.3.5).
+        if "title" in t:
+            tool["title"] = t["title"]
+        if "annotations" in t:
+            tool["annotations"] = t["annotations"]
+        tools.append(tool)
     return {
         "manifest_version": "0.3",
         "name": "codetopo",
@@ -195,6 +201,8 @@ def build_manifest(version: str) -> dict:
         "author": {"name": "Nrupal Akolkar"},
         "repository": {"type": "git", "url": "https://github.com/nrupala/codetopo"},
         "homepage": "https://aimlds.org/codetopo",
+        "icon": "icon.png",
+        "privacy_policies": ["https://github.com/nrupala/codetopo#privacy-policy"],
         "license": "AGPL-3.0-or-later",
         "keywords": ["code-graph", "static-analysis", "mcp", "symbols", "call-graph"],
         "server": {
@@ -240,8 +248,13 @@ def main() -> int:
         print(f"  pinned sha256 {digest[:16]}...")
 
     manifest = build_manifest(version)
+    icon_path = REPO / "assets" / "icon-512.png"
+    if not icon_path.exists():
+        print(f"missing bundle icon: {icon_path} — aborting")
+        return 1
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+        zf.write(icon_path, "icon.png")
         zf.writestr("server/launcher.js", LAUNCHER_JS)
         zf.writestr("server/pins.json", json.dumps(pins, indent=2))
     size = out.stat().st_size
