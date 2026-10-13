@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+- MCPB bundle launcher: extract release archives with `tar --no-same-owner`. The archives carry the build runner's uid/gid, and tar running as root (e.g. in a container) failed the extraction trying to restore that ownership, even though the binary extracted fine. Also, the packager's default release tag now derives from the crate version instead of a pinned literal.
+
 - Added glama.json for the Glama directory listing.
 - Added a Gemini CLI extension manifest (`gemini-extension.json`) and context file (`GEMINI.md`) at the repository root. With the `gemini-cli-extension` GitHub topic set, the repository is indexed by the Gemini CLI extensions gallery, and Gemini CLI users can enable codetopo as an extension. The extension launches the `codetopo-mcp` binary over stdio; installing it first (`cargo install codetopo-mcp`) is the one prerequisite, stated in the manifest description and in `GEMINI.md`.
 
