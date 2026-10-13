@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+- Added glama.json for the Glama directory listing.
+
 - Added the OpenSSF Scorecard workflow (`.github/workflows/scorecard.yml`, `publish_results: true`) and the Scorecard badge in the README, so the repository's security posture is scanned on every push to `main` and weekly, with results published to api.scorecard.dev and the code-scanning dashboard.
 
 - Added a CodeQL workflow (`.github/workflows/codeql.yml`): vulnerability-focused static analysis of the Rust workspace on every push to `main`, every pull request, and weekly, with findings in the code-scanning dashboard — alongside the existing clippy quality gate.
