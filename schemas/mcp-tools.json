@@ -2,16 +2,21 @@
   "$comment": "MCP tool catalogue for codetopo, extracted from the live server binary, not hand-written. The `tools` array below is the verbatim `result.tools` payload of a JSON-RPC `tools/list` call against `codetopo-mcp` over stdio. Regenerate with: printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}' '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}' | cargo run -q -p codetopo-mcp",
   "source": {
     "binary": "codetopo-mcp",
-    "transport": "stdio",
     "method": "tools/list",
     "protocolVersion": "2024-11-05",
     "serverInfo": {
       "name": "codetopo",
-      "version": "0.3.4"
-    }
+      "version": "0.3.5"
+    },
+    "transport": "stdio"
   },
   "tools": [
     {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
       "description": "Index a repository into a codetopo graph database.",
       "inputSchema": {
         "properties": {
@@ -34,9 +39,15 @@
         ],
         "type": "object"
       },
-      "name": "codetopo_index"
+      "name": "codetopo_index",
+      "title": "Index a repository"
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "Nodes transitively reachable from a node over calls and imports edges.",
       "inputSchema": {
         "properties": {
@@ -63,9 +74,15 @@
         ],
         "type": "object"
       },
-      "name": "codetopo_descendants"
+      "name": "codetopo_descendants",
+      "title": "Find descendants"
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "Nodes from which a node is transitively reachable over calls and imports edges.",
       "inputSchema": {
         "properties": {
@@ -92,9 +109,15 @@
         ],
         "type": "object"
       },
-      "name": "codetopo_ancestors"
+      "name": "codetopo_ancestors",
+      "title": "Find ancestors"
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "Nodes that break if a node changes: dependents, overriders, and implementers.",
       "inputSchema": {
         "properties": {
@@ -121,9 +144,15 @@
         ],
         "type": "object"
       },
-      "name": "codetopo_blast_radius"
+      "name": "codetopo_blast_radius",
+      "title": "Compute blast radius"
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "Shortest typed path between two nodes, or the reason there is none.",
       "inputSchema": {
         "properties": {
@@ -147,9 +176,15 @@
         ],
         "type": "object"
       },
-      "name": "codetopo_path"
+      "name": "codetopo_path",
+      "title": "Find the path between two nodes"
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "Node and edge totals for an index, with per-kind breakdowns.",
       "inputSchema": {
         "properties": {
@@ -163,9 +198,15 @@
         ],
         "type": "object"
       },
-      "name": "codetopo_stats"
+      "name": "codetopo_stats",
+      "title": "Index statistics"
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "Verify the tamper-evident audit chain of an index.",
       "inputSchema": {
         "properties": {
@@ -179,9 +220,15 @@
         ],
         "type": "object"
       },
-      "name": "codetopo_verify"
+      "name": "codetopo_verify",
+      "title": "Verify the index audit chain"
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "Export the whole graph as a portable snapshot, bound to the audit head.",
       "inputSchema": {
         "properties": {
@@ -195,9 +242,15 @@
         ],
         "type": "object"
       },
-      "name": "codetopo_snapshot"
+      "name": "codetopo_snapshot",
+      "title": "Export a graph snapshot"
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "The subgraph within a few hops of a node, in both directions (contains/defines excluded).",
       "inputSchema": {
         "properties": {
@@ -220,9 +273,15 @@
         ],
         "type": "object"
       },
-      "name": "codetopo_neighborhood"
+      "name": "codetopo_neighborhood",
+      "title": "Get a node's neighborhood"
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "One node in full: kind, location, tier, defines and refs. Errors when the id is unknown.",
       "inputSchema": {
         "properties": {
@@ -241,9 +300,15 @@
         ],
         "type": "object"
       },
-      "name": "codetopo_get_symbol"
+      "name": "codetopo_get_symbol",
+      "title": "Get one symbol in full"
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "Find symbols by name (case-insensitive substring of the label) - the discovery step before the exact-id queries.",
       "inputSchema": {
         "properties": {
@@ -266,16 +331,23 @@
         ],
         "type": "object"
       },
-      "name": "codetopo_search_symbols"
+      "name": "codetopo_search_symbols",
+      "title": "Search symbols by name"
     },
     {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "The schema this server speaks: node and edge kinds, tier rules, and the query vocabulary. Needs no database.",
       "inputSchema": {
         "properties": {},
         "required": [],
         "type": "object"
       },
-      "name": "codetopo_describe_schema"
+      "name": "codetopo_describe_schema",
+      "title": "Describe the schema"
     }
   ]
 }

@@ -221,6 +221,10 @@ across this product line: a hash-chained, append-only record, verified by
 - [`schemas/README.md`](schemas/README.md) — the two agent-facing contracts and where the spec departs from the design doc
 - [`CODE_SCHEMA.md`](CODE_SCHEMA.md) — the graph schema (§6 sets the aggregate-first rule)
 
+## Privacy Policy
+
+codetopo runs entirely on your machine. The MCP server (`codetopo-mcp`), the CLI, and the index databases they create never send your code, your queries, or any usage data anywhere: there are no accounts, no API keys, no telemetry, and no network calls at runtime. Indexing reads only the repositories you point it at and writes only the database paths you give it. Questions about privacy: info@nrupalakolkar.com.
+
 ## License
 
 - Engine (`codetopo-*` crates): **AGPL-3.0-or-later** (see `LICENSES/`)

@@ -176,8 +176,8 @@ fn closure_result(members: &[String], total: usize, expand: bool, limit: usize) 
 // Tool catalogue
 // ---------------------------------------------------------------------------
 
-/// The `tools/list` catalogue: name, description, and JSON Schema for each
-/// tool. Arguments mirror the HTTP parameters one-for-one, so an agent that
+/// The `tools/list` catalogue: name, title, description, behaviour
+/// annotations, and JSON Schema for each tool. Arguments mirror the HTTP parameters one-for-one, so an agent that
 /// has learned one surface has learned both (§9).
 pub fn tool_catalog() -> Vec<Value> {
     let node_arg = |description: &str| {
@@ -196,7 +196,9 @@ pub fn tool_catalog() -> Vec<Value> {
     vec![
         json!({
             "name": "codetopo_index",
+            "title": "Index a repository",
             "description": "Index a repository into a codetopo graph database.",
+            "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false},
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -209,22 +211,30 @@ pub fn tool_catalog() -> Vec<Value> {
         }),
         json!({
             "name": "codetopo_descendants",
+            "title": "Find descendants",
             "description": "Nodes transitively reachable from a node over calls and imports edges.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
             "inputSchema": node_arg("Node id to walk down from."),
         }),
         json!({
             "name": "codetopo_ancestors",
+            "title": "Find ancestors",
             "description": "Nodes from which a node is transitively reachable over calls and imports edges.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
             "inputSchema": node_arg("Node id to walk up from."),
         }),
         json!({
             "name": "codetopo_blast_radius",
+            "title": "Compute blast radius",
             "description": "Nodes that break if a node changes: dependents, overriders, and implementers.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
             "inputSchema": node_arg("Node id whose blast radius to compute."),
         }),
         json!({
             "name": "codetopo_path",
+            "title": "Find the path between two nodes",
             "description": "Shortest typed path between two nodes, or the reason there is none.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -237,7 +247,9 @@ pub fn tool_catalog() -> Vec<Value> {
         }),
         json!({
             "name": "codetopo_stats",
+            "title": "Index statistics",
             "description": "Node and edge totals for an index, with per-kind breakdowns.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -248,7 +260,9 @@ pub fn tool_catalog() -> Vec<Value> {
         }),
         json!({
             "name": "codetopo_verify",
+            "title": "Verify the index audit chain",
             "description": "Verify the tamper-evident audit chain of an index.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -259,7 +273,9 @@ pub fn tool_catalog() -> Vec<Value> {
         }),
         json!({
             "name": "codetopo_snapshot",
+            "title": "Export a graph snapshot",
             "description": "Export the whole graph as a portable snapshot, bound to the audit head.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -270,7 +286,9 @@ pub fn tool_catalog() -> Vec<Value> {
         }),
         json!({
             "name": "codetopo_neighborhood",
+            "title": "Get a node's neighborhood",
             "description": "The subgraph within a few hops of a node, in both directions (contains/defines excluded).",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -283,7 +301,9 @@ pub fn tool_catalog() -> Vec<Value> {
         }),
         json!({
             "name": "codetopo_get_symbol",
+            "title": "Get one symbol in full",
             "description": "One node in full: kind, location, tier, defines and refs. Errors when the id is unknown.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -295,7 +315,9 @@ pub fn tool_catalog() -> Vec<Value> {
         }),
         json!({
             "name": "codetopo_search_symbols",
+            "title": "Search symbols by name",
             "description": "Find symbols by name (case-insensitive substring of the label) - the discovery step before the exact-id queries.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -308,7 +330,9 @@ pub fn tool_catalog() -> Vec<Value> {
         }),
         json!({
             "name": "codetopo_describe_schema",
+            "title": "Describe the schema",
             "description": "The schema this server speaks: node and edge kinds, tier rules, and the query vocabulary. Needs no database.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
             "inputSchema": {"type": "object", "properties": {}, "required": []},
         }),
     ]

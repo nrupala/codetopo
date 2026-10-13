@@ -22,6 +22,11 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.3.5] — 2026-10-13
+
+- **codetopo-mcp 0.3.5:** every tool in `tools/list` now carries a human-readable `title` and MCP `annotations` (read-only, destructive, and open-world hints), for client and directory conformance. No tool behavior changes. Other crates unchanged.
+- README gains a Privacy Policy section.
+
 ## [0.4.0] — 2026-10-10
 
 - **codetopo-acp 0.4.0 — ACP Terminal Auth (trust setup):** the agent now advertises one terminal auth method, `codetopo-trust-setup`, until setup is recorded (and only to clients declaring terminal-auth support, per the spec). `codetopo-acp login` provisions the HMAC proof-verification key locally (0600, hidden entry; keyless setup offered) — codetopo has no accounts, and the one secret in its trust model is that key. Snapshots the agent takes are signed when a key is provisioned, and answers cite the certificate serial and signer fingerprint. Design: `docs/acp-trust-setup.md`. Other crates unchanged at 0.3.3.
