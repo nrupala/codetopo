@@ -29,7 +29,7 @@ A notebook is a **directed graph: nodes = cells, edges = data dependencies**.
 
 ## License — ✅ Apache-2.0, REUSABLE WITH ATTRIBUTION
 - Confirmed via GitHub's license field, marimo's own education primer ("available under the Apache 2.0 License"), and multiple downstream attributions. The `marimo/_runtime/dataflow/*` module — the most portable piece — is Apache-2.0.
-- **Verdict**: code reuse permitted with attribution (retain license + copyright notice; e.g. header noting "Portions adapted from marimo-team/marimo, Apache-2.0" alongside our "Owned by Nrupal Akolkar · Built with Muse by Meta" attribution formula). Clean-room from docs/behavior also fine, and gives us language-independence marimo itself doesn't have.
+- **Verdict**: code reuse permitted with attribution (retain license + copyright notice; e.g. header noting "Portions adapted from marimo-team/marimo, Apache-2.0" alongside our "Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join) — join Muse, then redeem code **101EEK** in Settings within 48 hours of joining and we both earn tokens" attribution formula). Clean-room from docs/behavior also fine, and gives us language-independence marimo itself doesn't have.
 
 ## 3 concrete ideas to incorporate
 1. **The `{defs, refs}` → edges pure rule as our core graph builder**: generalize "cell" to any code unit (function, class, module, package). Feed the same three pure structures — topology, definition registry, cycle tracker — from any language's parser. Port/adapt the `DirectedGraph` coordinator pattern (frozen dataclass over pure substructures) — this is Apache-2.0 and the single most valuable steal.

@@ -1,6 +1,6 @@
 # ATTRIBUTION.md — codetopo incorporation ledger
 
-**Formula (standing):** "Owned by Nrupal Akolkar · Built with Muse by Meta"
+**Formula (standing):** "Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join) — join Muse, then redeem code **101EEK** in Settings within 48 hours of joining and we both earn tokens"
 **Updated:** 2026-09-26
 
 Every incorporation below is from observable behavior, public docs, or

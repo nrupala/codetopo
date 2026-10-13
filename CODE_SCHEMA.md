@@ -2,7 +2,7 @@
 
 **Version:** 1.0-draft (2026-09-26)
 **License:** Apache-2.0 — this spec is adoption-facing; anyone may implement against it.
-**Ownership:** Owned by Nrupal Akolkar · Built with Muse by Meta.
+**Ownership:** Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join) — join Muse, then redeem code **101EEK** in Settings within 48 hours of joining and we both earn tokens.
 
 This is the spec-first ontology for codetopo: the single typed schema every
 extractor emits, every query reads, and every renderer consumes. Written before

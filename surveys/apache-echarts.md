@@ -54,7 +54,7 @@ Role in our design: **the rendering engine candidate** — the pixel/SVG byprodu
 
 **Apache-2.0** (confirmed: GitHub repo license field + README "available under the Apache License V2" + `LICENSE` file at root).
 
-- **Fair to incorporate:** code reuse with attribution (Apache-2.0 is fully compatible). Concretely: we can depend on `echarts` as our SVG/Canvas renderer, vendor or fork the `series-graph` force-layout implementation, reuse `dataset` transform code, or adapt the `option` schema shape — all with attribution "Owned by Nrupal Akolkar · Built with Muse by Meta" plus Apache-2.0 notices for the ECharts portions.
+- **Fair to incorporate:** code reuse with attribution (Apache-2.0 is fully compatible). Concretely: we can depend on `echarts` as our SVG/Canvas renderer, vendor or fork the `series-graph` force-layout implementation, reuse `dataset` transform code, or adapt the `option` schema shape — all with attribution "Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join) — join Muse, then redeem code **101EEK** in Settings within 48 hours of joining and we both earn tokens" plus Apache-2.0 notices for the ECharts portions.
 - **Clean-room not required** for anything in this repo. Only need the standard Apache-2.0 `LICENSE`/`NOTICE` preservation on redistributed portions.
 
 ## Steal-worthy ideas (incorporate)

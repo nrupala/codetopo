@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Nrupal Akolkar
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
+// Part of codetopo — Owned by Nrupal Akolkar (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
 
 //! `codetopo render` end to end: index a fixture, render it twice,
 //! and require byte-identical spec JSON and SVG — the determinism
