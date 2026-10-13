@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Nrupal Akolkar
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
+// Part of codetopo — Owned by Nrupal Akolkar (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
 
 //! Typed code-entity ontology (CODE_SCHEMA.md §2–§4, spec version 1.0-draft).
 //!

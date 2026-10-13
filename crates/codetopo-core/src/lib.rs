@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Nrupal Akolkar
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Part of codetopo — Owned by Nrupal Akolkar · Built with Muse by Meta.
+// Part of codetopo — Owned by Nrupal Akolkar (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
 
 //! codetopo-core — typed graph core for codetopo (Phase 1).
 //!
@@ -13,7 +13,7 @@
 //!   queryable [`graph::Graph`], paths and subgraphs.
 //! - [`snapshot`] — the JSON export pathway: [`snapshot::Snapshot`].
 //!
-//! Owned by Nrupal Akolkar · Built with Muse by Meta.
+//! Owned by Nrupal Akolkar (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
 
 pub mod diag;
 pub mod emit;
