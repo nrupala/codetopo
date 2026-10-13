@@ -1,0 +1,12 @@
+{
+  "name": "codetopo",
+  "version": "0.3.4",
+  "description": "Deterministic code graphs for AI agents: symbols, calls, blast radius, and proof-checked snapshots over MCP (12 tools). Indexes a repository locally - read-only, nothing executed. Requires the codetopo-mcp binary on PATH: cargo install codetopo-mcp",
+  "contextFileName": "GEMINI.md",
+  "mcpServers": {
+    "codetopo": {
+      "command": "codetopo-mcp",
+      "args": []
+    }
+  }
+}
