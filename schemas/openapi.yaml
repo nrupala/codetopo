@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: codetopo API
-  version: 0.3.3
+  version: 0.5.0
   summary: Read-only query surface over a frozen code graph.
   description: |
     `codetopo` turns a repository tree into a queryable code graph. This

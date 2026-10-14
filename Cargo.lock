@@ -230,7 +230,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "codetopo-acp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "codetopo-cli",
  "codetopo-core",
@@ -245,7 +245,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-cli"
-version = "0.3.3"
+version = "0.5.0"
 dependencies = [
  "clap",
  "codetopo-core",
@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-core"
-version = "0.3.3"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -268,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-extract"
-version = "0.3.3"
+version = "0.5.0"
 dependencies = [
  "codetopo-core",
  "thiserror",
@@ -279,7 +279,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-mcp"
-version = "0.3.5"
+version = "0.5.0"
 dependencies = [
  "codetopo-cli",
  "codetopo-core",
@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-server"
-version = "0.3.3"
+version = "0.5.0"
 dependencies = [
  "axum",
  "codetopo-cli",
@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-store"
-version = "0.3.3"
+version = "0.5.0"
 dependencies = [
  "codetopo-core",
  "hex",
