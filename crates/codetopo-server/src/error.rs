@@ -54,6 +54,25 @@ pub enum ApiError {
         /// Human-readable detail.
         message: String,
     },
+    /// The request was authenticated and well-formed, but a limit of
+    /// the caller's plan refused it (paid-path S3). A distinct status
+    /// — not a `400` with a quota-flavoured code — because `429` is
+    /// the one answer a client can act on without parsing prose: stop,
+    /// wait for the window the message names, retry then.
+    #[error("{message}")]
+    TooManyRequests {
+        /// Stable machine code, e.g. `index_quota_exceeded`.
+        code: &'static str,
+        /// Human-readable detail.
+        message: String,
+    },
+    /// A query outlived its plan's per-request time limit.
+    #[error("{message}")]
+    Timeout {
+        /// Human-readable detail. One timeout shape exists, so the
+        /// code (`request_timeout`) is fixed rather than carried.
+        message: String,
+    },
     /// Storage, indexing, or an unexpected internal failure.
     #[error("{0}")]
     Internal(String),
@@ -134,6 +153,70 @@ impl ApiError {
         }
     }
 
+    /// 429 `index_quota_exceeded`: the key already holds its plan's
+    /// active-index limit. Names the limit and the current count, so
+    /// the caller knows exactly what must be deleted or expire before
+    /// another creation can succeed.
+    pub fn index_quota(plan: &str, limit: usize, current: usize) -> Self {
+        ApiError::TooManyRequests {
+            code: "index_quota_exceeded",
+            message: format!(
+                "plan '{plan}' allows at most {limit} active indexes; \
+                 this key already has {current}"
+            ),
+        }
+    }
+
+    /// 429 `query_quota_exceeded`: the key has used its plan's
+    /// monthly query allowance. The month is the UTC calendar month
+    /// (see [`crate::limits`]); naming it tells the caller when the
+    /// quota resets without a second request to ask.
+    pub fn query_quota(plan: &str, limit: u64, used: u64, month: &str) -> Self {
+        ApiError::TooManyRequests {
+            code: "query_quota_exceeded",
+            message: format!(
+                "plan '{plan}' allows {limit} queries per month; \
+                 this key has used {used} in {month} (UTC)"
+            ),
+        }
+    }
+
+    /// 429 `file_quota_exceeded`: the tree holds more files than the
+    /// plan's per-index cap. The count is a lower bound (the walk
+    /// stops just past the limit), so the message says "more than".
+    pub fn file_quota(plan: &str, limit: usize) -> Self {
+        ApiError::TooManyRequests {
+            code: "file_quota_exceeded",
+            message: format!(
+                "the repository tree holds more than {limit} files, \
+                 past plan '{plan}'s per-index file limit"
+            ),
+        }
+    }
+
+    /// 429 `index_concurrency_exceeded`: the key already runs its
+    /// plan's allowance of concurrent index operations.
+    pub fn index_concurrency(plan: &str, limit: usize) -> Self {
+        ApiError::TooManyRequests {
+            code: "index_concurrency_exceeded",
+            message: format!(
+                "plan '{plan}' allows {limit} index operation(s) at a time \
+                 for one key; one is already running for this key"
+            ),
+        }
+    }
+
+    /// 504 `request_timeout`: the query did not finish within the
+    /// plan's per-request limit.
+    pub fn request_timeout(plan: &str, secs: u64) -> Self {
+        ApiError::Timeout {
+            message: format!(
+                "the query did not finish within {secs}s, \
+                 the per-request limit of plan '{plan}'"
+            ),
+        }
+    }
+
     /// 500 from any internal failure, carrying `reason`.
     pub fn internal(reason: impl Into<String>) -> Self {
         ApiError::Internal(reason.into())
@@ -144,6 +227,8 @@ impl ApiError {
             ApiError::Unauthorized => StatusCode::UNAUTHORIZED,
             ApiError::NotFound { .. } => StatusCode::NOT_FOUND,
             ApiError::BadRequest { .. } => StatusCode::BAD_REQUEST,
+            ApiError::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
+            ApiError::Timeout { .. } => StatusCode::GATEWAY_TIMEOUT,
             ApiError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -152,7 +237,10 @@ impl ApiError {
     pub fn code(&self) -> &'static str {
         match self {
             ApiError::Unauthorized => "unauthenticated",
-            ApiError::NotFound { code, .. } | ApiError::BadRequest { code, .. } => code,
+            ApiError::NotFound { code, .. }
+            | ApiError::BadRequest { code, .. }
+            | ApiError::TooManyRequests { code, .. } => code,
+            ApiError::Timeout { .. } => "request_timeout",
             ApiError::Internal(_) => "internal",
         }
     }
@@ -207,6 +295,44 @@ mod tests {
             ApiError::internal("boom").status(),
             StatusCode::INTERNAL_SERVER_ERROR
         );
+        assert_eq!(
+            ApiError::index_quota("hosted", 25, 25).status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            ApiError::request_timeout("hosted", 30).status(),
+            StatusCode::GATEWAY_TIMEOUT
+        );
+    }
+
+    /// The S3 limit refusals: each plan limit has its own code, so a
+    /// client can tell "delete an index" from "wait for next month"
+    /// from "shrink the repository" without matching on prose.
+    #[test]
+    fn limit_codes_are_distinct_and_name_the_limit() {
+        let index = ApiError::index_quota("hosted", 25, 25);
+        assert_eq!(index.code(), "index_quota_exceeded");
+        assert!(index.to_string().contains("25"), "limit is named: {index}");
+        assert!(
+            index.to_string().contains("has 25"),
+            "current count is named: {index}"
+        );
+
+        let query = ApiError::query_quota("hosted", 10_000, 10_000, "2026-10");
+        assert_eq!(query.code(), "query_quota_exceeded");
+        assert!(query.to_string().contains("10000"), "{query}");
+        assert!(query.to_string().contains("2026-10"), "{query}");
+
+        let file = ApiError::file_quota("hosted", 50_000);
+        assert_eq!(file.code(), "file_quota_exceeded");
+        assert!(file.to_string().contains("50000"), "{file}");
+
+        let busy = ApiError::index_concurrency("hosted", 1);
+        assert_eq!(busy.code(), "index_concurrency_exceeded");
+
+        let timeout = ApiError::request_timeout("hosted", 30);
+        assert_eq!(timeout.code(), "request_timeout");
+        assert!(timeout.to_string().contains("30s"), "{timeout}");
     }
 
     /// Every code §7 enumerates must be reachable, so the closed set clients

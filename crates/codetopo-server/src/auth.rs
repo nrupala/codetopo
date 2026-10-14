@@ -16,8 +16,11 @@
 //!    is read on every request, so issuance, rotation, and revocation
 //!    take effect without a restart (see [`crate::keys`]).
 //! 3. On success, attach [`KeyId`] and [`KeyPlan`] to the request extensions.
-//! 4. Run the inner service.
-//! 5. Measure the response body and append exactly one metering record.
+//! 4. Enforce the plan's monthly query quota against the metering log
+//!    (paid-path S3): a key at its limit is answered `429` and, like a
+//!    `401`, is not metered.
+//! 5. Run the inner service.
+//! 6. Measure the response body and append exactly one metering record.
 //!
 //! A rejected request (step 1 or 2) is answered `401` and is *not* metered. See
 //! the deviation note in [`crate::metering`].
@@ -60,12 +63,12 @@ impl std::fmt::Display for KeyId {
 /// The authenticated key's plan, attached beside [`KeyId`] by
 /// [`auth_and_meter`].
 ///
-/// A plan is a provisioning fact, not a secret, and a handler needs it
-/// exactly once: `POST /v1/index` offers the host-local `repo_path`
-/// mode only to [`crate::keys::SELF_HOSTED_PLAN`] keys, because naming
-/// a path on the server's disk is an operator's power, not a tenant's
-/// (paid-path S2). Everything else in the API is plan-blind today; the
-/// abuse envelope (plan S3) is where per-plan limits attach.
+/// A plan is a provisioning fact, not a secret. Handlers read it to
+/// gate the host-local `repo_path` mode to
+/// [`crate::keys::SELF_HOSTED_PLAN`] keys (paid-path S2), and the
+/// abuse envelope reads it for per-plan limits (paid-path S3, see
+/// [`crate::limits`]): this layer enforces the monthly query quota,
+/// the index handler the rest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyPlan(pub String);
 
@@ -148,6 +151,31 @@ async fn auth_and_meter(
     request
         .extensions_mut()
         .insert(KeyPlan(verified.plan.clone()));
+
+    // Monthly query quota (paid-path S3). The count is the metering
+    // log itself — a served query appends exactly one record — so
+    // usage and billing can never disagree. Index creation is not a
+    // query and is never refused here. A request refused here is
+    // not metered, like a `401`: it was not served, and metering it
+    // would let refusals consume the very quota they enforce. The
+    // count is of *completed* requests, so a burst already in flight
+    // when the limit lands can carry usage a little past it; the
+    // quota is an abuse envelope, not a billing transaction.
+    let limits = crate::limits::plan_limits(&verified.plan);
+    if let Some(max_queries) = limits.max_queries_per_month {
+        let is_index_op = method.as_str() == "POST" && path.as_str() == "/v1/index";
+        if !is_index_op {
+            let month = crate::metering::current_month();
+            if auth
+                .metering
+                .query_count_reaches(&verified.key_id, &month, max_queries)
+            {
+                let used = auth.metering.usage_in_month(&verified.key_id, &month).queries;
+                return ApiError::query_quota(&verified.plan, max_queries, used, &month)
+                    .into_response();
+            }
+        }
+    }
 
     let response = next.run(request).await;
     measure_and_meter(

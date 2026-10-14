@@ -13,8 +13,12 @@
 //! makes the log readable as billing input: a key's monthly counters are
 //! read straight off the file — count its records in the month, with
 //! `POST /v1/index` lines as index operations and the rest as queries —
-//! and the plan attributes them. Aggregation and quota enforcement are
-//! later steps; the fields they need are recorded from here on.
+//! and the plan attributes them. Since S3 that count is also the quota:
+//! the auth layer refuses a hosted key's query when its count for the
+//! current UTC month has reached its plan's limit (see
+//! [`Metering::usage_in_month`] and [`crate::limits`]). The rule stays
+//! log-shaped — a month's usage is what a text search of the file would
+//! find — because the log is the only metering store there is.
 //!
 //! ## Deviation from the design
 //!
@@ -56,6 +60,26 @@ pub struct Record {
     pub response_bytes: u64,
     /// Wall-clock duration of the request in milliseconds.
     pub duration_ms: u64,
+}
+
+/// One key's usage in one month, counted from the log.
+///
+/// The split is the metering contract the quota and the admin
+/// `keys list` both read: `POST /v1/index` records are index
+/// operations, every other record is a query.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MonthUsage {
+    /// Metered queries in the month (all records but index creations).
+    pub queries: u64,
+    /// Metered index creations in the month.
+    pub index_ops: u64,
+}
+
+/// The current UTC calendar month as `YYYY-MM` — the prefix a
+/// record's `ts` carries when it falls in this month. "Month" in
+/// every limit means this month (see [`crate::limits`]).
+pub fn current_month() -> String {
+    now_rfc3339_millis(SystemTime::now())[..7].to_string()
 }
 
 /// Appends [`Record`]s to a log file, one JSON object per line.
@@ -107,6 +131,62 @@ impl Metering {
                 "warning: cannot open metering log {}: {err}",
                 self.path.display()
             ),
+        }
+    }
+
+    /// Counts one key's usage in one month by reading the log.
+    ///
+    /// A missing log reads as zero usage, and a line that does not
+    /// parse is skipped: the log is append-only evidence written by
+    /// this process, so an unreadable line is a torn write, not a
+    /// record anyone was billed for. The scan is linear in the log's
+    /// size — the file rotates with deployment (plan S5) — and only
+    /// runs for plans that carry a quota, plus the admin `keys list`.
+    pub fn usage_in_month(&self, key_id: &str, month: &str) -> MonthUsage {
+        let mut usage = MonthUsage::default();
+        self.scan_month(key_id, month, None, &mut usage);
+        usage
+    }
+
+    /// True once the key's query count in `month` has reached
+    /// `limit`. The scan stops at the limit: the quota check runs per
+    /// request, and past the limit the exact count no longer matters
+    /// (a refusal that needs the true number does one full
+    /// [`Metering::usage_in_month`] scan on its own cold path).
+    pub fn query_count_reaches(&self, key_id: &str, month: &str, limit: u64) -> bool {
+        let mut usage = MonthUsage::default();
+        self.scan_month(key_id, month, Some(limit), &mut usage);
+        usage.queries >= limit
+    }
+
+    /// The one scan behind both counters, so the fast quota check
+    /// and the full usage read can never disagree about what a
+    /// record counts as.
+    fn scan_month(
+        &self,
+        key_id: &str,
+        month: &str,
+        stop_at_queries: Option<u64>,
+        usage: &mut MonthUsage,
+    ) {
+        let Ok(contents) = std::fs::read_to_string(&self.path) else {
+            return;
+        };
+        for line in contents.lines() {
+            let Ok(record) = serde_json::from_str::<Record>(line) else {
+                continue;
+            };
+            if record.key_id != key_id || !record.ts.starts_with(month) {
+                continue;
+            }
+            if record.method == "POST" && record.path == "/v1/index" {
+                usage.index_ops += 1;
+            } else {
+                usage.queries += 1;
+                if stop_at_queries.is_some_and(|stop| usage.queries >= stop) {
+                    return;
+                }
+            }
         }
     }
 
@@ -423,6 +503,90 @@ mod tests {
         assert_eq!(september_indexes, 1);
         assert_eq!(september_queries, 2);
         assert_eq!(october_queries, 1);
+    }
+
+    /// The usage counters read the same log the monthly-counters
+    /// contract above pins, and must agree with it on the same data —
+    /// the quota and the bill are the same number or neither is
+    /// trustworthy.
+    #[test]
+    fn usage_in_month_agrees_with_the_monthly_counters() {
+        let dir = tempfile::tempdir().unwrap();
+        let meter = meter(&dir);
+        let september = UNIX_EPOCH + Duration::from_secs(1_788_595_200);
+        let october = UNIX_EPOCH + Duration::from_secs(1_791_187_200);
+        for (started, method, path) in [
+            (september, "POST", "/v1/index"),
+            (september, "GET", "/v1/graphs/x/stats"),
+            (september, "GET", "/v1/graphs/x/verify"),
+            (october, "GET", "/v1/graphs/x/stats"),
+        ] {
+            meter.append(&meter.build("agent", "hosted", method, path, 200, 1, started));
+        }
+        meter.append(&meter.build("other", "hosted", "GET", "/v1/graphs/x/stats", 200, 1, september));
+
+        assert_eq!(
+            meter.usage_in_month("agent", "2026-09"),
+            MonthUsage {
+                queries: 2,
+                index_ops: 1
+            }
+        );
+        assert_eq!(
+            meter.usage_in_month("agent", "2026-10"),
+            MonthUsage {
+                queries: 1,
+                index_ops: 0
+            }
+        );
+        assert_eq!(
+            meter.usage_in_month("other", "2026-09"),
+            MonthUsage {
+                queries: 1,
+                index_ops: 0
+            }
+        );
+        assert_eq!(
+            meter.usage_in_month("ghost", "2026-09"),
+            MonthUsage::default(),
+            "an unknown key has used nothing"
+        );
+    }
+
+    /// The quota check trips at the limit, not one early or one
+    /// late: N served queries are allowed, and the check that runs
+    /// before query N+1 is the first to see the count reach N.
+    #[test]
+    fn query_count_reaches_trips_exactly_at_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let meter = meter(&dir);
+        let september = UNIX_EPOCH + Duration::from_secs(1_788_595_200);
+        assert!(
+            !meter.query_count_reaches("agent", "2026-09", 2),
+            "a missing log is zero usage, never a refusal"
+        );
+        for _ in 0..2 {
+            meter.append(&meter.build("agent", "hosted", "GET", "/v1/x", 200, 1, september));
+        }
+        // An index operation in the same month is not a query and
+        // must not move the query count.
+        meter.append(&meter.build("agent", "hosted", "POST", "/v1/index", 200, 1, september));
+        assert!(!meter.query_count_reaches("agent", "2026-09", 3));
+        assert!(meter.query_count_reaches("agent", "2026-09", 2));
+        assert!(meter.query_count_reaches("agent", "2026-09", 1));
+        assert!(
+            !meter.query_count_reaches("agent", "2026-10", 1),
+            "another month is another allowance"
+        );
+    }
+
+    #[test]
+    fn current_month_is_a_utc_month_prefix() {
+        let month = current_month();
+        assert_eq!(month.len(), 7, "{month}");
+        assert_eq!(&month[4..5], "-");
+        let mm: u32 = month[5..7].parse().expect("month digits");
+        assert!((1..=12).contains(&mm), "{month}");
     }
 
     /// A `path` is recorded without a query string, so the log cannot be flooded

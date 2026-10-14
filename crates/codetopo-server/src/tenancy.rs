@@ -142,6 +142,26 @@ impl Tenancy {
         .map_err(|err| ApiError::Internal(format!("cannot read tenancy store: {err}")))
     }
 
+    /// How many indexes `owner_key_id` actively holds at `now`:
+    /// records it owns whose expiry has not passed. An expired
+    /// record does not count — it is refused on access and pruned
+    /// on sight, so a key is never charged quota for an index it
+    /// can no longer read (paid-path S3's active-index quota reads
+    /// this number).
+    pub fn count_active_for_owner(&self, owner_key_id: &str, now: i64) -> Result<usize, ApiError> {
+        let conn = self.lock()?;
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM index_owners
+                 WHERE owner_key_id = ?1
+                   AND (expires_at IS NULL OR expires_at > ?2)",
+                rusqlite::params![owner_key_id, now],
+                |row| row.get(0),
+            )
+            .map_err(|err| ApiError::Internal(format!("cannot read tenancy store: {err}")))?;
+        Ok(count.max(0) as usize)
+    }
+
     /// Drops the ownership record for `index_id`, if one exists.
     pub fn remove(&self, index_id: &str) -> Result<(), ApiError> {
         let conn = self.lock()?;
@@ -239,6 +259,38 @@ mod tests {
         assert!(!record.is_expired(199));
         assert!(record.is_expired(200), "at expires_at the index is refused");
         assert!(record.is_expired(201));
+    }
+
+    #[test]
+    fn count_active_for_owner_counts_only_live_indexes_of_that_owner() {
+        let tenancy = tenancy();
+        tenancy.record("live", "tenant-a", 10, None).expect("record");
+        tenancy
+            .record("fresh", "tenant-a", 10, Some(500))
+            .expect("record");
+        tenancy
+            .record("stale", "tenant-a", 10, Some(50))
+            .expect("record");
+        tenancy
+            .record("boundary", "tenant-a", 10, Some(100))
+            .expect("record");
+        tenancy.record("other", "tenant-b", 10, None).expect("record");
+
+        // At now=100: "stale" expired at 50, and "boundary" expires
+        // exactly at 100 (the expiry boundary is inclusive, as
+        // `is_expired` pins) — neither counts.
+        assert_eq!(
+            tenancy.count_active_for_owner("tenant-a", 100).expect("count"),
+            2
+        );
+        assert_eq!(
+            tenancy.count_active_for_owner("tenant-b", 100).expect("count"),
+            1
+        );
+        assert_eq!(
+            tenancy.count_active_for_owner("ghost", 100).expect("count"),
+            0
+        );
     }
 
     #[test]
