@@ -5,9 +5,9 @@
 //! Bearer-key authentication and per-request metering (Phase 2 design §4, §5).
 //!
 //! This module is the only place a secret is ever visible: handlers receive a
-//! [`KeyId`] and nothing else, so a handler cannot leak a secret by accident
-//! and the metering layer has a stable identity to record without touching the
-//! credential.
+//! [`KeyId`] (and, since paid-path S2, the key's [`KeyPlan`]) and nothing
+//! else, so a handler cannot leak a secret by accident and the metering
+//! layer has a stable identity to record without touching the credential.
 //!
 //! Order of operations per request:
 //!
@@ -15,7 +15,7 @@
 //! 2. Verify against the runtime [`KeyStore`] in constant time. The store
 //!    is read on every request, so issuance, rotation, and revocation
 //!    take effect without a restart (see [`crate::keys`]).
-//! 3. On success, attach [`KeyId`] to the request extensions.
+//! 3. On success, attach [`KeyId`] and [`KeyPlan`] to the request extensions.
 //! 4. Run the inner service.
 //! 5. Measure the response body and append exactly one metering record.
 //!
@@ -54,6 +54,30 @@ impl KeyId {
 impl std::fmt::Display for KeyId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+/// The authenticated key's plan, attached beside [`KeyId`] by
+/// [`auth_and_meter`].
+///
+/// A plan is a provisioning fact, not a secret, and a handler needs it
+/// exactly once: `POST /v1/index` offers the host-local `repo_path`
+/// mode only to [`crate::keys::SELF_HOSTED_PLAN`] keys, because naming
+/// a path on the server's disk is an operator's power, not a tenant's
+/// (paid-path S2). Everything else in the API is plan-blind today; the
+/// abuse envelope (plan S3) is where per-plan limits attach.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyPlan(pub String);
+
+impl KeyPlan {
+    /// The plan name as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// True for the operator's own keys (legacy import plan).
+    pub fn is_self_hosted(&self) -> bool {
+        self.0 == crate::keys::SELF_HOSTED_PLAN
     }
 }
 
@@ -121,6 +145,9 @@ async fn auth_and_meter(
     request
         .extensions_mut()
         .insert(KeyId(verified.key_id.clone()));
+    request
+        .extensions_mut()
+        .insert(KeyPlan(verified.plan.clone()));
 
     let response = next.run(request).await;
     measure_and_meter(
@@ -239,6 +266,14 @@ mod tests {
         let key_id = KeyId("research-agent".to_string());
         assert_eq!(key_id.as_str(), "research-agent");
         assert_eq!(key_id.to_string(), "research-agent");
+    }
+
+    #[test]
+    fn key_plan_names_the_self_hosted_plan() {
+        assert!(KeyPlan(crate::keys::SELF_HOSTED_PLAN.to_string()).is_self_hosted());
+        let hosted = KeyPlan("hosted".to_string());
+        assert!(!hosted.is_self_hosted());
+        assert_eq!(hosted.as_str(), "hosted");
     }
 
     #[test]

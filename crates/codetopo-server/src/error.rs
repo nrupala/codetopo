@@ -122,6 +122,18 @@ impl ApiError {
         }
     }
 
+    /// 400 `invalid_repo_url`: `repo_url` is unparseable, not a public
+    /// HTTPS URL, or its clone failed (paid-path S2). The sibling of
+    /// `invalid_repo_path` for the hosted ingest mode: one code per
+    /// ingest field, so a client can branch on which source was refused
+    /// without matching on prose.
+    pub fn invalid_repo_url(reason: &str) -> Self {
+        ApiError::BadRequest {
+            code: "invalid_repo_url",
+            message: format!("invalid repo_url: {reason}"),
+        }
+    }
+
     /// 500 from any internal failure, carrying `reason`.
     pub fn internal(reason: impl Into<String>) -> Self {
         ApiError::Internal(reason.into())
@@ -182,6 +194,14 @@ mod tests {
         assert_eq!(
             ApiError::invalid_repo_path("missing").status(),
             StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            ApiError::invalid_repo_url("not https").status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            ApiError::invalid_repo_url("not https").code(),
+            "invalid_repo_url"
         );
         assert_eq!(
             ApiError::internal("boom").status(),

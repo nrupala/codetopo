@@ -28,7 +28,8 @@ use std::collections::BTreeMap;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 
-use axum::extract::{Extension, Path as UrlPath, Query, State};
+use axum::extract::{Extension, Path as UrlPath, Query, Request, State};
+use axum::http::header::CONTENT_TYPE;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
@@ -43,9 +44,10 @@ use codetopo_core::schema::{EdgeKind, NodeKind};
 use codetopo_core::snapshot::Snapshot;
 use codetopo_store::Store;
 
-use crate::auth::KeyId;
+use crate::auth::{KeyId, KeyPlan};
 use crate::config::Config;
 use crate::error::ApiError;
+use crate::ingest;
 use crate::keys::now_unix_secs;
 use crate::tenancy::Tenancy;
 
@@ -107,15 +109,9 @@ fn enforce_tenancy(state: &AppState, index_id: &str, key: &KeyId) -> Result<(), 
     };
     if record.is_expired(now_unix_secs()) {
         state.tenancy.remove(index_id)?;
-        let db = state.db_path(index_id);
-        if let Err(err) = std::fs::remove_file(&db) {
-            if err.kind() != std::io::ErrorKind::NotFound {
-                eprintln!(
-                    "warning: cannot delete expired index {}: {err}",
-                    db.display()
-                );
-            }
-        }
+        // The database and, for a hosted ingest, its staged tree:
+        // an expired index leaves nothing behind.
+        state.config.remove_index_files(index_id);
         return Err(ApiError::unknown_index(index_id));
     }
     if record.owner_key_id != key.as_str() {
@@ -128,10 +124,10 @@ fn enforce_tenancy(state: &AppState, index_id: &str, key: &KeyId) -> Result<(), 
 ///
 /// [`crate::auth::metered`] wraps the result; this function only decides which
 /// paths exist, so that auth coverage is a property of the wrapper rather than
-/// something each route has to opt into. The index handlers also take the
-/// [`KeyId`] request extension, which only that wrapper inserts — serving
-/// this router without it answers `500` on those routes rather than skipping
-/// the tenancy check.
+/// something each route has to opt into. The index handler also takes the
+/// [`KeyId`] and [`KeyPlan`] request extensions, which only that wrapper
+/// inserts — serving this router without it answers `500` on that route
+/// rather than skipping the tenancy and plan checks.
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/index", post(index))
@@ -153,14 +149,26 @@ pub fn router(state: AppState) -> Router {
 // POST /v1/index
 // ---------------------------------------------------------------------------
 
-/// Body of `POST /v1/index`.
+/// Body of `POST /v1/index` in JSON mode.
 ///
 /// Every field is optional at the type level so that a *missing* field is
-/// reported as `invalid_repo_path` with a message naming it, rather than as
-/// axum's generic JSON rejection, which arrives before any handler code runs.
+/// reported in the API's own error vocabulary naming it, rather than as a
+/// generic deserialization rejection. The handler reads and parses the
+/// body itself instead of using an extractor, because the same route
+/// also serves the archive-upload mode, whose body is not JSON at all —
+/// the content type, not the route, picks the mode (see [`index`]).
 #[derive(Debug, Default, Deserialize)]
 struct IndexRequest {
     repo_path: Option<String>,
+    repo_url: Option<String>,
+    package: Option<String>,
+}
+
+/// Query string of `POST /v1/index`. Only the archive mode reads it: an
+/// upload has no JSON body to carry a `package`, so the name rides the
+/// query string there. JSON mode takes `package` from the body.
+#[derive(Debug, Default, Deserialize)]
+struct IndexQuery {
     package: Option<String>,
 }
 
@@ -171,7 +179,28 @@ struct IndexRequest {
 // `fixture-repo::…` via CLI/MCP but `unknown::…` here, so node ids —
 // and every query keyed on them — disagreed by surface.
 
-/// `POST /v1/index` — index a repository tree into a new index id.
+/// The largest JSON body `POST /v1/index` reads: the limit the JSON
+/// extractor enforced when it read the body, kept so taking over the
+/// read does not silently change what a client may send.
+const JSON_BODY_LIMIT: usize = 2 * 1024 * 1024;
+
+/// A field's value, trimmed, with empty treated as absent — the rule
+/// every optional field of this route follows.
+fn non_empty(field: Option<String>) -> Option<String> {
+    field
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
+}
+
+/// Reads a request body up to `limit`, mapping any failure (including
+/// passing the limit) to `invalid_body` with the caller's wording.
+async fn read_body(request: Request, limit: usize, failure: &str) -> Result<axum::body::Bytes, ApiError> {
+    axum::body::to_bytes(request.into_body(), limit)
+        .await
+        .map_err(|_| ApiError::invalid_body(failure))
+}
+
+/// `POST /v1/index` — index a repository into a new index id.
 ///
 /// Walks the tree, writes `<data_dir>/<index_id>.db`, and returns the CLI's own
 /// `IndexReport` fields, so API stats and CLI stats come from one computation.
@@ -179,32 +208,50 @@ struct IndexRequest {
 /// [`enforce_tenancy`]), with the configured TTL as its expiry if one is set.
 /// If the ownership record cannot be written, the fresh database is deleted
 /// again rather than left behind as an unowned index anyone could read.
+///
+/// ## Ingest modes (paid-path S2, gap G1)
+///
+/// The request names the tree in exactly one of three ways:
+///
+/// * **`repo_path`** (JSON) — a path on the server host, offered only
+///   to `self-hosted` keys. Naming host paths is the operator's own
+///   power; a hosted key asking for it is refused `invalid_repo_path`.
+/// * **`repo_url`** (JSON) — a public HTTPS git URL, validated and
+///   shallow-cloned into the index's workdir
+///   (`<data_dir>/ingest/<index_id>/`) by [`crate::ingest`]. Private
+///   repositories are out of v1 scope: no credentials are accepted in
+///   the URL, and the server holds none.
+/// * **Archive upload** — the request body itself is a `.zip` or
+///   `.tar.gz` (declared by content type, or sniffed from the magic
+///   bytes), extracted into the same workdir under the containment
+///   rules in [`crate::ingest`]. An explicit `package` rides the query
+///   string (`?package=`), there being no JSON body to carry it.
+///
+/// `repo_path` and `repo_url` in one body is `invalid_body`; neither is
+/// `invalid_repo_path`. An ingested tree belongs to its index: expiry
+/// deletes the workdir with the database, and a failed ingest or index
+/// removes the workdir before the error is answered — a partial tree is
+/// never left behind.
 async fn index(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
-    Json(request): Json<IndexRequest>,
+    Extension(plan): Extension<KeyPlan>,
+    Query(query): Query<IndexQuery>,
+    request: Request,
 ) -> Result<Json<Value>, ApiError> {
-    let repo = request
-        .repo_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|raw| !raw.is_empty())
-        .ok_or_else(|| ApiError::invalid_repo_path("repo_path is required"))?;
-    let repo = PathBuf::from(repo);
-    if !repo.is_dir() {
-        return Err(ApiError::invalid_repo_path(&format!(
-            "not a directory: {}",
-            repo.display()
-        )));
-    }
-
-    let package = request
-        .package
-        .as_deref()
-        .map(str::trim)
-        .filter(|raw| !raw.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| default_package_name(&repo));
+    let content_type = request
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            value
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase()
+        })
+        .filter(|value| !value.is_empty());
 
     // §6: a UUID v4 rather than a repo name, so re-indexing the same tree does
     // not clobber the previous index and no customer directory layout leaks
@@ -212,10 +259,102 @@ async fn index(
     let index_id = uuid::Uuid::new_v4().to_string();
     let db = state.db_path(&index_id);
 
+    // Resolve the three modes to the tree to walk, the package name to
+    // record, and the workdir this request owns (hosted modes only —
+    // a local path is the caller's own tree and is never deleted here).
+    let (repo, package, workdir) = if content_type.as_deref() == Some("application/json") {
+        let bytes = read_body(
+            request,
+            JSON_BODY_LIMIT,
+            "request body could not be read (2 MiB limit)",
+        )
+        .await?;
+        let body: IndexRequest = serde_json::from_slice(&bytes).map_err(|err| {
+            ApiError::invalid_body(&format!("not valid JSON for this route: {err}"))
+        })?;
+        match (non_empty(body.repo_path), non_empty(body.repo_url)) {
+            (Some(_), Some(_)) => {
+                return Err(ApiError::invalid_body(
+                    "repo_path and repo_url are alternatives; send exactly one",
+                ));
+            }
+            (None, None) => {
+                return Err(ApiError::invalid_repo_path(
+                    "one of repo_path or repo_url is required",
+                ));
+            }
+            (Some(raw_path), None) => {
+                if !plan.is_self_hosted() {
+                    return Err(ApiError::invalid_repo_path(
+                        "repo_path names a path on the server host and is available \
+                         only to self-hosted keys; use repo_url or an archive upload",
+                    ));
+                }
+                let repo = PathBuf::from(raw_path);
+                if !repo.is_dir() {
+                    return Err(ApiError::invalid_repo_path(&format!(
+                        "not a directory: {}",
+                        repo.display()
+                    )));
+                }
+                let package =
+                    non_empty(body.package).unwrap_or_else(|| default_package_name(&repo));
+                (repo, package, None)
+            }
+            (None, Some(raw_url)) => {
+                let url = ingest::validate_repo_url(&raw_url).await?;
+                let workdir = state.config.index_workdir_path(&index_id);
+                let clone_dir = workdir.clone();
+                let clone_url = url.clone();
+                tokio::task::spawn_blocking(move || ingest::clone_into(&clone_url, &clone_dir))
+                    .await
+                    .map_err(|err| ApiError::internal(format!("clone task failed: {err}")))??;
+                let package =
+                    non_empty(body.package).unwrap_or_else(|| ingest::package_name_for_url(&url));
+                (workdir.clone(), package, Some(workdir))
+            }
+        }
+    } else {
+        let bytes = read_body(
+            request,
+            ingest::MAX_UPLOAD_BYTES,
+            "archive body could not be read or exceeds the upload limit",
+        )
+        .await?;
+        let kind = ingest::archive_kind(content_type.as_deref(), &bytes).ok_or_else(|| {
+            ApiError::invalid_body(
+                "unrecognized archive body: send a .zip or .tar.gz archive",
+            )
+        })?;
+        let workdir = state.config.index_workdir_path(&index_id);
+        let extract_dir = workdir.clone();
+        let root = tokio::task::spawn_blocking(move || {
+            ingest::extract_into(kind, &bytes, &extract_dir)
+        })
+        .await
+        .map_err(|err| ApiError::internal(format!("extract task failed: {err}")))??;
+        let package = non_empty(query.package).unwrap_or_else(|| {
+            if root != workdir {
+                default_package_name(&root)
+            } else {
+                "repo".to_string()
+            }
+        });
+        (root, package, Some(workdir))
+    };
+
     let report = tokio::task::spawn_blocking(move || index_repo(&repo, &db, &package, None, None))
         .await
-        .map_err(|err| ApiError::internal(format!("index task failed: {err}")))?
-        .map_err(|err| ApiError::internal(format!("cannot index repository: {err}")))?;
+        .map_err(|err| ApiError::internal(format!("index task failed: {err}")))?;
+    let report = match report {
+        Ok(report) => report,
+        Err(err) => {
+            if let Some(workdir) = &workdir {
+                let _ = std::fs::remove_dir_all(workdir);
+            }
+            return Err(ApiError::internal(format!("cannot index repository: {err}")));
+        }
+    };
 
     let created_at = now_unix_secs();
     let expires_at = state
@@ -227,6 +366,9 @@ async fn index(
         .record(&index_id, key.as_str(), created_at, expires_at)
     {
         let _ = std::fs::remove_file(state.db_path(&index_id));
+        if let Some(workdir) = &workdir {
+            let _ = std::fs::remove_dir_all(workdir);
+        }
         return Err(err);
     }
 

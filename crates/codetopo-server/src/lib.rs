@@ -8,6 +8,7 @@ pub mod auth;
 pub mod config;
 pub mod error;
 pub mod handlers;
+pub mod ingest;
 pub mod keys;
 pub mod metering;
 pub mod tenancy;

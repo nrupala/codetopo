@@ -83,6 +83,49 @@ impl Config {
         self.data_dir.join(format!("{index_id}.db"))
     }
 
+    /// Directory holding one index's ingested repository tree, for
+    /// indexes created from a `repo_url` clone or an archive upload
+    /// (paid-path S2): `<data_dir>/ingest/<index_id>/`. Hosted ingest
+    /// lands here — server-owned ground, never a caller-chosen path —
+    /// and the tree's lifetime is the index's: it is deleted with the
+    /// database when the index expires (see [`Config::remove_index_files`]).
+    pub fn index_workdir_path(&self, index_id: &str) -> PathBuf {
+        self.data_dir.join("ingest").join(index_id)
+    }
+
+    /// Deletes an index's files: its database and, if it was created
+    /// by a hosted ingest, its staged repository tree.
+    ///
+    /// A missing file is not an error (an index may already be half
+    /// cleaned); other failures are logged, not propagated — the caller
+    /// is refusing or sweeping the index either way, and a stuck file
+    /// must not resurrect it. The recursive workdir removal is gated on
+    /// the id being a server-generated UUID: tenancy records are only
+    /// ever written for generated ids, and a caller-shaped string from
+    /// a URL must never turn into a recursive delete.
+    pub fn remove_index_files(&self, index_id: &str) {
+        let db = self.index_db_path(index_id);
+        if let Err(err) = std::fs::remove_file(&db) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "warning: cannot delete index file {}: {err}",
+                    db.display()
+                );
+            }
+        }
+        if uuid::Uuid::parse_str(index_id).is_ok() {
+            let workdir = self.index_workdir_path(index_id);
+            if let Err(err) = std::fs::remove_dir_all(&workdir) {
+                if err.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!(
+                        "warning: cannot delete ingest workdir {}: {err}",
+                        workdir.display()
+                    );
+                }
+            }
+        }
+    }
+
     /// Path of the runtime key store inside the data dir.
     pub fn keys_db_path(&self) -> PathBuf {
         self.data_dir.join(crate::keys::STORE_FILE_NAME)
@@ -102,9 +145,10 @@ impl Config {
     /// healthy, which is harder to diagnose than refusing to boot.
     ///
     /// Also sweeps expired indexes: their ownership records are pruned
-    /// and their database files deleted, so a data dir cannot grow on
-    /// indexes nobody may read any more. The same refusal is enforced
-    /// lazily per request (see [`crate::handlers`]).
+    /// and their files (database plus any ingested tree) deleted, so a
+    /// data dir cannot grow on indexes nobody may read any more. The
+    /// same refusal is enforced lazily per request (see
+    /// [`crate::handlers`]).
     pub async fn prepare(&self) -> Result<(KeyStore, Tenancy), ApiError> {
         tokio::fs::create_dir_all(&self.data_dir)
             .await
@@ -127,15 +171,7 @@ impl Config {
         }
         let tenancy = Tenancy::open(&self.tenancy_db_path())?;
         for index_id in tenancy.prune_expired(now_unix_secs())? {
-            let db = self.index_db_path(&index_id);
-            if let Err(err) = tokio::fs::remove_file(&db).await {
-                if err.kind() != std::io::ErrorKind::NotFound {
-                    eprintln!(
-                        "warning: cannot delete expired index {}: {err}",
-                        db.display()
-                    );
-                }
-            }
+            self.remove_index_files(&index_id);
         }
         Ok((keys, tenancy))
     }
