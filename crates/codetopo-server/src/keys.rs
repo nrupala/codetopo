@@ -308,7 +308,10 @@ impl KeyStore {
     pub fn verify(&self, key_id: &str, secret: &str) -> Result<VerifiedKey, ApiError> {
         let row = self.lookup(key_id)?;
         let Some(row) = row else {
-            let dummy = hash_secret(b"codetopo-unknown-key", secret);
+            // Burn the same work as a real verification — one hash over a
+            // fresh random salt and one constant-time comparison — so an
+            // unknown key is not measurably cheaper than a wrong secret.
+            let dummy = hash_secret(&new_salt(), secret);
             let _ = dummy.as_slice().ct_eq(&[0u8; 32]);
             return Err(ApiError::Unauthorized);
         };
@@ -505,7 +508,7 @@ mod tests {
     fn issued_key_verifies_with_its_plan() {
         let store = store();
         let secret = store.issue("tenant-a", "hosted").expect("issue");
-        assert_eq!(secret.len(), 64, "secret is 64 hex chars: {secret}");
+        assert_eq!(secret.len(), 64, "secret is 64 hex chars");
         assert!(secret.chars().all(|c| c.is_ascii_hexdigit()));
         let verified = store.verify("tenant-a", &secret).expect("verifies");
         assert_eq!(verified.plan, "hosted");
