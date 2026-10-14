@@ -26,6 +26,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-14
+
+- **Version unification:** all seven crates — codetopo-core, codetopo-extract, codetopo-store, codetopo-cli, codetopo-server, codetopo-mcp, codetopo-acp — move to a single version line, 0.5.0. The workspace previously carried three versions at once (0.3.3, 0.3.5 for codetopo-mcp, 0.4.0 for codetopo-acp). Internal dependency requirements move with them; the tool catalogue is regenerated from the 0.5.0 binary. No behavior changes in any crate.
+
 ## [0.3.5] — 2026-10-13
 
 - **codetopo-mcp 0.3.5:** every tool in `tools/list` now carries a human-readable `title` and MCP `annotations` (read-only, destructive, and open-world hints), for client and directory conformance. No tool behavior changes. Other crates unchanged.
