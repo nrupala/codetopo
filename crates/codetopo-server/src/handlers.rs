@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 
-use axum::extract::{Path as UrlPath, Query, State};
+use axum::extract::{Extension, Path as UrlPath, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
@@ -43,8 +43,11 @@ use codetopo_core::schema::{EdgeKind, NodeKind};
 use codetopo_core::snapshot::Snapshot;
 use codetopo_store::Store;
 
+use crate::auth::KeyId;
 use crate::config::Config;
 use crate::error::ApiError;
+use crate::keys::now_unix_secs;
+use crate::tenancy::Tenancy;
 
 /// Default `limit` for closure queries, matching the CLI's `--limit` default.
 const DEFAULT_LIMIT: usize = 20;
@@ -57,23 +60,26 @@ const MAX_LIMIT: usize = 1000;
 
 /// Shared, immutable server state.
 ///
-/// Only the resolved configuration: keys and the metering log are owned by the
-/// auth layer, which is applied around the router rather than inside it, so a
-/// handler physically cannot reach a secret.
+/// The resolved configuration plus the tenancy store: keys and the metering
+/// log are owned by the auth layer, which is applied around the router rather
+/// than inside it, so a handler physically cannot reach a secret. Tenancy is
+/// different — a handler *must* consult it before touching an index — and it
+/// carries no secrets, only ownership records.
 #[derive(Debug, Clone)]
 pub struct AppState {
     config: Arc<Config>,
+    tenancy: Arc<Tenancy>,
 }
 
 impl AppState {
-    /// Wraps a resolved [`Config`] for use as axum state.
+    /// Wraps a resolved [`Config`] and the [`Tenancy`] store as axum state.
     ///
-    /// Takes the `Arc` the process already holds rather than a `Config` by
-    /// value, so the state and the configuration `main` logs at startup are
-    /// provably the same value and building a router in a test does not require
-    /// cloning one.
-    pub fn new(config: Arc<Config>) -> Self {
-        AppState { config }
+    /// Takes the `Arc`s the process already holds rather than values, so
+    /// the state and the configuration `main` logs at startup are provably
+    /// the same values and building a router in a test does not require
+    /// cloning either.
+    pub fn new(config: Arc<Config>, tenancy: Arc<Tenancy>) -> Self {
+        AppState { config, tenancy }
     }
 
     /// Database path for one index id (§6: `<data_dir>/<id>.db`).
@@ -82,11 +88,50 @@ impl AppState {
     }
 }
 
+/// The tenancy gate every `/v1/graphs/:id/…` handler passes before it
+/// touches the index (paid-path plan S1, gap G2).
+///
+/// * No ownership record: a legacy index (written before tenancy, or
+///   placed by another tool) — readable by any authenticated key, so
+///   existing self-hosted data dirs are not stranded.
+/// * Record owned by another key: answered exactly like a missing index
+///   (`404 unknown_index`), so the response cannot confirm the index
+///   exists. There is no `403` anywhere in this API's error vocabulary,
+///   and a distinguishable "exists but not yours" would leak it.
+/// * Expired record: refused the same way, and cleaned up on the spot —
+///   the record is dropped and the database file deleted — so expiry is
+///   enforced even between the startup sweeps in `Config::prepare`.
+fn enforce_tenancy(state: &AppState, index_id: &str, key: &KeyId) -> Result<(), ApiError> {
+    let Some(record) = state.tenancy.lookup(index_id)? else {
+        return Ok(());
+    };
+    if record.is_expired(now_unix_secs()) {
+        state.tenancy.remove(index_id)?;
+        let db = state.db_path(index_id);
+        if let Err(err) = std::fs::remove_file(&db) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "warning: cannot delete expired index {}: {err}",
+                    db.display()
+                );
+            }
+        }
+        return Err(ApiError::unknown_index(index_id));
+    }
+    if record.owner_key_id != key.as_str() {
+        return Err(ApiError::unknown_index(index_id));
+    }
+    Ok(())
+}
+
 /// Build the unauthenticated route table.
 ///
 /// [`crate::auth::metered`] wraps the result; this function only decides which
 /// paths exist, so that auth coverage is a property of the wrapper rather than
-/// something each route has to opt into.
+/// something each route has to opt into. The index handlers also take the
+/// [`KeyId`] request extension, which only that wrapper inserts — serving
+/// this router without it answers `500` on those routes rather than skipping
+/// the tenancy check.
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/index", post(index))
@@ -130,8 +175,13 @@ struct IndexRequest {
 ///
 /// Walks the tree, writes `<data_dir>/<index_id>.db`, and returns the CLI's own
 /// `IndexReport` fields, so API stats and CLI stats come from one computation.
+/// The index is recorded as owned by the creating key (see
+/// [`enforce_tenancy`]), with the configured TTL as its expiry if one is set.
+/// If the ownership record cannot be written, the fresh database is deleted
+/// again rather than left behind as an unowned index anyone could read.
 async fn index(
     State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
     Json(request): Json<IndexRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let repo = request
@@ -166,6 +216,19 @@ async fn index(
         .await
         .map_err(|err| ApiError::internal(format!("index task failed: {err}")))?
         .map_err(|err| ApiError::internal(format!("cannot index repository: {err}")))?;
+
+    let created_at = now_unix_secs();
+    let expires_at = state
+        .config
+        .index_ttl_secs
+        .map(|ttl| created_at + ttl as i64);
+    if let Err(err) = state
+        .tenancy
+        .record(&index_id, key.as_str(), created_at, expires_at)
+    {
+        let _ = std::fs::remove_file(state.db_path(&index_id));
+        return Err(err);
+    }
 
     Ok(Json(json!({
         "index_id": index_id,
@@ -282,10 +345,11 @@ struct ClosureResponse {
 /// import edges.
 async fn descendants(
     State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
     Query(query): Query<ClosureQuery>,
 ) -> Result<Json<ClosureResponse>, ApiError> {
-    closure(state, index_id, query, "descendants", Direction::Downstream).await
+    closure(state, &key, index_id, query, "descendants", Direction::Downstream).await
 }
 
 /// `GET /v1/graphs/{id}/ancestors?node=&expand=&limit=`.
@@ -293,10 +357,11 @@ async fn descendants(
 /// The reverse closure: everything that transitively reaches this node.
 async fn ancestors(
     State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
     Query(query): Query<ClosureQuery>,
 ) -> Result<Json<ClosureResponse>, ApiError> {
-    closure(state, index_id, query, "ancestors", Direction::Upstream).await
+    closure(state, &key, index_id, query, "ancestors", Direction::Upstream).await
 }
 
 /// `GET /v1/graphs/{id}/blast-radius?node=&expand=&limit=`.
@@ -305,11 +370,13 @@ async fn ancestors(
 /// would take with it.
 async fn blast_radius(
     State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
     Query(query): Query<ClosureQuery>,
 ) -> Result<Json<ClosureResponse>, ApiError> {
     closure(
         state,
+        &key,
         index_id,
         query,
         "blast_radius",
@@ -332,11 +399,13 @@ async fn blast_radius(
 /// comes first.
 async fn closure(
     state: AppState,
+    key: &KeyId,
     index_id: String,
     query: ClosureQuery,
     relation: &'static str,
     direction: Direction,
 ) -> Result<Json<ClosureResponse>, ApiError> {
+    enforce_tenancy(&state, &index_id, key)?;
     let ClosureParams {
         node,
         expand,
@@ -409,9 +478,11 @@ struct PathResponse {
 
 async fn path(
     State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
     Query(query): Query<PathQuery>,
 ) -> Result<Json<PathResponse>, ApiError> {
+    enforce_tenancy(&state, &index_id, &key)?;
     let from = required_param(query.from.as_deref(), "from")?;
     let to = required_param(query.to.as_deref(), "to")?;
     let db = state.db_path(&index_id);
@@ -462,8 +533,10 @@ struct KindCounts {
 
 async fn stats(
     State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
 ) -> Result<Json<StatsResponse>, ApiError> {
+    enforce_tenancy(&state, &index_id, &key)?;
     let db = state.db_path(&index_id);
     let graph = load_graph_blocking(&db, &index_id)?;
 
@@ -561,8 +634,10 @@ struct VerifyResponse {
 
 async fn verify(
     State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
 ) -> Result<Json<VerifyResponse>, ApiError> {
+    enforce_tenancy(&state, &index_id, &key)?;
     let db = state.db_path(&index_id);
     require_index(&db, &index_id)?;
 
@@ -596,8 +671,10 @@ async fn verify(
 /// chain it came from.
 async fn snapshot(
     State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
 ) -> Result<Json<Snapshot>, ApiError> {
+    enforce_tenancy(&state, &index_id, &key)?;
     let db = state.db_path(&index_id);
     require_index(&db, &index_id)?;
 
@@ -635,9 +712,11 @@ struct NeighborhoodQuery {
 /// neighborhood query; the CLI and MCP serve the same computation).
 async fn neighborhood(
     State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
     Query(query): Query<NeighborhoodQuery>,
 ) -> Result<Json<Value>, ApiError> {
+    enforce_tenancy(&state, &index_id, &key)?;
     let node = query
         .node
         .as_deref()
@@ -667,9 +746,11 @@ async fn neighborhood(
 /// `GET /v1/graphs/{id}/symbol?node=` — one node in full.
 async fn symbol(
     State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
     Query(query): Query<ClosureQuery>,
 ) -> Result<Json<Value>, ApiError> {
+    enforce_tenancy(&state, &index_id, &key)?;
     let node_id = query
         .node
         .as_deref()
@@ -694,9 +775,11 @@ struct SearchQuery {
 /// the exact-id queries always assumed a caller had already done.
 async fn search(
     State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<Value>, ApiError> {
+    enforce_tenancy(&state, &index_id, &key)?;
     let q = query
         .q
         .as_deref()

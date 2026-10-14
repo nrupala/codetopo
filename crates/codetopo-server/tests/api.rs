@@ -29,6 +29,7 @@ use codetopo_server::app;
 use codetopo_server::config::Config;
 use codetopo_server::keys::KeyStore;
 use codetopo_server::metering::Metering;
+use codetopo_server::tenancy::Tenancy;
 
 /// `key_id` for the one key the test server trusts.
 const KEY_ID: &str = "integration-agent";
@@ -65,13 +66,15 @@ impl Harness {
             keys_file: dir.path().join("api_keys"),
             metering_log: dir.path().join("metering.log"),
             bind: "127.0.0.1:0".parse().expect("bind addr"),
+            index_ttl_secs: None,
         };
         std::fs::create_dir_all(&config.data_dir).expect("data dir");
 
         let keys = Arc::new(KeyStore::parse(&format!("{KEY_ID}:{SECRET}\n")));
+        let tenancy = Arc::new(Tenancy::open(&config.tenancy_db_path()).expect("tenancy store"));
         let metering = Arc::new(Metering::new(&config.metering_log));
         Harness {
-            router: app(Arc::new(config.clone()), keys, metering),
+            router: app(Arc::new(config.clone()), keys, metering, tenancy),
             config,
             _dir: dir,
         }

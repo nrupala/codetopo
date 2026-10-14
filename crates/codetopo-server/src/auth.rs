@@ -12,7 +12,9 @@
 //! Order of operations per request:
 //!
 //! 1. Read `Authorization` and require the exact form `Bearer <key_id>:<secret>`.
-//! 2. Verify against the in-memory [`KeyStore`] in constant time.
+//! 2. Verify against the runtime [`KeyStore`] in constant time. The store
+//!    is read on every request, so issuance, rotation, and revocation
+//!    take effect without a restart (see [`crate::keys`]).
 //! 3. On success, attach [`KeyId`] to the request extensions.
 //! 4. Run the inner service.
 //! 5. Measure the response body and append exactly one metering record.
@@ -112,16 +114,19 @@ async fn auth_and_meter(
     let Some((key_id, secret)) = presented else {
         return unauthorized();
     };
-    let key_id = match auth.keys.verify(key_id, secret) {
-        Ok(key_id) => key_id,
+    let verified = match auth.keys.verify(key_id, secret) {
+        Ok(verified) => verified,
         Err(_) => return unauthorized(),
     };
-    request.extensions_mut().insert(KeyId(key_id.clone()));
+    request
+        .extensions_mut()
+        .insert(KeyId(verified.key_id.clone()));
 
     let response = next.run(request).await;
     measure_and_meter(
         auth.metering.as_ref(),
-        &key_id,
+        &verified.key_id,
+        &verified.plan,
         &method,
         path,
         response,
@@ -149,6 +154,7 @@ fn unauthorized() -> Response {
 async fn measure_and_meter(
     metering: &Metering,
     key_id: &str,
+    plan: &str,
     method: &str,
     path: String,
     response: Response,
@@ -180,7 +186,7 @@ async fn measure_and_meter(
         },
     };
 
-    let record = metering.build(key_id, method, &path, status, response_bytes, started);
+    let record = metering.build(key_id, plan, method, &path, status, response_bytes, started);
     // Appended, not propagated: metering is accounting, and failing a served
     // read-only query because the log was momentarily unwritable would trade a
     // correct answer for a correct metric. `append` reports its own failures.
@@ -225,7 +231,7 @@ mod tests {
         ) else {
             return Err(ApiError::Unauthorized);
         };
-        auth.keys.verify(key_id, secret)
+        auth.keys.verify(key_id, secret).map(|verified| verified.key_id)
     }
 
     #[test]
@@ -329,6 +335,7 @@ mod tests {
             .block_on(measure_and_meter(
                 auth.metering.as_ref(),
                 "agent",
+                "self-hosted",
                 "GET",
                 "/v1/graphs/x/stats".to_string(),
                 response,
@@ -338,6 +345,7 @@ mod tests {
         let log = std::fs::read_to_string(dir.path().join("metering.log")).unwrap();
         let record: serde_json::Value = serde_json::from_str(log.trim()).unwrap();
         assert_eq!(record["key_id"], "agent");
+        assert_eq!(record["plan"], "self-hosted");
         assert_eq!(record["method"], "GET");
         assert_eq!(record["path"], "/v1/graphs/x/stats");
         assert_eq!(record["status"], 200);

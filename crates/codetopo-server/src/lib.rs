@@ -10,6 +10,7 @@ pub mod error;
 pub mod handlers;
 pub mod keys;
 pub mod metering;
+pub mod tenancy;
 
 pub use handlers::{router, AppState};
 
@@ -23,7 +24,8 @@ pub fn app(
     config: std::sync::Arc<config::Config>,
     keys: std::sync::Arc<keys::KeyStore>,
     metering: std::sync::Arc<metering::Metering>,
+    tenancy: std::sync::Arc<tenancy::Tenancy>,
 ) -> axum::Router {
     let auth = std::sync::Arc::new(auth::AuthMetering::new(keys, metering));
-    auth::metered(router(AppState::new(config)), auth)
+    auth::metered(router(AppState::new(config, tenancy)), auth)
 }
