@@ -9,6 +9,13 @@
 //! metering is a server-side accounting concern, and an agent learns its own
 //! usage from the status code and the record count, not from a usage header.
 //!
+//! Each record carries the key's `plan` (paid-path plan S1), which is what
+//! makes the log readable as billing input: a key's monthly counters are
+//! read straight off the file — count its records in the month, with
+//! `POST /v1/index` lines as index operations and the rest as queries —
+//! and the plan attributes them. Aggregation and quota enforcement are
+//! later steps; the fields they need are recorded from here on.
+//!
 //! ## Deviation from the design
 //!
 //! The design places metering at the request boundary so that *every* request
@@ -33,6 +40,11 @@ pub struct Record {
     pub ts: String,
     /// Authenticated key this request was attributed to. Never the secret.
     pub key_id: String,
+    /// Plan of the key that made the request, as recorded in the key
+    /// store at verification time. Records written before plans existed
+    /// have no `plan` line in the file; they read back as an empty string.
+    #[serde(default)]
+    pub plan: String,
     /// HTTP method as sent.
     pub method: String,
     /// Request path as sent, without the query string (query parameters are
@@ -99,9 +111,14 @@ impl Metering {
     }
 
     /// Builds a record with a freshly computed timestamp and duration.
+    ///
+    /// One parameter per record field: the record *is* the parameter list,
+    /// and a parameter struct would only rename the same eight values.
+    #[allow(clippy::too_many_arguments)]
     pub fn build(
         &self,
         key_id: &str,
+        plan: &str,
         method: &str,
         path: &str,
         status: u16,
@@ -111,6 +128,7 @@ impl Metering {
         Record {
             ts: now_rfc3339_millis(started),
             key_id: key_id.to_string(),
+            plan: plan.to_string(),
             method: method.to_string(),
             path: path.to_string(),
             status,
@@ -173,6 +191,7 @@ mod tests {
         Record {
             ts: "2026-09-27T04:35:12.345Z".to_string(),
             key_id: key_id.to_string(),
+            plan: "self-hosted".to_string(),
             method: "GET".to_string(),
             path: "/v1/graphs/x/stats".to_string(),
             status,
@@ -251,9 +270,10 @@ mod tests {
     fn build_populates_every_field() {
         let dir = tempfile::tempdir().unwrap();
         let started = UNIX_EPOCH + Duration::from_secs(1_790_483_712);
-        let built = meter(&dir).build("agent", "POST", "/v1/index", 201, 42, started);
+        let built = meter(&dir).build("agent", "hosted", "POST", "/v1/index", 201, 42, started);
         assert_eq!(built.ts, "2026-09-27T04:35:12.000Z");
         assert_eq!(built.key_id, "agent");
+        assert_eq!(built.plan, "hosted");
         assert_eq!(built.method, "POST");
         assert_eq!(built.path, "/v1/index");
         assert_eq!(built.status, 201);
@@ -266,7 +286,7 @@ mod tests {
     #[test]
     fn build_measures_a_non_zero_duration() {
         let dir = tempfile::tempdir().unwrap();
-        let built = meter(&dir).build("agent", "GET", "/v1/x", 200, 0, SystemTime::now());
+        let built = meter(&dir).build("agent", "hosted", "GET", "/v1/x", 200, 0, SystemTime::now());
         // A real request cannot be served in under a millisecond, but a coarse
         // clock must not be able to produce a *negative* or absent one either.
         assert!(
@@ -324,8 +344,10 @@ mod tests {
         assert_eq!(parsed, original);
     }
 
-    /// The log is JSON Lines, so a line must be exactly the seven documented
+    /// The log is JSON Lines, so a line must be exactly the eight documented
     /// fields — a new field would silently change the format the doc promises.
+    /// (`plan` joined the set in paid-path S1, deliberately, with this test
+    /// and the module doc updated in the same change.)
     #[test]
     fn line_has_exactly_the_documented_fields() {
         let line = serde_json::to_string(&record("agent", 200)).unwrap();
@@ -344,11 +366,63 @@ mod tests {
                 "key_id",
                 "method",
                 "path",
+                "plan",
                 "response_bytes",
                 "status",
                 "ts"
             ]
         );
+    }
+
+    /// A line written before plans existed (no `plan` field) still parses,
+    /// with an empty plan: rotating the log must never make history
+    /// unreadable the day the format grows a field.
+    #[test]
+    fn lines_without_a_plan_still_parse() {
+        let legacy = r#"{"ts":"2026-09-27T04:35:12.345Z","key_id":"agent","method":"GET","path":"/v1/graphs/x/stats","status":200,"response_bytes":12,"duration_ms":7}"#;
+        let parsed: Record = serde_json::from_str(legacy).expect("legacy line parses");
+        assert_eq!(parsed.plan, "");
+        assert_eq!(parsed.key_id, "agent");
+    }
+
+    /// The monthly counters the billing steps need are read off the log
+    /// itself: count a key's records in a month, splitting index
+    /// operations (`POST /v1/index`) from queries. This test is the
+    /// contract — if a future field change breaks it, the aggregation
+    /// breaks, not just a format.
+    #[test]
+    fn monthly_counters_are_readable_from_the_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let meter = meter(&dir);
+        // September 2026 and October 2026 starts, as `started` instants.
+        let september = UNIX_EPOCH + Duration::from_secs(1_788_595_200);
+        let october = UNIX_EPOCH + Duration::from_secs(1_791_187_200);
+        for (started, method, path) in [
+            (september, "POST", "/v1/index"),
+            (september, "GET", "/v1/graphs/x/stats"),
+            (september, "GET", "/v1/graphs/x/verify"),
+            (october, "GET", "/v1/graphs/x/stats"),
+        ] {
+            meter.append(&meter.build("agent", "hosted", method, path, 200, 1, started));
+        }
+
+        let contents = std::fs::read_to_string(meter.path()).unwrap();
+        let mut september_queries = 0;
+        let mut september_indexes = 0;
+        let mut october_queries = 0;
+        for line in contents.lines() {
+            let record: Record = serde_json::from_str(line).expect("line parses");
+            assert_eq!(record.plan, "hosted");
+            match (&record.ts[..7], record.method.as_str(), record.path.as_str()) {
+                ("2026-09", "POST", "/v1/index") => september_indexes += 1,
+                ("2026-09", _, _) => september_queries += 1,
+                ("2026-10", _, _) => october_queries += 1,
+                other => panic!("unexpected record month: {other:?}"),
+            }
+        }
+        assert_eq!(september_indexes, 1);
+        assert_eq!(september_queries, 2);
+        assert_eq!(october_queries, 1);
     }
 
     /// A `path` is recorded without a query string, so the log cannot be flooded
@@ -358,6 +432,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let built = meter(&dir).build(
             "agent",
+            "hosted",
             "GET",
             "/v1/graphs/x/stats",
             200,

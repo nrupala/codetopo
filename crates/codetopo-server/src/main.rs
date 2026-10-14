@@ -4,22 +4,49 @@
 
 //! `codetopo-server` entry point.
 //!
-//! Startup is deliberately fail-fast: a missing or empty keys file, an
+//! Startup is deliberately fail-fast: no usable key in the key store, an
 //! unparseable bind address, or a data dir that cannot be created all abort
 //! before the listener is bound. Serving an API that cannot authenticate, or
 //! that would attribute every request to nobody, is worse than not serving.
+//!
+//! ## The admin path is a subcommand, not an endpoint
+//!
+//! Key administration (`keys issue|rotate|revoke|list`) runs as a CLI
+//! subcommand against the same key store file the server reads. The
+//! alternative — an HTTP admin endpoint — would add the network surface
+//! this server deliberately does not have (there is no unauthenticated
+//! route, not even health): a second listener, a second credential, and
+//! a remotely reachable way to mint keys. A subcommand needs shell
+//! access to the host, which is already the trust boundary for the data
+//! dir itself, and the store is read on every request, so changes take
+//! effect on the running server with no restart and no signalling.
 
 use std::sync::Arc;
+use std::time::{Duration, UNIX_EPOCH};
 
 use tokio::net::TcpListener;
 
 use codetopo_server::config::Config;
 use codetopo_server::error::ApiError;
-use codetopo_server::metering::Metering;
+use codetopo_server::keys::{KeyStore, DEFAULT_PLAN};
+use codetopo_server::metering::{now_rfc3339_millis, Metering};
 
-#[tokio::main]
-async fn main() {
-    if let Err(err) = run().await {
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("keys") {
+        std::process::exit(match admin_keys(&args[2..]) {
+            Ok(()) => 0,
+            Err(err) => {
+                eprintln!("codetopo-server keys: {err}");
+                1
+            }
+        });
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    if let Err(err) = runtime.block_on(run()) {
         eprintln!("codetopo-server: {err}");
         std::process::exit(1);
     }
@@ -27,19 +54,21 @@ async fn main() {
 
 async fn run() -> Result<(), ApiError> {
     let config = Config::from_env()?;
-    let keys = Arc::new(config.prepare().await?);
+    let (keys, tenancy) = config.prepare().await?;
+    let keys = Arc::new(keys);
+    let tenancy = Arc::new(tenancy);
     let metering = Arc::new(Metering::new(&config.metering_log));
 
     let listener = TcpListener::bind(config.bind)
         .await
         .map_err(|err| ApiError::internal(format!("cannot bind {}: {err}", config.bind)))?;
 
-    let app = codetopo_server::app(Arc::new(config.clone()), keys, metering);
+    let app = codetopo_server::app(Arc::new(config.clone()), keys, metering, tenancy);
     eprintln!(
-        "codetopo-server: listening on http://{} (data dir {}, keys {}, metering {})",
+        "codetopo-server: listening on http://{} (data dir {}, key store {}, metering {})",
         config.bind,
         config.data_dir.display(),
-        config.keys_file.display(),
+        config.keys_db_path().display(),
         config.metering_log.display(),
     );
 
@@ -48,6 +77,90 @@ async fn run() -> Result<(), ApiError> {
         .map_err(|err| ApiError::internal(format!("server stopped: {err}")))?;
 
     Ok(())
+}
+
+const KEYS_USAGE: &str = "usage: codetopo-server keys <issue|rotate|revoke|list> [key_id] [--plan <name>]";
+
+/// Administers keys in the runtime store, using the same environment
+/// configuration as the server so both always name the same data dir.
+///
+/// `issue` and `rotate` print the new credential once, as
+/// `key_id:secret` — the form a client pastes into its bearer token —
+/// because the store keeps only a hash and the secret cannot be shown
+/// again. `list` never prints a secret or a hash.
+fn admin_keys(args: &[String]) -> Result<(), ApiError> {
+    let config = Config::from_env()?;
+    std::fs::create_dir_all(&config.data_dir).map_err(|err| {
+        ApiError::Internal(format!(
+            "cannot create data dir {}: {err}",
+            config.data_dir.display()
+        ))
+    })?;
+    let keys = KeyStore::open(&config.keys_db_path())?;
+    // Same bootstrap as the server: a data dir that only ever had the
+    // legacy flat file imports it first, so `keys list` shows the keys
+    // the server would serve with.
+    if keys.active_len() == 0 && config.keys_file.is_file() {
+        keys.import_legacy_file(&config.keys_file)?;
+    }
+
+    let command = args.first().map(String::as_str);
+    let key_id = args.get(1).map(String::as_str);
+    match (command, key_id) {
+        (Some("issue"), Some(key_id)) => {
+            let secret = keys.issue(key_id, plan_arg(args))?;
+            println!("{key_id}:{secret}");
+        }
+        (Some("rotate"), Some(key_id)) => {
+            let secret = keys.rotate(key_id)?;
+            println!("{key_id}:{secret}");
+        }
+        (Some("revoke"), Some(key_id)) => {
+            keys.revoke(key_id)?;
+            println!("revoked {key_id}");
+        }
+        (Some("list"), _) => {
+            for summary in keys.list()? {
+                let rotated = summary
+                    .rotated_at
+                    .map(|secs| format!("\trotated {}", rfc3339(secs)))
+                    .unwrap_or_default();
+                println!(
+                    "{}\t{}\t{}\tcreated {}{}",
+                    summary.key_id,
+                    summary.plan,
+                    summary.status,
+                    rfc3339(summary.created_at),
+                    rotated
+                );
+            }
+        }
+        _ => return Err(ApiError::internal(KEYS_USAGE)),
+    }
+    Ok(())
+}
+
+/// The `--plan <name>` value in an admin command, or the default plan.
+fn plan_arg(args: &[String]) -> &str {
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--plan" {
+            if let Some(value) = iter.next() {
+                return value;
+            }
+        }
+    }
+    DEFAULT_PLAN
+}
+
+/// Formats Unix seconds with the metering log's RFC 3339 formatter.
+fn rfc3339(secs: i64) -> String {
+    let time = if secs >= 0 {
+        UNIX_EPOCH + Duration::from_secs(secs as u64)
+    } else {
+        UNIX_EPOCH
+    };
+    now_rfc3339_millis(time)
 }
 
 #[cfg(test)]
@@ -69,5 +182,20 @@ mod tests {
     fn keys_file_parses() {
         let keys = KeyStore::parse("agent:s3cr3t\n");
         assert_eq!(keys.len(), 1);
+    }
+
+    /// `--plan` is read from anywhere in the arguments; absent, the
+    /// default plan applies so the common command stays short.
+    #[test]
+    fn plan_arg_defaults_and_reads_the_flag() {
+        let plain: Vec<String> = vec!["issue".into(), "tenant-a".into()];
+        assert_eq!(plan_arg(&plain), DEFAULT_PLAN);
+        let flagged: Vec<String> = vec![
+            "issue".into(),
+            "tenant-a".into(),
+            "--plan".into(),
+            "trial".into(),
+        ];
+        assert_eq!(plan_arg(&flagged), "trial");
     }
 }
