@@ -86,6 +86,28 @@ paths:
         The `index_id` is a UUID v4 rather than a repository name, so
         re-indexing the same tree does not clobber the previous index and no
         customer directory layout leaks into a URL or a log line.
+
+        Three ingest modes name the tree. As JSON: `repo_path`, a path on
+        the server host, for `self-hosted` keys only; or `repo_url`, a
+        public HTTPS git URL, shallow-cloned into the index's ingest
+        workdir (`<data_dir>/ingest/<index_id>/`). As a raw body: an
+        archive upload (`.zip` or `.tar.gz`, declared by content type or
+        sniffed from the magic bytes), extracted into the same workdir —
+        entries whose paths escape the workdir and archives carrying
+        links are refused `invalid_body`, and the upload is capped at
+        64 MiB with the extracted tree capped at 512 MiB. An ingested
+        tree belongs to its index and is deleted when the index expires.
+      parameters:
+        - name: package
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |
+            Archive-upload mode only: the package name to record for the
+            index (an upload has no JSON body to carry one). Absent or
+            empty, the extracted top-level directory's name is used, or
+            `repo` when the archive carries files at its root.
       requestBody:
         required: true
         content:
@@ -97,6 +119,20 @@ paths:
                 summary: Only a path
                 value:
                   repo_path: /srv/customer/acme-api
+              url:
+                summary: A public repository URL
+                value:
+                  repo_url: https://github.com/nrupala/codetopo
+          application/zip:
+            schema:
+              type: string
+              format: binary
+            description: A `.zip` of the repository tree.
+          application/gzip:
+            schema:
+              type: string
+              format: binary
+            description: A `.tar.gz` of the repository tree.
       responses:
         '200':
           description: The repository was indexed.
@@ -108,11 +144,6 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '415':
-          description: |
-            The request body was not valid JSON with a JSON content type. The
-            library's own extractor rejects a body it cannot parse before any
-            handler runs, so this carries no `error` code of ours.
         '500':
           $ref: '#/components/responses/Internal'
   /v1/graphs/{id}/descendants:
@@ -652,6 +683,7 @@ components:
           enum:
             - invalid_body
             - invalid_repo_path
+            - invalid_repo_url
             - missing_param
             - invalid_param
             - unauthenticated
@@ -666,25 +698,41 @@ components:
     IndexRequest:
       type: object
       description: |
-        Body of `POST /v1/index`. Both fields are optional *at the type level*
-        so that a missing field is reported as `invalid_repo_path` naming it,
-        rather than as a generic JSON rejection arriving before any handler
-        code runs.
+        Body of `POST /v1/index` in JSON mode. All fields are optional *at
+        the type level* so that a missing field is reported in the API's own
+        error vocabulary naming it, rather than as a generic JSON rejection
+        arriving before any handler code runs. Exactly one of `repo_path`
+        and `repo_url` must be present: both is `invalid_body`, neither is
+        `invalid_repo_path`.
       properties:
         repo_path:
           type: string
           description: |
-            Absolute or relative path to the repository tree to index. Trimmed;
-            absent or empty is `invalid_repo_path`, as is a path that is not an
-            existing directory.
+            Absolute or relative path to the repository tree to index, on
+            the server host. Trimmed; absent or empty counts as not sent,
+            and a path that is not an existing directory is
+            `invalid_repo_path`. Available only to `self-hosted` keys —
+            naming host paths is the operator's own power, and a hosted
+            key asking for it is refused `invalid_repo_path`.
+        repo_url:
+          type: string
+          description: |
+            A public HTTPS git URL to shallow-clone into the index's
+            ingest workdir (`<data_dir>/ingest/<index_id>/`). Only
+            `https://` on port 443, no embedded credentials, and the host
+            must resolve exclusively to public addresses; private
+            repositories are refused, as is any URL failing those checks
+            (`invalid_repo_url`), and a clone that fails, times out past
+            120 s, or produces a tree past 512 MiB.
         package:
           type: string
-          default: unknown
           description: |
-            Package name recorded for the index, recorded on the `package` node
-            at the graph root. Trimmed; absent or empty becomes `unknown`,
-            which keeps the field populated — a `package` node with an empty
-            name would be a lie.
+            Package name recorded for the index, recorded on the `package`
+            node at the graph root. Trimmed; absent or empty falls back to
+            a mode-specific default (the repository directory's file stem
+            for `repo_path`, the URL's last path segment minus `.git` for
+            `repo_url`), which keeps the field populated — a `package`
+            node with an empty name would be a lie.
     IndexResponse:
       type: object
       description: |
