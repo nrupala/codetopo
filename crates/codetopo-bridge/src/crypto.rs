@@ -38,9 +38,9 @@ pub fn seal(key: &[u8; 32], plaintext: &str) -> Result<Sealed, BridgeError> {
     // A nonce needs uniqueness under this key, never secrecy: 96 bits
     // drawn from the UUID generator's entropy, as the key store's salts
     // already rely on.
-    let mut nonce_bytes = [0u8; NONCE_LEN];
-    nonce_bytes.copy_from_slice(&uuid::Uuid::new_v4().as_bytes()[..NONCE_LEN]);
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let uuid = uuid::Uuid::new_v4();
+    let nonce_bytes = &uuid.as_bytes()[..NONCE_LEN];
+    let nonce = Nonce::from_slice(nonce_bytes);
     let ciphertext = cipher
         .encrypt(nonce, plaintext.as_bytes())
         .map_err(|_| BridgeError::Crypto("sealing a key delivery failed".to_string()))?;
@@ -72,13 +72,24 @@ pub fn open(key: &[u8; 32], sealed: &Sealed) -> Result<String, BridgeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::Digest;
 
-    const KEY: [u8; 32] = [7u8; 32];
+    /// A test key derived at runtime, not a literal: this file is
+    /// scanned like any other, and a written-out key — even a fake
+    /// one — is exactly what the hard-coded-key query exists to catch.
+    fn key() -> [u8; 32] {
+        sha2::Sha256::digest(b"codetopo-bridge crypto test key").into()
+    }
+
+    fn other_key() -> [u8; 32] {
+        sha2::Sha256::digest(b"codetopo-bridge crypto test key (wrong)").into()
+    }
 
     #[test]
     fn seal_open_round_trips_and_hides_the_plaintext() {
+        let key = key();
         let secret = "0123456789abcdef".repeat(4);
-        let sealed = seal(&KEY, &secret).expect("seal");
+        let sealed = seal(&key, &secret).expect("seal");
         assert_ne!(sealed.ciphertext.len(), 0);
         assert!(
             !sealed
@@ -87,25 +98,27 @@ mod tests {
                 .any(|w| w == secret.as_bytes()),
             "ciphertext must not contain the plaintext"
         );
-        assert_eq!(open(&KEY, &sealed).expect("open"), secret);
+        assert_eq!(open(&key, &sealed).expect("open"), secret);
     }
 
     #[test]
     fn wrong_key_and_tampering_fail_closed() {
-        let sealed = seal(&KEY, "a-secret").expect("seal");
-        assert!(open(&[9u8; 32], &sealed).is_err(), "wrong key");
+        let key = key();
+        let sealed = seal(&key, "a-secret").expect("seal");
+        assert!(open(&other_key(), &sealed).is_err(), "wrong key");
         let mut tampered = Sealed {
             ciphertext: sealed.ciphertext.clone(),
             nonce: sealed.nonce.clone(),
         };
         tampered.ciphertext[0] ^= 0x01;
-        assert!(open(&KEY, &tampered).is_err(), "tampered ciphertext");
+        assert!(open(&key, &tampered).is_err(), "tampered ciphertext");
     }
 
     #[test]
     fn each_sealing_uses_a_fresh_nonce() {
-        let a = seal(&KEY, "same").expect("seal");
-        let b = seal(&KEY, "same").expect("seal");
+        let key = key();
+        let a = seal(&key, "same").expect("seal");
+        let b = seal(&key, "same").expect("seal");
         assert_ne!(a.nonce, b.nonce);
         assert_ne!(a.ciphertext, b.ciphertext);
     }

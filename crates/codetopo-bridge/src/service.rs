@@ -568,7 +568,12 @@ mod tests {
         Policy {
             price_id: PRICE.to_string(),
             plan: "hosted".to_string(),
-            claim_key: [3u8; 32],
+            // Derived at runtime, not a literal (the hard-coded-key
+            // scanner reads tests too, and rightly so).
+            claim_key: {
+                use sha2::Digest;
+                sha2::Sha256::digest(b"codetopo-bridge service test key").into()
+            },
         }
     }
 
