@@ -49,6 +49,7 @@ use crate::config::Config;
 use crate::error::ApiError;
 use crate::ingest;
 use crate::keys::now_unix_secs;
+use crate::limits::{plan_limits, Envelope};
 use crate::tenancy::Tenancy;
 
 /// Default `limit` for closure queries, matching the CLI's `--limit` default.
@@ -66,11 +67,14 @@ const MAX_LIMIT: usize = 1000;
 /// log are owned by the auth layer, which is applied around the router rather
 /// than inside it, so a handler physically cannot reach a secret. Tenancy is
 /// different — a handler *must* consult it before touching an index — and it
-/// carries no secrets, only ownership records.
+/// carries no secrets, only ownership records. The [`Envelope`] is the
+/// abuse-envelope state of paid-path S3: the query routes' concurrency cap
+/// and per-key index-operation permits (see [`crate::limits`]).
 #[derive(Debug, Clone)]
 pub struct AppState {
     config: Arc<Config>,
     tenancy: Arc<Tenancy>,
+    envelope: Arc<Envelope>,
 }
 
 impl AppState {
@@ -79,9 +83,14 @@ impl AppState {
     /// Takes the `Arc`s the process already holds rather than values, so
     /// the state and the configuration `main` logs at startup are provably
     /// the same values and building a router in a test does not require
-    /// cloning either.
+    /// cloning either. The envelope is process state, not configuration,
+    /// so it is created here rather than passed in.
     pub fn new(config: Arc<Config>, tenancy: Arc<Tenancy>) -> Self {
-        AppState { config, tenancy }
+        AppState {
+            config,
+            tenancy,
+            envelope: Arc::new(Envelope::new()),
+        }
     }
 
     /// Database path for one index id (§6: `<data_dir>/<id>.db`).
@@ -129,8 +138,13 @@ fn enforce_tenancy(state: &AppState, index_id: &str, key: &KeyId) -> Result<(), 
 /// inserts — serving this router without it answers `500` on that route
 /// rather than skipping the tenancy and plan checks.
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/v1/index", post(index))
+    // The query routes sit under the envelope middleware (global
+    // concurrency cap + the caller's plan timeout, paid-path S3);
+    // index creation does not — it has its own per-key permit and
+    // ingest bounds inside the handler, and a creation's blocking
+    // work must never be abandoned by a timer (see `index`).
+    let envelope = state.envelope.clone();
+    let queries = Router::new()
         .route("/v1/graphs/:id/descendants", get(descendants))
         .route("/v1/graphs/:id/ancestors", get(ancestors))
         .route("/v1/graphs/:id/blast-radius", get(blast_radius))
@@ -142,6 +156,13 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/graphs/:id/symbol", get(symbol))
         .route("/v1/graphs/:id/search", get(search))
         .route("/v1/schema", get(schema))
+        .route_layer(axum::middleware::from_fn_with_state(
+            envelope,
+            crate::limits::query_envelope,
+        ));
+    Router::new()
+        .route("/v1/index", post(index))
+        .merge(queries)
         .with_state(state)
 }
 
@@ -232,6 +253,17 @@ async fn read_body(request: Request, limit: usize, failure: &str) -> Result<axum
 /// deletes the workdir with the database, and a failed ingest or index
 /// removes the workdir before the error is answered — a partial tree is
 /// never left behind.
+///
+/// ## Limits (paid-path S3, gap G4)
+///
+/// The caller's plan ([`crate::limits`]) bounds this route four ways,
+/// all refused `429` before any ingest work is spent on them: one
+/// index operation at a time per key (the permit is held until the
+/// ownership record is written, so the next check is exact), an
+/// active-index quota counted from the tenancy store, the plan's
+/// ingest caps on the clone/upload itself, and a per-index file cap
+/// counted over the resolved tree before indexing starts — a tree
+/// past the cap leaves nothing behind, like any other failed ingest.
 async fn index(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
@@ -258,6 +290,27 @@ async fn index(
     // into a URL or a log line.
     let index_id = uuid::Uuid::new_v4().to_string();
     let db = state.db_path(&index_id);
+
+    // The plan envelope (S3): this key's limits, the per-key index
+    // permit, and its active-index quota — all before mode resolution,
+    // so a refused creation costs no clone, no upload read, no walk.
+    let limits = plan_limits(plan.as_str());
+    let _index_permit = match limits.max_concurrent_index_ops {
+        Some(max_ops) => match state.envelope.try_acquire_index_op(key.as_str(), max_ops) {
+            Some(permit) => Some(permit),
+            None => return Err(ApiError::index_concurrency(plan.as_str(), max_ops)),
+        },
+        None => None,
+    };
+    if let Some(max_active) = limits.max_active_indexes {
+        let current = state
+            .tenancy
+            .count_active_for_owner(key.as_str(), now_unix_secs())?;
+        if current >= max_active {
+            return Err(ApiError::index_quota(plan.as_str(), max_active, current));
+        }
+    }
+    let caps = limits.ingest;
 
     // Resolve the three modes to the tree to walk, the package name to
     // record, and the workdir this request owns (hosted modes only —
@@ -302,22 +355,24 @@ async fn index(
                 (repo, package, None)
             }
             (None, Some(raw_url)) => {
-                let url = ingest::validate_repo_url(&raw_url).await?;
+                let validated = ingest::validate_repo_url(&raw_url).await?;
                 let workdir = state.config.index_workdir_path(&index_id);
                 let clone_dir = workdir.clone();
-                let clone_url = url.clone();
-                tokio::task::spawn_blocking(move || ingest::clone_into(&clone_url, &clone_dir))
-                    .await
-                    .map_err(|err| ApiError::internal(format!("clone task failed: {err}")))??;
+                let clone_validated = validated.clone();
+                tokio::task::spawn_blocking(move || {
+                    ingest::clone_into(&clone_validated, &clone_dir, caps)
+                })
+                .await
+                .map_err(|err| ApiError::internal(format!("clone task failed: {err}")))??;
                 let package =
-                    non_empty(body.package).unwrap_or_else(|| ingest::package_name_for_url(&url));
+                    non_empty(body.package).unwrap_or_else(|| validated.package_name());
                 (workdir.clone(), package, Some(workdir))
             }
         }
     } else {
         let bytes = read_body(
             request,
-            ingest::MAX_UPLOAD_BYTES,
+            caps.max_upload_bytes,
             "archive body could not be read or exceeds the upload limit",
         )
         .await?;
@@ -329,7 +384,7 @@ async fn index(
         let workdir = state.config.index_workdir_path(&index_id);
         let extract_dir = workdir.clone();
         let root = tokio::task::spawn_blocking(move || {
-            ingest::extract_into(kind, &bytes, &extract_dir)
+            ingest::extract_into(kind, &bytes, &extract_dir, caps)
         })
         .await
         .map_err(|err| ApiError::internal(format!("extract task failed: {err}")))??;
@@ -343,12 +398,37 @@ async fn index(
         (root, package, Some(workdir))
     };
 
+    // The per-index file cap (S3): counted over the resolved tree
+    // before indexing starts, with the walk stopping just past the
+    // cap. Counting first is what makes the refusal clean — no
+    // extraction is paid for and no partial index exists to clean
+    // up; the workdir removal is the same discipline every failed
+    // ingest follows.
+    if let Some(max_files) = limits.max_files_per_index {
+        let count_root = repo.clone();
+        let counted = tokio::task::spawn_blocking(move || {
+            ingest::count_tree_files(&count_root, max_files as u64 + 1)
+        })
+        .await
+        .map_err(|err| ApiError::internal(format!("file count task failed: {err}")))?;
+        if counted > max_files as u64 {
+            if let Some(workdir) = &workdir {
+                let _ = std::fs::remove_dir_all(workdir);
+            }
+            return Err(ApiError::file_quota(plan.as_str(), max_files));
+        }
+    }
+
     let report = tokio::task::spawn_blocking(move || index_repo(&repo, &db, &package, None, None))
         .await
         .map_err(|err| ApiError::internal(format!("index task failed: {err}")))?;
     let report = match report {
         Ok(report) => report,
         Err(err) => {
+            // A failed index leaves nothing behind: not the workdir,
+            // and not a partially written database — an unrecorded
+            // database file would read as a legacy index to any key.
+            let _ = std::fs::remove_file(state.db_path(&index_id));
             if let Some(workdir) = &workdir {
                 let _ = std::fs::remove_dir_all(workdir);
             }

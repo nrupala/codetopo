@@ -10,6 +10,7 @@ pub mod error;
 pub mod handlers;
 pub mod ingest;
 pub mod keys;
+pub mod limits;
 pub mod metering;
 pub mod tenancy;
 

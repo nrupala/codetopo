@@ -146,6 +146,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/graphs/{id}/descendants:
     get:
       tags: [query]
@@ -171,6 +173,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/graphs/{id}/ancestors:
     get:
       tags: [query]
@@ -196,6 +202,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/graphs/{id}/blast-radius:
     get:
       tags: [query]
@@ -222,6 +232,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/graphs/{id}/path:
     get:
       tags: [query]
@@ -270,6 +284,10 @@ paths:
                     message: no path from 'a::f' to 'b::g'
         '500':
           $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/graphs/{id}/stats:
     get:
       tags: [query]
@@ -312,6 +330,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/graphs/{id}/verify:
     get:
       tags: [integrity]
@@ -340,6 +362,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/graphs/{id}/snapshot:
     get:
       tags: [integrity]
@@ -368,6 +394,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/graphs/{id}/neighborhood:
     get:
       tags: [query]
@@ -397,6 +427,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/graphs/{id}/symbol:
     get:
       tags: [query]
@@ -422,6 +456,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/graphs/{id}/search:
     get:
       tags: [query]
@@ -450,6 +488,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/schema:
     get:
       tags: [query]
@@ -471,6 +513,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
 components:
   securitySchemes:
     bearerAuth:
@@ -667,6 +713,43 @@ components:
           example:
             error: internal
             message: 'index 3f2b1c84: store error: database is locked'
+    TooManyRequests:
+      description: |
+        A limit of the caller's plan refused the request (paid-path S3).
+        The code names which: `index_quota_exceeded` (the key already
+        holds its active-index limit), `query_quota_exceeded` (the
+        month's query allowance is used; the month is the UTC calendar
+        month and the message names it), `file_quota_exceeded` (the
+        tree holds more files than the per-index cap), or
+        `index_concurrency_exceeded` (an index operation is already
+        running for the key). Limits are per plan: `self-hosted` keys
+        carry none.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            index_quota:
+              value:
+                error: index_quota_exceeded
+                message: plan 'hosted' allows at most 25 active indexes; this key already has 25
+            query_quota:
+              value:
+                error: query_quota_exceeded
+                message: plan 'hosted' allows 10000 queries per month; this key has used 10000 in 2026-10 (UTC)
+    RequestTimeout:
+      description: |
+        The query did not finish within the caller's plan's per-request
+        time limit (30s on the hosted plan). The work is abandoned, not
+        queued: retrying a smaller query (a lower `limit`, a shallower
+        `depth`) is the intended response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: request_timeout
+            message: the query did not finish within 30s, the per-request limit of plan 'hosted'
   schemas:
     Error:
       type: object

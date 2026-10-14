@@ -30,9 +30,12 @@
 //!   are counted as they are written, not trusted from headers, so a
 //!   lying header cannot smuggle an expansion bomb past the cap.
 //!
-//! The caps below are interim constants, named so the abuse-envelope
-//! step (plan S3) can turn them into per-plan policy without hunting
-//! literals. A failed ingest removes its workdir: a partial tree is
+//! The caps below are the hosted plan's values, named so the
+//! abuse-envelope step (plan S3) could turn them into per-plan
+//! policy without hunting literals — which it did: they are now the
+//! `HOSTED` row of [`IngestCaps`], resolved per key by
+//! [`crate::limits`], and every function here takes its caps as a
+//! parameter. A failed ingest removes its workdir: a partial tree is
 //! never left behind for a later sweep to mistake for a live index.
 
 use std::io::{Cursor, Read, Write};
@@ -61,6 +64,44 @@ pub const MAX_ARCHIVE_ENTRIES: usize = 100_000;
 /// killed, not waited on: ingest is synchronous from the client's side
 /// of the request, and an unbounded clone is an unbounded request.
 pub const CLONE_TIMEOUT_SECS: u64 = 120;
+
+/// The ingest caps one plan resolves to, passed into every function
+/// here so no function reads a global: a hosted key's clone, upload,
+/// and extraction are bounded by these numbers, and the operator's
+/// self-hosted keys resolve to [`IngestCaps::UNLIMITED`] instead —
+/// trusting the operator with their own box is the self-hosted
+/// plan's whole definition (see [`crate::limits`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IngestCaps {
+    /// Largest archive body accepted, in bytes.
+    pub max_upload_bytes: usize,
+    /// Largest tree an ingest may produce, in bytes.
+    pub max_tree_bytes: u64,
+    /// Most entries one archive may carry.
+    pub max_archive_entries: usize,
+    /// Wall-clock budget for one `git clone`.
+    pub clone_timeout: Duration,
+}
+
+impl IngestCaps {
+    /// The hosted plan's row: the named constants above.
+    pub const HOSTED: Self = IngestCaps {
+        max_upload_bytes: MAX_UPLOAD_BYTES,
+        max_tree_bytes: MAX_TREE_BYTES,
+        max_archive_entries: MAX_ARCHIVE_ENTRIES,
+        clone_timeout: Duration::from_secs(CLONE_TIMEOUT_SECS),
+    };
+
+    /// The self-hosted row: no cap binds. `Duration::MAX` is safe in
+    /// the clone loop, which compares elapsed time against the
+    /// budget and therefore never trips.
+    pub const UNLIMITED: Self = IngestCaps {
+        max_upload_bytes: usize::MAX,
+        max_tree_bytes: u64::MAX,
+        max_archive_entries: usize::MAX,
+        clone_timeout: Duration::MAX,
+    };
+}
 
 // ---------------------------------------------------------------------------
 // Repository URLs: validation, then clone
@@ -100,6 +141,52 @@ pub(crate) fn parse_repo_url(raw: &str) -> Result<Url, ApiError> {
     Ok(url)
 }
 
+/// One validated DNS answer the clone is pinned to: `git` will be
+/// told to connect the URL's host to exactly this address (see
+/// [`validate_repo_url`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvePin {
+    /// The host as it appears in the URL.
+    pub host: String,
+    /// One address validation approved for that host.
+    pub address: IpAddr,
+}
+
+/// A `repo_url` that passed validation, with the DNS answers it was
+/// approved against. The clone consumes this, never the raw string,
+/// so the checked URL and the connected addresses cannot drift
+/// apart between the two steps.
+#[derive(Debug, Clone)]
+pub struct ValidatedRepoUrl {
+    url: Url,
+    pins: Vec<ResolvePin>,
+}
+
+impl ValidatedRepoUrl {
+    /// The validated URL.
+    pub fn url(&self) -> &Url {
+        &self.url
+    }
+
+    /// The URL as a string, for the clone's argument array.
+    pub fn as_str(&self) -> &str {
+        self.url.as_str()
+    }
+
+    /// The resolution pins for the clone: one per validated address
+    /// of a domain host. Empty for an IP-literal host — the URL
+    /// already names the exact address, so there is no resolution
+    /// to pin.
+    pub fn pins(&self) -> &[ResolvePin] {
+        &self.pins
+    }
+
+    /// The default package name for this URL's repository.
+    pub fn package_name(&self) -> String {
+        package_name_for_url(&self.url)
+    }
+}
+
 /// Fully validates a `repo_url`, including where its host points.
 ///
 /// The SSRF guard: every address the host resolves to must be a public
@@ -108,23 +195,31 @@ pub(crate) fn parse_repo_url(raw: &str) -> Result<Url, ApiError> {
 /// accepting the public answers and letting `git` pick would race the
 /// refusal. IP-literal hosts are checked directly, with no lookup.
 ///
-/// **Residual limit, stated plainly:** this is a check-then-clone.
-/// `git` resolves the name again when it connects, and a hostile DNS
-/// answer could change between the two resolutions (rebinding). The
-/// check removes the honest-attacker and misconfiguration cases —
-/// pointing the server at itself or at the LAN by name or by literal —
-/// and the clone's refusal to follow redirects keeps the checked URL
-/// the connected URL. Closing the rebinding window entirely needs
-/// connect-time pinning, which `git`'s HTTPS transport does not offer;
-/// S3's envelope work owns any further hardening here.
-pub async fn validate_repo_url(raw: &str) -> Result<Url, ApiError> {
+/// **The rebinding window, and what S3 did about it.** Validation
+/// resolves the name; a clone that resolved it *again* could be
+/// handed different addresses the second time (DNS rebinding). The
+/// clone therefore does not resolve again: every validated address
+/// is passed to `git` as an `http.curloptResolve` pin (see
+/// [`run_git_clone`]), so libcurl connects the checked host to a
+/// checked address on port 443, with TLS still verifying the URL's
+/// hostname. Residuals, stated plainly: the pin is a `git` config
+/// key, and a `git` build old enough not to know it ignores it
+/// silently — on such a build the check-then-clone window stands
+/// (the option is present in git 2.43; the deployment should not run
+/// older). And the pin set is the answer at validation time: the
+/// clone runs seconds later in the same request, so staleness is
+/// bounded by that gap, and every address in the set was public when
+/// checked.
+pub async fn validate_repo_url(raw: &str) -> Result<ValidatedRepoUrl, ApiError> {
     let url = parse_repo_url(raw)?;
-    match url.host() {
+    let pins = match url.host() {
         Some(Host::Ipv4(ip)) => {
             require_public(IpAddr::V4(ip), url.host_str().unwrap_or(""))?;
+            Vec::new()
         }
         Some(Host::Ipv6(ip)) => {
             require_public(IpAddr::V6(ip), url.host_str().unwrap_or(""))?;
+            Vec::new()
         }
         Some(Host::Domain(domain)) => {
             let domain = domain.strip_suffix('.').unwrap_or(domain);
@@ -134,18 +229,30 @@ pub async fn validate_repo_url(raw: &str) -> Result<Url, ApiError> {
             let addresses = tokio::net::lookup_host((domain, 443))
                 .await
                 .map_err(|_| ApiError::invalid_repo_url("the host does not resolve"))?;
-            let mut seen_any = false;
+            // The pin's host is the URL's own host string, exactly
+            // as libcurl will extract it from the URL — a pin keyed
+            // on any other spelling (this lookup strips a trailing
+            // dot, for instance) would silently not match.
+            let url_host = url.host_str().unwrap_or(domain).to_string();
+            let mut pins: Vec<ResolvePin> = Vec::new();
             for address in addresses {
-                seen_any = true;
-                require_public(address.ip(), domain)?;
+                let ip = address.ip();
+                require_public(ip, domain)?;
+                if !pins.iter().any(|pin| pin.address == ip) {
+                    pins.push(ResolvePin {
+                        host: url_host.clone(),
+                        address: ip,
+                    });
+                }
             }
-            if !seen_any {
+            if pins.is_empty() {
                 return Err(ApiError::invalid_repo_url("the host does not resolve"));
             }
+            pins
         }
         None => return Err(ApiError::invalid_repo_url("the URL has no host")),
-    }
-    Ok(url)
+    };
+    Ok(ValidatedRepoUrl { url, pins })
 }
 
 fn require_public(ip: IpAddr, host: &str) -> Result<(), ApiError> {
@@ -219,18 +326,27 @@ pub(crate) fn package_name_for_url(url: &Url) -> String {
     }
 }
 
-/// Clones `url` into `workdir` (created here) and checks the tree
-/// against [`MAX_TREE_BYTES`]. On any failure the workdir is removed:
-/// a partial clone is not an index and must not linger as one.
-pub fn clone_into(url: &Url, workdir: &Path) -> Result<(), ApiError> {
-    let result = clone_into_inner(url, workdir);
+/// Clones a validated URL into `workdir` (created here) and checks
+/// the tree against the plan's byte cap. On any failure the workdir
+/// is removed: a partial clone is not an index and must not linger
+/// as one.
+pub fn clone_into(
+    validated: &ValidatedRepoUrl,
+    workdir: &Path,
+    caps: IngestCaps,
+) -> Result<(), ApiError> {
+    let result = clone_into_inner(validated, workdir, caps);
     if result.is_err() {
         let _ = std::fs::remove_dir_all(workdir);
     }
     result
 }
 
-fn clone_into_inner(url: &Url, workdir: &Path) -> Result<(), ApiError> {
+fn clone_into_inner(
+    validated: &ValidatedRepoUrl,
+    workdir: &Path,
+    caps: IngestCaps,
+) -> Result<(), ApiError> {
     std::fs::create_dir_all(workdir).map_err(|err| {
         ApiError::internal(format!(
             "cannot create ingest workdir {}: {err}",
@@ -238,17 +354,53 @@ fn clone_into_inner(url: &Url, workdir: &Path) -> Result<(), ApiError> {
         ))
     })?;
     run_git_clone(
-        url.as_str(),
+        validated.as_str(),
         workdir,
-        Duration::from_secs(CLONE_TIMEOUT_SECS),
+        caps.clone_timeout,
+        validated.pins(),
     )?;
-    let bytes = tree_bytes(workdir, MAX_TREE_BYTES);
-    if bytes > MAX_TREE_BYTES {
+    let bytes = tree_bytes(workdir, caps.max_tree_bytes);
+    if bytes > caps.max_tree_bytes {
         return Err(ApiError::invalid_repo_url(&format!(
-            "the cloned tree is {bytes} bytes, past the {MAX_TREE_BYTES}-byte ingest limit"
+            "the cloned tree is {bytes} bytes, past the {}-byte ingest limit",
+            caps.max_tree_bytes
         )));
     }
     Ok(())
+}
+
+/// The `git clone` argument array, factored out of the spawn so the
+/// pin wiring is testable without a network: one
+/// `http.curloptResolve` config per pin, in the `host:port:address`
+/// form libcurl's `CURLOPT_RESOLVE` takes. The port is 443 because
+/// validation admits no other.
+fn clone_args(url: &str, dest: &str, pins: &[ResolvePin]) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "-c".to_string(),
+        "http.followRedirects=false".to_string(),
+        "-c".to_string(),
+        "protocol.ext.allow=never".to_string(),
+    ];
+    for pin in pins {
+        args.push("-c".to_string());
+        args.push(format!(
+            "http.curloptResolve={}:443:{}",
+            pin.host, pin.address
+        ));
+    }
+    for arg in [
+        "clone",
+        "--depth",
+        "1",
+        "--single-branch",
+        "--no-recurse-submodules",
+        "--",
+        url,
+        dest,
+    ] {
+        args.push(arg.to_string());
+    }
+    args
 }
 
 /// The clone plumbing: runs `git clone` for an already-validated URL.
@@ -261,27 +413,21 @@ fn clone_into_inner(url: &Url, workdir: &Path) -> Result<(), ApiError> {
 /// or an option — `--` ends option parsing), no terminal prompt, no
 /// redirects, no submodule recursion, no LFS smudge (a clone-time
 /// network fetch to endpoints the repository chooses), the `ext::`
-/// transport disabled (it executes commands), and a kill past
-/// `timeout`.
-pub(crate) fn run_git_clone(url: &str, dest: &Path, timeout: Duration) -> Result<(), ApiError> {
+/// transport disabled (it executes commands), a kill past
+/// `timeout`, and the validation pins of the checked resolution
+/// (`http.curloptResolve` — see [`validate_repo_url`] for what that
+/// closes and what it cannot).
+pub(crate) fn run_git_clone(
+    url: &str,
+    dest: &Path,
+    timeout: Duration,
+    pins: &[ResolvePin],
+) -> Result<(), ApiError> {
     let dest_arg = dest
         .to_str()
         .ok_or_else(|| ApiError::internal("ingest workdir path is not valid UTF-8"))?;
     let mut child = Command::new("git")
-        .args([
-            "-c",
-            "http.followRedirects=false",
-            "-c",
-            "protocol.ext.allow=never",
-            "clone",
-            "--depth",
-            "1",
-            "--single-branch",
-            "--no-recurse-submodules",
-            "--",
-            url,
-            dest_arg,
-        ])
+        .args(clone_args(url, dest_arg, pins))
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_LFS_SKIP_SMUDGE", "1")
         .stdin(Stdio::null())
@@ -338,6 +484,50 @@ pub(crate) fn run_git_clone(url: &str, dest: &Path, timeout: Duration) -> Result
     Err(ApiError::invalid_repo_url(&format!(
         "git clone failed: {last_line}"
     )))
+}
+
+/// Directory names the file counter never descends into — the same
+/// skip set the repository walker applies in
+/// `codetopo_cli::index_repo` (VCS internals, build and dependency
+/// output, hidden directories), mirrored here so the count is the
+/// number of files a tree presents to the indexer, not the number
+/// that happen to sit on disk inside a `.git` the index would never
+/// read. If the walker's set changes, this must change with it.
+fn skipped_dir_name(name: &str) -> bool {
+    matches!(name, ".git" | "target" | "node_modules" | ".corpus") || name.starts_with('.')
+}
+
+/// Counts the regular files under `root` an index of this tree
+/// would be built from, symlinks not followed, directories in
+/// [`skipped_dir_name`] not entered. Stops as soon as the count
+/// reaches `stop_after` — the per-index file cap's check passes
+/// `limit + 1`, so a returned `limit + 1` means "more than the
+/// limit" and the walk never pays for an exact count of a tree it
+/// is about to refuse.
+pub fn count_tree_files(root: &Path, stop_after: u64) -> u64 {
+    let mut count: u64 = 0;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                if !skipped_dir_name(&entry.file_name().to_string_lossy()) {
+                    stack.push(entry.path());
+                }
+            } else if file_type.is_file() {
+                count += 1;
+                if count >= stop_after {
+                    return count;
+                }
+            }
+        }
+    }
+    count
 }
 
 /// Total bytes of regular files under `root`, symlinks not followed.
@@ -408,8 +598,13 @@ pub fn archive_kind(content_type: Option<&str>, bytes: &[u8]) -> Option<ArchiveK
 /// and it is a directory, that directory is the index root, so node
 /// paths match what a clone of the same repository produces. Files at
 /// the archive root index from the workdir itself.
-pub fn extract_into(kind: ArchiveKind, bytes: &[u8], workdir: &Path) -> Result<PathBuf, ApiError> {
-    let result = extract_into_inner(kind, bytes, workdir);
+pub fn extract_into(
+    kind: ArchiveKind,
+    bytes: &[u8],
+    workdir: &Path,
+    caps: IngestCaps,
+) -> Result<PathBuf, ApiError> {
+    let result = extract_into_inner(kind, bytes, workdir, caps);
     if result.is_err() {
         let _ = std::fs::remove_dir_all(workdir);
     }
@@ -420,6 +615,7 @@ fn extract_into_inner(
     kind: ArchiveKind,
     bytes: &[u8],
     workdir: &Path,
+    caps: IngestCaps,
 ) -> Result<PathBuf, ApiError> {
     std::fs::create_dir_all(workdir).map_err(|err| {
         ApiError::internal(format!(
@@ -428,9 +624,9 @@ fn extract_into_inner(
         ))
     })?;
     match kind {
-        ArchiveKind::Zip => extract_zip(bytes, workdir, MAX_ARCHIVE_ENTRIES, MAX_TREE_BYTES),
+        ArchiveKind::Zip => extract_zip(bytes, workdir, caps.max_archive_entries, caps.max_tree_bytes),
         ArchiveKind::TarGz => {
-            extract_tar_gz(bytes, workdir, MAX_ARCHIVE_ENTRIES, MAX_TREE_BYTES)
+            extract_tar_gz(bytes, workdir, caps.max_archive_entries, caps.max_tree_bytes)
         }
     }?;
     Ok(index_root(workdir))
@@ -465,13 +661,15 @@ fn enclosed_relative(path: &Path) -> Option<PathBuf> {
 }
 
 /// Copies `reader` into `file`, counting actual bytes against
-/// `budget`. Reading past the budget is the error, so a decompressed
-/// size that exceeds its declared size is caught by the same check as
-/// an honestly huge file.
+/// `budget` (the caller's remaining allowance of the `limit` total
+/// the error message names). Reading past the budget is the error,
+/// so a decompressed size that exceeds its declared size is caught
+/// by the same check as an honestly huge file.
 fn copy_capped(
     reader: &mut impl Read,
     file: &mut std::fs::File,
     budget: u64,
+    limit: u64,
 ) -> Result<u64, ApiError> {
     let mut written: u64 = 0;
     let mut buffer = [0u8; 64 * 1024];
@@ -485,7 +683,7 @@ fn copy_capped(
         written += read as u64;
         if written > budget {
             return Err(ApiError::invalid_body(&format!(
-                "archive expands past the {MAX_TREE_BYTES}-byte ingest limit"
+                "archive expands past the {limit}-byte ingest limit"
             )));
         }
         file.write_all(&buffer[..read])
@@ -545,7 +743,7 @@ fn extract_zip(
         let mut file = std::fs::File::create(&target).map_err(|err| {
             ApiError::internal(format!("cannot write extracted file: {err}"))
         })?;
-        total += copy_capped(&mut entry, &mut file, max_bytes - total)?;
+        total += copy_capped(&mut entry, &mut file, max_bytes - total, max_bytes)?;
     }
     Ok(())
 }
@@ -596,7 +794,7 @@ fn extract_tar_gz(
                 let mut file = std::fs::File::create(&target).map_err(|err| {
                     ApiError::internal(format!("cannot write extracted file: {err}"))
                 })?;
-                total += copy_capped(&mut entry, &mut file, max_bytes - total)?;
+                total += copy_capped(&mut entry, &mut file, max_bytes - total, max_bytes)?;
             }
             // Symlinks, hard links, devices, fifos: refused wholesale.
             // A link written by one entry is a path out of the root for
@@ -741,6 +939,88 @@ mod tests {
         assert_eq!(archive_kind(Some("text/plain"), b"hello"), None);
     }
 
+    #[test]
+    fn clone_args_pin_each_validated_address() {
+        let pins = vec![
+            ResolvePin {
+                host: "github.com".to_string(),
+                address: "140.82.121.3".parse().expect("ip"),
+            },
+            ResolvePin {
+                host: "github.com".to_string(),
+                address: "2606:50c0:8000::153".parse().expect("ip"),
+            },
+        ];
+        let args = clone_args("https://github.com/a/b", "/tmp/dest", &pins);
+        let resolve: Vec<&str> = args
+            .iter()
+            .map(String::as_str)
+            .filter(|arg| arg.starts_with("http.curloptResolve="))
+            .collect();
+        assert_eq!(
+            resolve,
+            [
+                "http.curloptResolve=github.com:443:140.82.121.3",
+                "http.curloptResolve=github.com:443:2606:50c0:8000::153",
+            ],
+            "one pin per validated address, host:443:address"
+        );
+        // The pins ride as `-c` config ahead of the subcommand, and
+        // the URL still cannot become an option (`--` precedes it).
+        let dashdash = args.iter().position(|arg| arg == "--").expect("-- present");
+        assert_eq!(args[dashdash + 1], "https://github.com/a/b");
+
+        let bare = clone_args("git://127.0.0.1:9418/served", "/tmp/dest", &[]);
+        assert!(
+            !bare.iter().any(|arg| arg.contains("curloptResolve")),
+            "no pins, no resolve config"
+        );
+    }
+
+    /// Validation is async (DNS), so the pin *contents* are checked
+    /// here only where no lookup is needed: an IP-literal host is
+    /// checked directly and carries no pins, and a domain's pins are
+    /// exercised end-to-end only by the clone of a public repository
+    /// — the local daemon tests drive the plumbing with `&[]`.
+    #[tokio::test]
+    async fn validated_literal_hosts_carry_no_pins() {
+        let err = validate_repo_url("https://127.0.0.1/repo.git")
+            .await
+            .expect_err("loopback literal refused before pins matter");
+        assert_eq!(err.code(), "invalid_repo_url");
+    }
+
+    #[test]
+    fn count_tree_files_counts_what_the_indexer_would_read() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path();
+        let write = |rel: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+            std::fs::write(path, b"x").expect("write");
+        };
+        write("src/lib.rs");
+        write("src/main.rs");
+        write("README.md");
+        write(".git/objects/pack/pack-1.idx");
+        write("node_modules/dep/index.js");
+        write("target/debug/build/output");
+        write(".hidden/secret.rs");
+        write(".github/workflows/ci.yml");
+
+        assert_eq!(
+            count_tree_files(root, u64::MAX),
+            3,
+            "only the three files outside the skipped directories count"
+        );
+        assert_eq!(
+            count_tree_files(root, 2),
+            2,
+            "the walk stops at stop_after instead of counting a refused tree exactly"
+        );
+        assert_eq!(count_tree_files(root, 1), 1);
+    }
+
     // -- archive fixtures, built in memory -------------------------------
 
     fn zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
@@ -775,7 +1055,7 @@ mod tests {
     fn extract(kind: ArchiveKind, bytes: &[u8]) -> (tempfile::TempDir, Result<PathBuf, ApiError>) {
         let dir = tempfile::tempdir().expect("temp dir");
         let workdir = dir.path().join("work");
-        let result = extract_into(kind, bytes, &workdir);
+        let result = extract_into(kind, bytes, &workdir, IngestCaps::HOSTED);
         (dir, result)
     }
 
@@ -979,7 +1259,7 @@ mod tests {
         let probe = dir.path().join("probe");
         let mut ready = false;
         for _ in 0..50 {
-            if run_git_clone(&url, &probe, Duration::from_secs(5)).is_ok() {
+            if run_git_clone(&url, &probe, Duration::from_secs(5), &[]).is_ok() {
                 let _ = std::fs::remove_dir_all(&probe);
                 ready = true;
                 break;
@@ -1000,7 +1280,7 @@ mod tests {
         let daemon = daemon_repo();
         let dir = tempfile::tempdir().expect("temp dir");
         let dest = dir.path().join("clone");
-        run_git_clone(&daemon.url, &dest, Duration::from_secs(30)).expect("clone succeeds");
+        run_git_clone(&daemon.url, &dest, Duration::from_secs(30), &[]).expect("clone succeeds");
         assert!(dest.join("src/lib.rs").is_file(), "the tree landed");
         let bytes = tree_bytes(&dest, MAX_TREE_BYTES);
         assert!(bytes > 0 && bytes < MAX_TREE_BYTES);
@@ -1015,6 +1295,7 @@ mod tests {
             &daemon.url.replace("/served", "/absent"),
             &dest,
             Duration::from_secs(10),
+            &[],
         )
         .expect_err("missing repo refused");
         assert_eq!(err.code(), "invalid_repo_url");
@@ -1041,6 +1322,7 @@ mod tests {
             &format!("git://127.0.0.1:{port}/served"),
             &dest,
             Duration::from_secs(1),
+            &[],
         )
         .expect_err("a silent peer times out");
         assert_eq!(err.code(), "invalid_repo_url");

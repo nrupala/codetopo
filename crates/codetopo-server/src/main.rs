@@ -22,14 +22,16 @@
 //! effect on the running server with no restart and no signalling.
 
 use std::sync::Arc;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::net::TcpListener;
 
 use codetopo_server::config::Config;
 use codetopo_server::error::ApiError;
 use codetopo_server::keys::{KeyStore, DEFAULT_PLAN};
-use codetopo_server::metering::{now_rfc3339_millis, Metering};
+use codetopo_server::limits::plan_limits;
+use codetopo_server::metering::{current_month, now_rfc3339_millis, Metering};
+use codetopo_server::tenancy::Tenancy;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -120,24 +122,57 @@ fn admin_keys(args: &[String]) -> Result<(), ApiError> {
             println!("revoked {key_id}");
         }
         (Some("list"), _) => {
+            // Usage beside the limits it is measured against
+            // (paid-path S3): the key's active indexes from the
+            // tenancy store and its metered queries for the current
+            // UTC month from the metering log — the same numbers the
+            // envelope enforces, so an operator reads the tenant's
+            // position exactly as the server computes it. This is the
+            // operator's window into the envelope; the HTTP surface
+            // deliberately gains no admin route for it (see the
+            // module docs on why administration is a subcommand).
+            let tenancy = Tenancy::open(&config.tenancy_db_path())?;
+            let metering = Metering::new(&config.metering_log);
+            let month = current_month();
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_secs() as i64)
+                .unwrap_or(0);
             for summary in keys.list()? {
                 let rotated = summary
                     .rotated_at
                     .map(|secs| format!("\trotated {}", rfc3339(secs)))
                     .unwrap_or_default();
+                let limits = plan_limits(&summary.plan);
+                let indexes = tenancy
+                    .count_active_for_owner(&summary.key_id, now)
+                    .unwrap_or(0);
+                let usage = metering.usage_in_month(&summary.key_id, &month);
                 println!(
-                    "{}\t{}\t{}\tcreated {}{}",
+                    "{}\t{}\t{}\tcreated {}{}\tindexes {} (limit {})\tqueries {} (limit {}, {month} UTC)",
                     summary.key_id,
                     summary.plan,
                     summary.status,
                     rfc3339(summary.created_at),
-                    rotated
+                    rotated,
+                    indexes,
+                    limit_text(limits.max_active_indexes),
+                    usage.queries,
+                    limit_text(limits.max_queries_per_month),
                 );
             }
         }
         _ => return Err(ApiError::internal(KEYS_USAGE)),
     }
     Ok(())
+}
+
+/// A plan limit as `keys list` prints it: the number, or
+/// `unlimited` when the plan carries none.
+fn limit_text<T: std::fmt::Display>(limit: Option<T>) -> String {
+    limit
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unlimited".to_string())
 }
 
 /// The `--plan <name>` value in an admin command, or the default plan.
