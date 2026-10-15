@@ -10,7 +10,10 @@
 //! * an index belongs to the key that created it — every query route
 //!   answers another key exactly as if the index did not exist;
 //! * a legacy index (a database file with no ownership record) stays
-//!   readable, so existing self-hosted data dirs are not stranded;
+//!   readable for a lone-key deployment, so existing self-hosted data
+//!   dirs are not stranded — and stops being any-key readable once a
+//!   second active key exists, unless the operator rules otherwise
+//!   (gate F-5);
 //! * an expired index is refused and its file is cleaned up;
 //! * keys can be issued, rotated, and revoked against the running
 //!   server's store with no restart, and metering lines carry the plan.
@@ -49,6 +52,21 @@ struct Harness {
 
 impl Harness {
     fn with_ttl(index_ttl_secs: Option<u64>) -> Self {
+        Self::build(index_ttl_secs, None, &[KEY_A, KEY_B])
+    }
+
+    /// A server over a chosen key set and ownerless-index ruling, for
+    /// the F-5 legacy tests: the default rule turns on how many keys
+    /// are active, and the operator flag overrides it.
+    fn with_ownerless(deny_ownerless_indexes: Option<bool>, key_pairs: &[(&str, &str)]) -> Self {
+        Self::build(None, deny_ownerless_indexes, key_pairs)
+    }
+
+    fn build(
+        index_ttl_secs: Option<u64>,
+        deny_ownerless_indexes: Option<bool>,
+        key_pairs: &[(&str, &str)],
+    ) -> Self {
         let dir = tempfile::tempdir().expect("temp dir");
         let config = Config {
             data_dir: dir.path().join("data"),
@@ -56,13 +74,15 @@ impl Harness {
             metering_log: dir.path().join("metering.log"),
             bind: "127.0.0.1:0".parse().expect("bind addr"),
             index_ttl_secs,
+            deny_ownerless_indexes,
         };
         std::fs::create_dir_all(&config.data_dir).expect("data dir");
 
-        let keys = Arc::new(KeyStore::parse(&format!(
-            "{}:{}\n{}:{}\n",
-            KEY_A.0, KEY_A.1, KEY_B.0, KEY_B.1
-        )));
+        let contents: String = key_pairs
+            .iter()
+            .map(|(key_id, secret)| format!("{key_id}:{secret}\n"))
+            .collect();
+        let keys = Arc::new(KeyStore::parse(&contents));
         let tenancy = Arc::new(
             Tenancy::open(&config.data_dir.join(codetopo_server::tenancy::STORE_FILE_NAME))
                 .expect("tenancy store"),
@@ -128,6 +148,30 @@ impl Harness {
             .await;
         assert_eq!(status, StatusCode::OK, "index failed: {body}");
         body["index_id"].as_str().expect("index_id").to_string()
+    }
+
+    /// Places an index database in the data dir with no ownership
+    /// record — the shape every pre-tenancy data dir has.
+    async fn place_legacy_index(&self, legacy_id: &str) {
+        let db = self.db(legacy_id);
+        let repo = fixture_repo();
+        tokio::task::spawn_blocking(move || {
+            codetopo_cli::index_repo(&repo, &db, "fixture", None, None).expect("index fixture")
+        })
+        .await
+        .expect("index task");
+    }
+
+    /// `GET stats` on a legacy index as `key`: the one request the
+    /// ownerless tests are all about.
+    async fn legacy_stats(&self, key: (&str, &str), legacy_id: &str) -> (StatusCode, Value) {
+        self.send_as(
+            key,
+            Method::GET,
+            &format!("/v1/graphs/{legacy_id}/stats"),
+            None,
+        )
+        .await
     }
 
     fn metering(&self) -> Vec<Value> {
@@ -231,25 +275,59 @@ async fn each_key_uses_only_its_own_indexes() {
 }
 
 /// A database placed in the data dir without an ownership record — the
-/// shape every pre-tenancy data dir has — stays readable by any key.
+/// shape every pre-tenancy data dir has — stays readable while the
+/// deployment has a single active key: the self-hosted upgrade the
+/// legacy posture exists for is never stranded by it.
 #[tokio::test]
-async fn legacy_unowned_index_stays_readable() {
-    let harness = Harness::with_ttl(None);
-    let legacy_id = "legacy-index";
-    let db = harness.db(legacy_id);
-    let repo = fixture_repo();
-    tokio::task::spawn_blocking(move || {
-        codetopo_cli::index_repo(&repo, &db, "fixture", None, None).expect("index fixture")
-    })
-    .await
-    .expect("index task");
+async fn legacy_unowned_index_stays_readable_for_a_lone_key() {
+    let harness = Harness::with_ownerless(None, &[KEY_A]);
+    harness.place_legacy_index("legacy-index").await;
+
+    let (status, body) = harness.legacy_stats(KEY_A, "legacy-index").await;
+    assert_eq!(status, StatusCode::OK, "lone-key legacy index refused: {body}");
+}
+
+/// F-5's default branch: once the key store holds a second active
+/// key, a legacy index stops being any-key readable — answered
+/// exactly like a missing index, for every key, so the refusal does
+/// not confirm the index exists.
+#[tokio::test]
+async fn legacy_unowned_index_is_denied_once_a_second_key_exists() {
+    let harness = Harness::with_ownerless(None, &[KEY_A, KEY_B]);
+    harness.place_legacy_index("legacy-index").await;
 
     for key in [KEY_A, KEY_B] {
-        let (status, body) = harness
-            .send_as(key, Method::GET, &format!("/v1/graphs/{legacy_id}/stats"), None)
-            .await;
-        assert_eq!(status, StatusCode::OK, "legacy index refused: {body}");
+        let (status, body) = harness.legacy_stats(key, "legacy-index").await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "legacy index answered a tenant of a multi-key store: {body}"
+        );
+        assert_eq!(body["error"], json!("unknown_index"));
     }
+}
+
+/// F-5's operator flag, both directions: `0`/`false` keeps the any-key
+/// legacy rule even with two keys; `1`/`true` denies a legacy index
+/// even to a lone key.
+#[tokio::test]
+async fn legacy_unowned_index_follows_the_operator_flag() {
+    let allowed = Harness::with_ownerless(Some(false), &[KEY_A, KEY_B]);
+    allowed.place_legacy_index("legacy-index").await;
+    for key in [KEY_A, KEY_B] {
+        let (status, body) = allowed.legacy_stats(key, "legacy-index").await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "operator-allowed legacy index refused: {body}"
+        );
+    }
+
+    let denied = Harness::with_ownerless(Some(true), &[KEY_A]);
+    denied.place_legacy_index("legacy-index").await;
+    let (status, body) = denied.legacy_stats(KEY_A, "legacy-index").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"], json!("unknown_index"));
 }
 
 /// A zero TTL makes the index expire the moment it exists: the first

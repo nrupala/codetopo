@@ -28,6 +28,6 @@ pub fn app(
     metering: std::sync::Arc<metering::Metering>,
     tenancy: std::sync::Arc<tenancy::Tenancy>,
 ) -> axum::Router {
-    let auth = std::sync::Arc::new(auth::AuthMetering::new(keys, metering));
-    auth::metered(router(AppState::new(config, tenancy)), auth)
+    let auth = std::sync::Arc::new(auth::AuthMetering::new(std::sync::Arc::clone(&keys), metering));
+    auth::metered(router(AppState::new(config, keys, tenancy)), auth)
 }

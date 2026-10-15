@@ -18,10 +18,24 @@
 //!
 //! An index with **no** owner row is a legacy index — written before
 //! tenancy existed (or placed in the data dir by another tool, e.g. the
-//! CLI). Legacy indexes stay readable by any authenticated key: refusing
-//! them would strand every existing self-hosted data dir, and a hosted
-//! deployment starts with an empty data dir, so nothing there is legacy.
-//! The handlers enforce that rule; this module only keeps the record.
+//! CLI). Whether a legacy index is readable is decided by
+//! [`ownerless_readable`]:
+//!
+//! * the operator's flag (`CODETOPO_DENY_OWNERLESS_INDEXES`) wins when
+//!   set — `1`/`true` denies legacy indexes to every key, `0`/`false`
+//!   keeps the original any-key rule;
+//! * unset, the default turns on how many tenants the deployment
+//!   actually has: with **more than one active key** in the store a
+//!   legacy index is denied (an upgraded self-hosted data dir that
+//!   later gained tenants must not leak its pre-tenancy indexes across
+//!   keys — fleet release gate F-5), and with **one** active key it
+//!   stays readable, so the single-operator upgrade that created the
+//!   legacy posture is never stranded by it.
+//!
+//! A denied legacy index is answered exactly like a missing one
+//! (`404 unknown_index`), so the refusal cannot confirm it exists.
+//! The handlers enforce the rule; this module keeps the record and
+//! owns the decision.
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -32,6 +46,23 @@ use crate::error::ApiError;
 
 /// File name of the tenancy store inside the data dir.
 pub const STORE_FILE_NAME: &str = "tenancy.db";
+
+/// Whether an index with no ownership record ("legacy") may be read
+/// by an authenticated key — the rule the module doc states, kept as
+/// one pure decision so both branches are testable without a server.
+///
+/// `operator_flag` is the operator's ruling
+/// (`CODETOPO_DENY_OWNERLESS_INDEXES`): `Some(true)` denies always,
+/// `Some(false)` allows always. Unset (`None`), the default denies
+/// once the key store holds more than one active key and allows while
+/// it holds at most one — the single-operator self-hosted case the
+/// legacy posture exists for.
+pub fn ownerless_readable(operator_flag: Option<bool>, active_keys: usize) -> bool {
+    match operator_flag {
+        Some(deny) => !deny,
+        None => active_keys <= 1,
+    }
+}
 
 /// One index's ownership record.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,6 +250,27 @@ mod tests {
 
     fn tenancy() -> Tenancy {
         Tenancy::in_memory().expect("in-memory tenancy")
+    }
+
+    /// F-5, the default rule's two branches: a legacy index is
+    /// readable while the deployment has a single active key and
+    /// denied the moment a second tenant exists.
+    #[test]
+    fn ownerless_default_turns_on_the_active_key_count() {
+        assert!(ownerless_readable(None, 0));
+        assert!(ownerless_readable(None, 1), "single-operator upgrade path");
+        assert!(!ownerless_readable(None, 2), "a second key ends the legacy posture");
+        assert!(!ownerless_readable(None, 25));
+    }
+
+    /// F-5, the operator flag's two branches: it overrides the
+    /// key-count default in both directions.
+    #[test]
+    fn ownerless_operator_flag_overrides_the_default() {
+        assert!(!ownerless_readable(Some(true), 1), "explicit deny binds even a lone key");
+        assert!(!ownerless_readable(Some(true), 0));
+        assert!(ownerless_readable(Some(false), 2), "explicit allow keeps legacy indexes readable");
+        assert!(ownerless_readable(Some(false), 25));
     }
 
     #[test]

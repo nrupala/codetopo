@@ -107,14 +107,15 @@ The same queries over JSON, behind Bearer API-key auth, with per-request
 metering — one transport for any client, any language:
 
 ```sh
-echo "demo-key:change-me" > api_keys && chmod 600 api_keys
+KEY="demo-key:$(openssl rand -hex 16)"   # a fresh random secret, generated exactly as docker-compose does — never a published example value
+echo "$KEY" > api_keys && chmod 600 api_keys
 codetopo-server   # listens on 127.0.0.1:8080 by default
 
-curl -H "Authorization: Bearer demo-key:change-me" -X POST localhost:8080/v1/index \
+curl -H "Authorization: Bearer $KEY" -X POST localhost:8080/v1/index \
   -H 'Content-Type: application/json' -d '{"repo_path": "~/my-project"}'
 # {"index_id": "<uuid>", "files_indexed": 3, "files_failed": 0, "nodes": 15, "edges": 23, "diagnostics": 2}
 
-curl -H "Authorization: Bearer demo-key:change-me" \
+curl -H "Authorization: Bearer $KEY" \
   "localhost:8080/v1/graphs/<uuid>/descendants?node=<node-id>&expand=true"
 ```
 
@@ -223,7 +224,7 @@ across this product line: a hash-chained, append-only record, verified by
 
 ## Privacy Policy
 
-codetopo runs entirely on your machine. The MCP server (`codetopo-mcp`), the CLI, and the index databases they create never send your code, your queries, or any usage data anywhere: there are no accounts, no API keys, no telemetry, and no network calls at runtime. Indexing reads only the repositories you point it at and writes only the database paths you give it. Questions about privacy: info@nrupalakolkar.com.
+codetopo runs entirely on your machine. The MCP server (`codetopo-mcp`), the CLI, and the index databases they create never send your code, your queries, or any usage data anywhere: there are no accounts, no API keys, no telemetry, and no network calls at runtime. Indexing reads only the repositories you point it at and writes only the database paths you give it. To delete your data, delete the index database files (the `.db` files, or the HTTP server's data directory) — nothing is held on any server, so there is nothing elsewhere to erase. To take your data with you, export it with the `snapshot` command, which writes the whole graph as one portable JSON file. Questions about privacy: info@nrupalakolkar.com.
 
 ## License
 

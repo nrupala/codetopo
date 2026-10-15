@@ -38,17 +38,28 @@ pub struct Config {
     /// Lifetime of a newly created index, in seconds, if the operator
     /// sets one. `None` means indexes do not expire.
     pub index_ttl_secs: Option<u64>,
+    /// The operator's ruling on ownerless ("legacy") indexes, from
+    /// `CODETOPO_DENY_OWNERLESS_INDEXES`: `Some(true)` always denies
+    /// them, `Some(false)` always allows them, and `None` (unset)
+    /// applies the default rule — deny when the key store holds more
+    /// than one active key, allow when it holds one (see
+    /// [`crate::tenancy::ownerless_readable`], which owns the rule).
+    pub deny_ownerless_indexes: Option<bool>,
 }
 
 impl Config {
     /// Reads configuration from the environment, applying documented defaults.
     ///
     /// Recognised variables: `CODETOPO_DATA_DIR`, `CODETOPO_KEYS_FILE`,
-    /// `CODETOPO_METERING_LOG`, `CODETOPO_BIND`, `CODETOPO_INDEX_TTL_SECS`.
+    /// `CODETOPO_METERING_LOG`, `CODETOPO_BIND`, `CODETOPO_INDEX_TTL_SECS`,
+    /// `CODETOPO_DENY_OWNERLESS_INDEXES`.
     /// An empty value is treated as unset so `CODETOPO_BIND=` behaves like an
     /// absent variable. A TTL that is present but not a non-negative integer
     /// is a startup error, like a bad bind address: guessing a lifetime for
-    /// customer data would be worse than refusing to boot.
+    /// customer data would be worse than refusing to boot. The ownerless
+    /// flag follows the same rule: `1`/`true` or `0`/`false` are accepted
+    /// and anything else is a startup error — a misread access-control
+    /// flag must not silently become the operator's opposite intent.
     pub fn from_env() -> Result<Self, ApiError> {
         let data_dir = env_path("CODETOPO_DATA_DIR", DEFAULT_DATA_DIR);
         let keys_file = env_path("CODETOPO_KEYS_FILE", DEFAULT_KEYS_FILE);
@@ -69,12 +80,28 @@ impl Config {
             }
             _ => None,
         };
+        let deny_ownerless_indexes = match std::env::var("CODETOPO_DENY_OWNERLESS_INDEXES") {
+            Ok(value) if !value.trim().is_empty() => {
+                match value.trim().to_ascii_lowercase().as_str() {
+                    "1" | "true" => Some(true),
+                    "0" | "false" => Some(false),
+                    _ => {
+                        return Err(ApiError::Internal(format!(
+                            "CODETOPO_DENY_OWNERLESS_INDEXES must be 1/true or 0/false, \
+                             got '{value}'"
+                        )))
+                    }
+                }
+            }
+            _ => None,
+        };
         Ok(Config {
             data_dir,
             keys_file,
             metering_log,
             bind,
             index_ttl_secs,
+            deny_ownerless_indexes,
         })
     }
 
@@ -185,6 +212,7 @@ impl Default for Config {
             metering_log: PathBuf::from(DEFAULT_METERING_LOG),
             bind: DEFAULT_BIND.parse().expect("default bind address is valid"),
             index_ttl_secs: None,
+            deny_ownerless_indexes: None,
         }
     }
 }

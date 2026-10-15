@@ -20,7 +20,10 @@
 //! at startup, when the database holds no active key and the file exists,
 //! its entries are imported (hashed, plan [`SELF_HOSTED_PLAN`]). Existing
 //! single-host deployments therefore keep working untouched, and the file
-//! can be deleted once the import has happened.
+//! can be deleted once the import has happened. One value never imports:
+//! the documented example secret the README quickstart once printed
+//! ([`DOCUMENTED_EXAMPLE_SECRET`]) — it is public, so the import refuses
+//! any file still carrying it.
 //!
 //! Keys are provisioned with a `plan` name (the paid tier's plans arrive
 //! with the billing bridge; the store only records the string) and a
@@ -42,6 +45,14 @@ pub const STORE_FILE_NAME: &str = "keys.db";
 /// Plan recorded for keys that predate plans: the operator's own keys
 /// (legacy flat-file import, [`KeyStore::parse`]), not a billed tenant's.
 pub const SELF_HOSTED_PLAN: &str = "self-hosted";
+
+/// The secret the README quickstart printed as its example credential
+/// (`demo-key:change-me`) until the release-gate fix loop. It is public
+/// knowledge — anyone who has read the README knows it — so a keys file
+/// still carrying it would hand the server to the first caller who
+/// tries it. [`KeyStore::import_legacy_file`] refuses it by name
+/// (fleet release gate F-3).
+pub const DOCUMENTED_EXAMPLE_SECRET: &str = "change-me";
 
 /// Plan a key is issued with when the admin names none: the hosted tier
 /// from the paid-path plan.
@@ -172,12 +183,34 @@ impl KeyStore {
     /// Keys already present (by `key_id`) are left untouched — an import
     /// must never resurrect a revoked key or overwrite a rotated secret.
     /// Returns how many keys were newly imported.
+    ///
+    /// The import refuses the whole file, before importing anything,
+    /// when any entry carries [`DOCUMENTED_EXAMPLE_SECRET`] — the
+    /// example credential the README quickstart used to print. That
+    /// value is published, so importing it would provision a key whose
+    /// secret every reader of the old README knows (gate F-3). Failing
+    /// the whole import, rather than skipping the one entry, keeps the
+    /// refusal loud: a half-imported file that boots with fewer keys
+    /// than the operator wrote is a quieter failure than not booting.
     pub fn import_legacy_file(&self, path: &Path) -> Result<usize, ApiError> {
         let contents = std::fs::read_to_string(path).map_err(|err| {
             ApiError::Internal(format!("cannot read keys file {}: {err}", path.display()))
         })?;
+        let pairs = parse_pairs(&contents);
+        if let Some((key_id, _)) = pairs
+            .iter()
+            .find(|(_, secret)| secret == DOCUMENTED_EXAMPLE_SECRET)
+        {
+            return Err(ApiError::Internal(format!(
+                "keys file {} carries key '{key_id}' with the documented example secret \
+                 '{DOCUMENTED_EXAMPLE_SECRET}' — that value was printed in the README \
+                 quickstart and is public; generate a real secret instead \
+                 (e.g. `openssl rand -hex 16`)",
+                path.display()
+            )));
+        }
         let mut imported = 0;
-        for (key_id, secret) in parse_pairs(&contents) {
+        for (key_id, secret) in pairs {
             if self.lookup(&key_id)?.is_none() {
                 self.insert(&key_id, &secret, SELF_HOSTED_PLAN)?;
                 imported += 1;
@@ -643,6 +676,45 @@ mod tests {
         assert!(store.verify("agent", "file-secret").is_err());
         let verified = store.verify("second", "other-secret").expect("imported key");
         assert_eq!(verified.plan, SELF_HOSTED_PLAN);
+    }
+
+    /// F-3: a keys file still carrying the README's old documented
+    /// example credential is refused whole — the error names the value
+    /// as the documented example, and nothing from the file imports,
+    /// not even its well-formed entries.
+    #[test]
+    fn legacy_import_refuses_the_documented_example_secret() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("api_keys");
+        std::fs::write(&file, "agent:real-secret\ndemo-key:change-me\n").expect("write file");
+        let store = store();
+
+        let err = store
+            .import_legacy_file(&file)
+            .expect_err("the documented example secret must be refused");
+        let message = err.to_string();
+        assert!(
+            message.contains("documented example secret"),
+            "the refusal names it as a documented example: {message}"
+        );
+        assert!(
+            message.contains("change-me"),
+            "the refusal names the value: {message}"
+        );
+        assert_eq!(store.len(), 0, "a refused import imports nothing");
+        assert!(store.verify("agent", "real-secret").is_err());
+    }
+
+    /// The refusal keys on the secret value, not the example's key id:
+    /// the published secret under any other name is the same hole.
+    #[test]
+    fn legacy_import_refuses_the_example_secret_under_any_key_id() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("api_keys");
+        std::fs::write(&file, "my-own-key:change-me\n").expect("write file");
+        let store = store();
+        assert!(store.import_legacy_file(&file).is_err());
+        assert_eq!(store.len(), 0);
     }
 
     #[test]

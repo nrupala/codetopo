@@ -4,3 +4,5 @@ target/
 .snapshots/
 .corpus/
 dist/
+.env*
+!.env.example

@@ -129,6 +129,14 @@ class FrontDoor(BaseHTTPRequestHandler):
                                              "message": "the demo API is not reachable yet; it indexes codetopo's source at container start — try again in a few seconds"})
         finally:
             conn.close()
+        if status >= 500:
+            # An upstream 5xx body is the server's internal failure
+            # detail (host paths, store error text) — operator material
+            # that a public demo must never publish (release gate F-1).
+            # Keep the status, substitute a generic body. Non-5xx
+            # bodies are the API's coded client errors and pass through.
+            return json_response(self, status, {"error": "internal",
+                                                "message": "internal error"})
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))

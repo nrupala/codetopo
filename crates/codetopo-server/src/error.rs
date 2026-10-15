@@ -245,9 +245,33 @@ impl ApiError {
         }
     }
 
+    /// The only message a client ever sees for an internal failure.
+    ///
+    /// The `Internal` variant's payload is operator detail — host
+    /// filesystem paths, rusqlite error text, store file names — that
+    /// helps the person running the server and must never reach a
+    /// client (fleet release gate F-1). [`ApiError::body`] logs the
+    /// payload server-side and renders this generic text instead.
+    pub const INTERNAL_CLIENT_MESSAGE: &'static str = "internal error";
+
     /// Body as a JSON value; exposed for tests and for asserting shape.
+    ///
+    /// This is the single render point for client responses
+    /// ([`IntoResponse`] goes through it), so the `Internal` redaction
+    /// lives here rather than at the variant's many construction sites:
+    /// the detail is written to the server's stderr and the client
+    /// receives [`ApiError::INTERNAL_CLIENT_MESSAGE`]. Every other
+    /// variant's message is prose about the caller's own request and
+    /// renders as before.
     pub fn body(&self) -> serde_json::Value {
-        json!({ "error": self.code(), "message": self.to_string() })
+        let message = match self {
+            ApiError::Internal(detail) => {
+                eprintln!("error: internal failure: {detail}");
+                ApiError::INTERNAL_CLIENT_MESSAGE.to_string()
+            }
+            _ => self.to_string(),
+        };
+        json!({ "error": self.code(), "message": message })
     }
 }
 
@@ -397,5 +421,32 @@ mod tests {
             .to_string()
             .contains("1..=1000"));
         assert_eq!(ApiError::Unauthorized.to_string(), "unauthenticated");
+    }
+
+    /// F-1: the client body for an internal failure is the generic
+    /// message — never the variant's payload, which carries host paths
+    /// and store error text. The code stays `internal`, the status
+    /// stays 500, and no other variant's rendering changes.
+    #[test]
+    fn internal_body_is_generic_and_detail_free() {
+        let err = ApiError::internal("cannot open key store /srv/private/keys.db: disk I/O error");
+        let body = err.body();
+        assert_eq!(body["error"], "internal");
+        assert_eq!(body["message"], ApiError::INTERNAL_CLIENT_MESSAGE);
+        let rendered = body.to_string();
+        assert!(
+            !rendered.contains("/srv/private"),
+            "host path leaked to the client body: {rendered}"
+        );
+        assert!(
+            !rendered.contains("disk I/O"),
+            "store error text leaked to the client body: {rendered}"
+        );
+        // The detail survives in the operator-facing Display — only
+        // the client render is redacted.
+        assert!(err.to_string().contains("/srv/private/keys.db"));
+        // A non-internal body is untouched by the redaction.
+        let other = ApiError::unknown_index("abc").body();
+        assert!(other["message"].as_str().unwrap().contains("abc"));
     }
 }
