@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Part of codetopo — Owned by Nrupal Akolkar (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
 
-//! The Paddle billing bridge (paid-path plan S4, gap G6).
+//! The Stripe billing bridge (paid-path plan S4, gap G6).
 //!
 //! `codetopo-server` sells the hosted tier; this binary is how a stranger
-//! paying through Paddle becomes a key in the server's runtime key store
+//! paying through Stripe becomes a key in the server's runtime key store
 //! — and how the key stops working when the money stops. It follows the
 //! estate's proven pattern (the Conduit Router billing webhook, ADR-0008
 //! in that repo): signature-verified webhooks, price ids as configuration,
-//! entitlements bound to the Paddle **subscription id** and nothing else
+//! entitlements bound to the Stripe **subscription id** and nothing else
 //! (never an email address — Conduit's email-squatting hijack is why),
 //! and idempotency by provider event id.
 //!
@@ -34,19 +34,21 @@
 //! bridge seals that plaintext with AES-256-GCM under a key that exists
 //! only in the bridge's environment (`CODETOPO_CLAIM_KEY`) and stores
 //! the ciphertext as a *delivery*, addressable by claim tokens. Two
-//! tokens are registered per delivery: the checkout's **transaction id**
-//! (attached when `transaction.completed` is processed) and the
+//! tokens are registered per delivery: the checkout's **session id**
+//! (attached when `checkout.session.completed` is processed, or drained
+//! from the pending record if the checkout landed first) and the
 //! **subscription id** (known at issuance; it is also the id on the
-//! buyer's Paddle receipt). The Paddle checkout success redirect lands
-//! on the bridge's claim page carrying the transaction id (`_ptxn`); the
-//! page exchanges it — once — for the credential. Claiming, or seven
+//! buyer's Stripe receipt). The Stripe checkout success redirect lands
+//! on the bridge's claim page carrying the session id (the
+//! `{CHECKOUT_SESSION_ID}` placeholder in the success URL); the page
+//! exchanges it — once — for the credential. Claiming, or seven
 //! days passing unclaimed, destroys the ciphertext and every token; the
 //! hash in `api_keys` is all that remains. A sweep (at startup and every
 //! minute) applies due revocations and purges expired deliveries.
 //!
 //! Threat model, plainly: a claim token is a bearer capability. Whoever
 //! presents an unclaimed token inside its seven-day window gets the key,
-//! once. The tokens are Paddle's own 128-bit-class ids, disclosed only
+//! once. The tokens are Stripe's own 128-bit-class ids, disclosed only
 //! to the buyer (checkout redirect, receipt); the window is bounded by
 //! single use and the seven-day purge, and a leaked `keys.db` alone
 //! yields nothing — deliveries are ciphertext under an environment key,
@@ -59,31 +61,37 @@
 //!
 //! ## Event semantics
 //!
-//! Signature first: the `Paddle-Signature` header is HMAC-verified over
-//! the raw body before any JSON is trusted (see [`paddle`]); an invalid
-//! signature is a `400` and changes nothing. Then, per event:
+//! Signature first: the `Stripe-Signature` header is HMAC-verified over
+//! the raw body, inside a five-minute timestamp tolerance, before any
+//! JSON is trusted (see [`stripe`]); an invalid signature is a `400` and
+//! changes nothing. Then, per event:
 //!
 //! | event | action |
 //! |---|---|
-//! | `subscription.created` / `subscription.activated` | ensure a `hosted` key for the subscription (issue on first sight; a replacement if the previous key was revoked); clear any past-due / cancel-scheduled marks |
-//! | `transaction.completed` (carrying the codetopo price + a subscription id) | same ensure; register the transaction id as a claim token for the key's delivery |
-//! | `subscription.canceled` | revoke at the effective end (scheduled change / billing-period end): store the scheduled revocation; the key keeps working until then. Effective now → revoke now |
-//! | `subscription.past_due` | mark past due; revoke after a 7-day grace unless the subscription returns to active first |
-//! | `subscription.resumed`, `subscription.updated` to active | restore: clear pending revocations; a key already revoked is replaced |
+//! | `customer.subscription.created` (carrying the codetopo price, entitled status) | ensure a `hosted` key for the subscription (issue on first sight; a replacement if the previous key was revoked) |
+//! | `checkout.session.completed` (`subscription` mode, `payment_status: paid`) | register the session id as a claim token for the key's delivery — attached immediately, or recorded as pending when the subscription event has not created the entitlement yet; never creates (the payload carries no price) |
+//! | `customer.subscription.updated` | active/trialing → restore: clear pending revocations, replace a revoked key (an entitled update for an unknown subscription creates under the same price guard — Stripe can deliver `created` before the first payment settles); past_due/unpaid → revoke after a 7-day grace unless restored first; `cancel_at_period_end` → revoke at the period end; canceled → revoke at the period end |
+//! | `customer.subscription.deleted` | revoke now |
+//! | `invoice.payment_failed` | mark past due: the same 7-day grace |
+//! | `invoice.payment_succeeded` | clear the grace when the entitlement is in it |
 //! | anything else, or another product's price | recorded, no state change |
+//!
+//! The webhook endpoint must be subscribed to all of the event types
+//! above — in particular `customer.subscription.created`: without it,
+//! checkouts record claim tokens and no entitlement is ever created.
 //!
 //! Replays are no-ops (processed event ids), and an event older than
 //! the last one applied to its subscription is stale and skipped, so
-//! Paddle's at-least-once, unordered delivery cannot resurrect or kill
+//! Stripe's at-least-once, unordered delivery cannot resurrect or kill
 //! a key out of turn. One subscription maps to one live key at a time;
 //! a second subscription is a second key.
 
 pub mod config;
 pub mod crypto;
 pub mod http;
-pub mod paddle;
 pub mod service;
 pub mod store;
+pub mod stripe;
 
 use codetopo_server::error::ApiError;
 

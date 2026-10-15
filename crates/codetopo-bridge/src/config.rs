@@ -6,7 +6,7 @@
 //!
 //! The data dir comes from the server crate's own [`Config`], so the
 //! bridge and the server always name the same `keys.db` — there is no
-//! second path variable to drift. Everything Paddle-shaped is required
+//! second path variable to drift. Everything Stripe-shaped is required
 //! and has no default: a bridge that boots without its webhook secret or
 //! its price id would either reject every real event or mint keys for
 //! the wrong product, and both failures are quieter than refusing to
@@ -34,10 +34,10 @@ pub struct BridgeConfig {
     pub keys_db_path: PathBuf,
     /// Address the bridge listener binds.
     pub bind: SocketAddr,
-    /// Paddle notification-endpoint secret key. Verifies webhook
-    /// signatures; never logged, never defaulted.
+    /// Stripe webhook endpoint signing secret (`whsec_…`). Verifies
+    /// webhook signatures; never logged, never defaulted.
     pub webhook_secret: String,
-    /// The Paddle price id that maps to the hosted plan. Price ids are
+    /// The Stripe price id that maps to the hosted plan. Price ids are
     /// configuration, not code (the Conduit pattern): a new price is an
     /// env change, not a release.
     pub price_id: String,
@@ -53,8 +53,8 @@ impl BridgeConfig {
     ///
     /// Recognised variables: the server's `CODETOPO_DATA_DIR` (and its
     /// siblings, via [`ServerConfig::from_env`]), plus
-    /// `CODETOPO_BRIDGE_BIND`, `PADDLE_WEBHOOK_SECRET`,
-    /// `CODETOPO_PADDLE_PRICE_ID`, `CODETOPO_CLAIM_KEY`, and optionally
+    /// `CODETOPO_BRIDGE_BIND`, `CODETOPO_STRIPE_WEBHOOK_SECRET`,
+    /// `CODETOPO_STRIPE_PRICE_ID`, `CODETOPO_CLAIM_KEY`, and optionally
     /// `CODETOPO_PLAN` (default: the hosted plan).
     pub fn from_env() -> Result<Self, BridgeError> {
         let server = ServerConfig::from_env().map_err(|err| {
@@ -66,8 +66,8 @@ impl BridgeConfig {
                 "CODETOPO_BRIDGE_BIND must be a 'host:port' socket address, got '{bind_raw}'"
             ))
         })?;
-        let webhook_secret = required("PADDLE_WEBHOOK_SECRET")?;
-        let price_id = required("CODETOPO_PADDLE_PRICE_ID")?;
+        let webhook_secret = required("CODETOPO_STRIPE_WEBHOOK_SECRET")?;
+        let price_id = required("CODETOPO_STRIPE_PRICE_ID")?;
         let plan = env_string("CODETOPO_PLAN", DEFAULT_PLAN);
         let claim_key = parse_claim_key(&required("CODETOPO_CLAIM_KEY")?)?;
         let keys_db_path = server.keys_db_path();
@@ -101,10 +101,10 @@ fn env_string(key: &str, default: &str) -> String {
 }
 
 /// Decodes the 64-hex-character claim key. Hand-rolled hex (one small
-/// decoder, shared with [`crate::paddle`]) — a malformed key is a
+/// decoder, shared with [`crate::stripe`]) — a malformed key is a
 /// startup error, never a silent truncation.
 fn parse_claim_key(raw: &str) -> Result<[u8; 32], BridgeError> {
-    let bytes = crate::paddle::hex_decode(raw).ok_or_else(|| {
+    let bytes = crate::stripe::hex_decode(raw).ok_or_else(|| {
         BridgeError::Config("CODETOPO_CLAIM_KEY must be 64 hex characters".to_string())
     })?;
     bytes.try_into().map_err(|_| {
