@@ -4,17 +4,21 @@
 
 //! The bridge's own state, in tables alongside `api_keys`.
 //!
-//! Three records, all keyed by Paddle ids:
+//! Four records, all keyed by Stripe ids:
 //!
 //! - `bridge_processed_events` — every event id the bridge has applied,
 //!   the replay ledger. An id present here is never applied again.
 //! - `bridge_entitlements` — one row per subscription: which key it
 //!   holds (and which issuance sequence that key is), its lifecycle
-//!   status, when a pending revocation falls due, and the `occurred_at`
+//!   status, when a pending revocation falls due, and the `created`
 //!   of the last event applied to it (the ordering guard).
 //! - `key_deliveries` + `claim_tokens` — the claim flow's state: one
 //!   delivery per issued key (sealed plaintext, destroyed at claim or
 //!   expiry) and the bearer tokens that address it.
+//! - `bridge_pending_claims` — checkout sessions that arrived before
+//!   their subscription's entitlement existed: a session id waiting to
+//!   become a claim token at issuance. Swept on the claim horizon so
+//!   abandoned (or other products') checkouts cannot grow it forever.
 //!
 //! The tables live in the same `keys.db` file the server reads, so one
 //! file is the whole billing-and-keys state a backup must capture. The
@@ -47,7 +51,7 @@ pub const STATUS_REVOKED: &str = "revoked";
 /// One subscription's entitlement row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entitlement {
-    /// The Paddle subscription id.
+    /// The Stripe subscription id.
     pub subscription_id: String,
     /// The key this subscription currently holds.
     pub key_id: String,
@@ -136,6 +140,11 @@ impl BridgeStore {
              CREATE TABLE IF NOT EXISTS claim_tokens (
                  token  TEXT PRIMARY KEY,
                  key_id TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS bridge_pending_claims (
+                 token           TEXT PRIMARY KEY,
+                 subscription_id TEXT NOT NULL,
+                 created_at      INTEGER NOT NULL
              );",
         )
         .map_err(|err| BridgeError::Store(format!("cannot initialise bridge store: {err}")))?;
@@ -161,7 +170,7 @@ impl BridgeStore {
     }
 
     /// Records an event as applied. Called only after its handler has
-    /// run: a handler that failed leaves no record, so Paddle's retry
+    /// run: a handler that failed leaves no record, so Stripe's retry
     /// re-applies (every handler is idempotent, so converging is safe).
     pub fn record_event(
         &self,
@@ -323,7 +332,7 @@ impl BridgeStore {
 
     /// Registers a claim token for a key. Idempotent: a token already
     /// pointing at this key is left as it is; a token pointing at a
-    /// *different* key is left untouched too (tokens are Paddle ids —
+    /// *different* key is left untouched too (tokens are Stripe ids —
     /// a collision would mean the same purchase naming two keys, which
     /// must surface as an operator problem, not a silent retarget).
     pub fn add_claim_token(&self, token: &str, key_id: &str) -> Result<(), BridgeError> {
@@ -346,6 +355,81 @@ impl BridgeStore {
         )
         .optional()
         .map_err(|err| BridgeError::Store(format!("cannot read claim token: {err}")))
+    }
+
+    // -- pending claims (checkout sessions awaiting a subscription) ----
+
+    /// Records a checkout session against the subscription it created,
+    /// for a subscription whose entitlement does not exist yet.
+    /// Idempotent, like [`BridgeStore::add_claim_token`]: the first
+    /// record for a session id stands.
+    pub fn add_pending_claim(
+        &self,
+        token: &str,
+        subscription_id: &str,
+        now: i64,
+    ) -> Result<(), BridgeError> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT OR IGNORE INTO bridge_pending_claims (token, subscription_id, created_at)
+             VALUES (?1, ?2, ?3)",
+            rusqlite::params![token, subscription_id, now],
+        )
+        .map_err(|err| BridgeError::Store(format!("cannot save pending claim: {err}")))?;
+        Ok(())
+    }
+
+    /// The checkout sessions recorded against a subscription, in
+    /// token order (deterministic for tests and logs).
+    pub fn pending_claims(&self, subscription_id: &str) -> Result<Vec<String>, BridgeError> {
+        let conn = self.lock()?;
+        let mut statement = conn
+            .prepare(
+                "SELECT token FROM bridge_pending_claims
+                 WHERE subscription_id = ?1 ORDER BY token",
+            )
+            .map_err(|err| BridgeError::Store(format!("cannot read pending claims: {err}")))?;
+        let rows = statement
+            .query_map(rusqlite::params![subscription_id], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|err| BridgeError::Store(format!("cannot read pending claims: {err}")))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(
+                row.map_err(|err| {
+                    BridgeError::Store(format!("cannot read pending claims: {err}"))
+                })?,
+            );
+        }
+        Ok(out)
+    }
+
+    /// Retires every pending record for a subscription (called when
+    /// its entitlement is issued and the sessions have been attached
+    /// as claim tokens).
+    pub fn clear_pending_claims(&self, subscription_id: &str) -> Result<(), BridgeError> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM bridge_pending_claims WHERE subscription_id = ?1",
+            rusqlite::params![subscription_id],
+        )
+        .map_err(|err| BridgeError::Store(format!("cannot clear pending claims: {err}")))?;
+        Ok(())
+    }
+
+    /// Drops pending records recorded at or before `before` — sessions
+    /// whose subscription never materialised inside the claim horizon.
+    /// Returns how many were dropped.
+    pub fn purge_stale_pending_claims(&self, before: i64) -> Result<usize, BridgeError> {
+        let conn = self.lock()?;
+        let dropped = conn
+            .execute(
+                "DELETE FROM bridge_pending_claims WHERE created_at <= ?1",
+                rusqlite::params![before],
+            )
+            .map_err(|err| BridgeError::Store(format!("cannot purge pending claims: {err}")))?;
+        Ok(dropped)
     }
 
     /// Marks a delivery claimed and destroys its plaintext and every
@@ -471,5 +555,27 @@ mod tests {
         assert_eq!(store.purge_expired_deliveries(199).expect("purge"), 0);
         assert_eq!(store.purge_expired_deliveries(200).expect("purge"), 1);
         assert!(store.delivery("k2").expect("read").expect("present").sealed.is_none());
+    }
+
+    #[test]
+    fn pending_claims_round_trip_clear_and_purge() {
+        let store = store();
+        store.add_pending_claim("cs_2", "sub_1", 100).expect("record");
+        store.add_pending_claim("cs_1", "sub_1", 100).expect("record");
+        store.add_pending_claim("cs_9", "sub_2", 100).expect("record");
+        store.add_pending_claim("cs_1", "sub_1", 100).expect("idempotent");
+        assert_eq!(
+            store.pending_claims("sub_1").expect("read"),
+            ["cs_1", "cs_2"],
+            "ordered, deduplicated, and scoped to the subscription"
+        );
+        // The stale purge drops by recording time, across subscriptions.
+        assert_eq!(store.purge_stale_pending_claims(99).expect("purge"), 0);
+        assert_eq!(store.purge_stale_pending_claims(100).expect("purge"), 3);
+        assert!(store.pending_claims("sub_1").expect("read").is_empty());
+
+        store.add_pending_claim("cs_3", "sub_1", 200).expect("record");
+        store.clear_pending_claims("sub_1").expect("clear");
+        assert!(store.pending_claims("sub_1").expect("read").is_empty());
     }
 }

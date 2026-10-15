@@ -4,13 +4,14 @@
 
 //! The bridge's HTTP surface — three routes and a health check.
 //!
-//! - `POST /billing/webhook` — Paddle's deliveries. The signature is
+//! - `POST /billing/webhook` — Stripe's deliveries. The signature is
 //!   verified over the raw body before any JSON is trusted; an invalid
 //!   signature is a `400` and changes nothing (a `500` is reserved for
-//!   a verified event the bridge failed to apply, so Paddle retries
+//!   a verified event the bridge failed to apply, so Stripe retries
 //!   it — the handlers converge under retries).
 //! - `GET /claim` — the claim page the checkout success redirect lands
-//!   on; it prefills the transaction id from the `_ptxn` parameter.
+//!   on; it prefills the session id from the `session_id` parameter
+//!   (Stripe's `{CHECKOUT_SESSION_ID}` success-URL placeholder).
 //! - `POST /claim` — the one-time exchange of a claim token for the
 //!   credential (see [`crate::service::claim_key`]). Every refusal is
 //!   the same page at the same status.
@@ -33,7 +34,7 @@ use codetopo_server::keys::KeyStore;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::paddle::{verify_signature, WebhookEvent};
+use crate::stripe::{verify_signature, WebhookEvent};
 use crate::service::{apply_event, claim_key, Policy};
 use crate::store::BridgeStore;
 
@@ -48,7 +49,7 @@ pub struct BridgeState {
     pub keys: KeyStore,
     /// Price/plan/claim-key policy.
     pub policy: Policy,
-    /// The Paddle webhook secret (never logged).
+    /// The Stripe webhook secret (never logged).
     pub webhook_secret: String,
 }
 
@@ -70,10 +71,10 @@ async fn webhook(
     body: Bytes,
 ) -> impl IntoResponse {
     let signature = headers
-        .get("paddle-signature")
+        .get("stripe-signature")
         .and_then(|value| value.to_str().ok())
         .unwrap_or("");
-    if !verify_signature(&state.webhook_secret, signature, &body) {
+    if !verify_signature(&state.webhook_secret, signature, &body, now_unix_secs()) {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "invalid_signature" })),
@@ -111,8 +112,8 @@ async fn webhook(
 /// The claim form's one field.
 #[derive(Debug, Deserialize)]
 pub struct ClaimForm {
-    /// The transaction id from the checkout, or the subscription id
-    /// from the buyer's Paddle receipt.
+    /// The checkout session id from the checkout, or the subscription
+    /// id from the buyer's Stripe receipt.
     pub token: String,
 }
 
@@ -163,28 +164,28 @@ fn claim_failure_page() -> String {
      <p>The code may have been entered incorrectly, already used, or \
      expired (claims live for seven days after purchase). If you \
      completed a purchase and never received your key, contact support \
-     with your Paddle receipt.</p>\
+     with your Stripe receipt.</p>\
      </body></html>"
         .to_string()
 }
 
 /// The claim landing page. The inline script prefills the token from
-/// the checkout redirect's `_ptxn` parameter (or `tx`); the buyer can
-/// also paste the subscription id from their Paddle receipt.
+/// the checkout redirect's `session_id` parameter (or `tx`); the buyer
+/// can also paste the subscription id from their Stripe receipt.
 const CLAIM_PAGE: &str = "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\
 <title>Claim your codetopo API key</title></head><body>\
 <h1>Claim your codetopo API key</h1>\
-<p>Your purchase is complete. Enter the transaction id from your \
+<p>Your purchase is complete. Enter the session id from your \
 checkout confirmation — it is in the page address after checkout — or \
-the subscription id from your Paddle receipt. Your key is shown \
+the subscription id from your Stripe receipt. Your key is shown \
 exactly once.</p>\
 <form method=\"post\" action=\"/claim\">\
-<label>Transaction or subscription id \
+<label>Session or subscription id \
 <input name=\"token\" id=\"token\" size=\"44\" autocomplete=\"off\" required></label>\
 <button type=\"submit\">Show my key</button></form>\
 <script>\
 const params = new URLSearchParams(location.search);\
-const prefill = params.get('_ptxn') || params.get('tx');\
+const prefill = params.get('session_id') || params.get('tx');\
 if (prefill) { document.getElementById('token').value = prefill; }\
 </script>\
 </body></html>";
@@ -229,7 +230,7 @@ mod tests {
     #[test]
     fn the_claim_page_carries_the_form_and_the_prefill() {
         assert!(CLAIM_PAGE.contains("name=\"token\""));
-        assert!(CLAIM_PAGE.contains("_ptxn"));
+        assert!(CLAIM_PAGE.contains("session_id"));
         assert!(CLAIM_PAGE.contains("method=\"post\""));
     }
 }
