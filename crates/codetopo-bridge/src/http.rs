@@ -10,8 +10,11 @@
 //!   a verified event the bridge failed to apply, so Stripe retries
 //!   it — the handlers converge under retries).
 //! - `GET /claim` — the claim page the checkout success redirect lands
-//!   on; it prefills the session id from the `session_id` parameter
-//!   (Stripe's `{CHECKOUT_SESSION_ID}` success-URL placeholder).
+//!   on. The Payment Link redirect carries the checkout session id in
+//!   the `session` parameter (Stripe's `{CHECKOUT_SESSION_ID}`
+//!   placeholder; `token` is accepted as an alias), and the page
+//!   renders with that value prefilled into the form — escaped, and
+//!   never auto-submitted: claiming stays one deliberate button press.
 //! - `POST /claim` — the one-time exchange of a claim token for the
 //!   credential (see [`crate::service::claim_key`]). Every refusal is
 //!   the same page at the same status.
@@ -25,7 +28,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
@@ -131,9 +134,38 @@ async fn claim_submit(
     }
 }
 
+/// The claim page's query string: the checkout redirect's session id.
+#[derive(Debug, Deserialize)]
+pub struct ClaimQuery {
+    /// Stripe's `{CHECKOUT_SESSION_ID}` placeholder lands here.
+    pub session: Option<String>,
+    /// Alias for `session`, for redirects that name the field as the
+    /// form does.
+    pub token: Option<String>,
+}
+
 /// `GET /claim`: the page the checkout success redirect lands on.
-async fn claim_page() -> Html<String> {
-    Html(CLAIM_PAGE.to_string())
+/// With a session id in the query string the form renders prefilled;
+/// without one it renders exactly as the static page.
+async fn claim_page(Query(query): Query<ClaimQuery>) -> Html<String> {
+    let prefill = query.session.as_deref().or(query.token.as_deref());
+    Html(claim_page_html(prefill))
+}
+
+/// The claim landing page, with `prefill` (when present) rendered
+/// into the token field's `value` attribute, HTML-escaped. The value
+/// arrives from a redirect URL — it is data in a page, and pages
+/// escape data: a hostile value stays inert text inside the
+/// attribute and can neither break out of it nor inject markup.
+fn claim_page_html(prefill: Option<&str>) -> String {
+    match prefill {
+        None => CLAIM_PAGE.to_string(),
+        Some(value) => CLAIM_PAGE.replacen(
+            "id=\"token\"",
+            &format!("id=\"token\" value=\"{}\"", html_escape(value)),
+            1,
+        ),
+    }
 }
 
 /// The success page: the credential, once, with handling instructions.
@@ -232,5 +264,33 @@ mod tests {
         assert!(CLAIM_PAGE.contains("name=\"token\""));
         assert!(CLAIM_PAGE.contains("session_id"));
         assert!(CLAIM_PAGE.contains("method=\"post\""));
+    }
+
+    #[test]
+    fn no_prefill_renders_the_static_page_unchanged() {
+        assert_eq!(claim_page_html(None), CLAIM_PAGE);
+    }
+
+    #[test]
+    fn prefill_lands_in_the_token_fields_value() {
+        let page = claim_page_html(Some("cs_test_abc123"));
+        assert!(
+            page.contains("name=\"token\" id=\"token\" value=\"cs_test_abc123\""),
+            "{page}"
+        );
+    }
+
+    #[test]
+    fn a_hostile_prefill_is_rendered_only_escaped() {
+        let payload = "\"><script>alert(1)</script>";
+        let page = claim_page_html(Some(payload));
+        assert!(
+            !page.contains(payload),
+            "the raw payload must never appear: {page}"
+        );
+        assert!(
+            page.contains("value=\"&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;\""),
+            "the payload may appear only in escaped form: {page}"
+        );
     }
 }
