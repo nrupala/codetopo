@@ -124,6 +124,24 @@ async fn post_claim(app: &axum::Router, token: &str) -> (StatusCode, String) {
     (status, String::from_utf8_lossy(&bytes).to_string())
 }
 
+async fn get_claim(app: &axum::Router, uri: &str) -> (StatusCode, String) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    (status, String::from_utf8_lossy(&bytes).to_string())
+}
+
 fn subscription_created(event_id: &str, sub: &str) -> String {
     serde_json::json!({
         "id": event_id,
@@ -211,6 +229,46 @@ async fn purchase_to_claimed_key_over_http() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "a second claim is refused");
     let (status, _) = post_claim(&rig.app, "cs_never_existed").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "an unknown token is refused alike");
+}
+
+#[tokio::test]
+async fn claim_page_prefills_from_the_session_parameter() {
+    let rig = rig();
+    let (status, page) = get_claim(&rig.app, "/claim?session=cs_test_redirect1").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        page.contains("name=\"token\" id=\"token\" value=\"cs_test_redirect1\""),
+        "{page}"
+    );
+
+    // The token alias prefills the same way.
+    let (status, page) = get_claim(&rig.app, "/claim?token=cs_test_alias1").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("value=\"cs_test_alias1\""), "{page}");
+
+    // No parameter: the form renders with no prefilled value.
+    let (status, page) = get_claim(&rig.app, "/claim").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!page.contains("id=\"token\" value="), "{page}");
+}
+
+#[tokio::test]
+async fn claim_page_escapes_a_hostile_session_value() {
+    let rig = rig();
+    let (status, page) = get_claim(
+        &rig.app,
+        "/claim?session=%22%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !page.contains("\"><script>alert(1)</script>"),
+        "the raw payload must never appear: {page}"
+    );
+    assert!(
+        page.contains("value=\"&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;\""),
+        "the payload may appear only in escaped form: {page}"
+    );
 }
 
 #[tokio::test]
