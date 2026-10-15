@@ -69,6 +69,7 @@ impl Harness {
             metering_log: dir.path().join("metering.log"),
             bind: "127.0.0.1:0".parse().expect("bind addr"),
             index_ttl_secs: None,
+            deny_ownerless_indexes: None,
         };
         std::fs::create_dir_all(&config.data_dir).expect("data dir");
 

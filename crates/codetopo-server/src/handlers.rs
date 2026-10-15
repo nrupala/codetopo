@@ -63,16 +63,21 @@ const MAX_LIMIT: usize = 1000;
 
 /// Shared, immutable server state.
 ///
-/// The resolved configuration plus the tenancy store: keys and the metering
-/// log are owned by the auth layer, which is applied around the router rather
-/// than inside it, so a handler physically cannot reach a secret. Tenancy is
-/// different — a handler *must* consult it before touching an index — and it
-/// carries no secrets, only ownership records. The [`Envelope`] is the
-/// abuse-envelope state of paid-path S3: the query routes' concurrency cap
-/// and per-key index-operation permits (see [`crate::limits`]).
+/// The resolved configuration plus the tenancy store: the metering log
+/// is owned by the auth layer, which is applied around the router
+/// rather than inside it, and the key store is shared with that layer.
+/// A handler still cannot reach a secret — [`KeyStore`] exposes none;
+/// the state holds it for exactly one number, the active-key count the
+/// ownerless-index rule turns on (see [`crate::tenancy`]). Tenancy is
+/// different — a handler *must* consult it before touching an index —
+/// and it carries no secrets, only ownership records. The [`Envelope`]
+/// is the abuse-envelope state of paid-path S3: the query routes'
+/// concurrency cap and per-key index-operation permits
+/// (see [`crate::limits`]).
 #[derive(Debug, Clone)]
 pub struct AppState {
     config: Arc<Config>,
+    keys: Arc<crate::keys::KeyStore>,
     tenancy: Arc<Tenancy>,
     envelope: Arc<Envelope>,
 }
@@ -85,9 +90,14 @@ impl AppState {
     /// the same values and building a router in a test does not require
     /// cloning either. The envelope is process state, not configuration,
     /// so it is created here rather than passed in.
-    pub fn new(config: Arc<Config>, tenancy: Arc<Tenancy>) -> Self {
+    pub fn new(
+        config: Arc<Config>,
+        keys: Arc<crate::keys::KeyStore>,
+        tenancy: Arc<Tenancy>,
+    ) -> Self {
         AppState {
             config,
+            keys,
             tenancy,
             envelope: Arc::new(Envelope::new()),
         }
@@ -103,8 +113,11 @@ impl AppState {
 /// touches the index (paid-path plan S1, gap G2).
 ///
 /// * No ownership record: a legacy index (written before tenancy, or
-///   placed by another tool) — readable by any authenticated key, so
-///   existing self-hosted data dirs are not stranded.
+///   placed by another tool) — readable only as
+///   [`crate::tenancy::ownerless_readable`] rules: the operator's flag
+///   when set, else only while the key store holds a single active
+///   key. A denied legacy index is answered exactly like a missing
+///   one, so the refusal cannot confirm the index exists either.
 /// * Record owned by another key: answered exactly like a missing index
 ///   (`404 unknown_index`), so the response cannot confirm the index
 ///   exists. There is no `403` anywhere in this API's error vocabulary,
@@ -114,7 +127,13 @@ impl AppState {
 ///   enforced even between the startup sweeps in `Config::prepare`.
 fn enforce_tenancy(state: &AppState, index_id: &str, key: &KeyId) -> Result<(), ApiError> {
     let Some(record) = state.tenancy.lookup(index_id)? else {
-        return Ok(());
+        if crate::tenancy::ownerless_readable(
+            state.config.deny_ownerless_indexes,
+            state.keys.active_len(),
+        ) {
+            return Ok(());
+        }
+        return Err(ApiError::unknown_index(index_id));
     };
     if record.is_expired(now_unix_secs()) {
         state.tenancy.remove(index_id)?;
