@@ -22,6 +22,10 @@ It is deliberately domain-blind: no scoring, no rankings, no opinions about
 what the code means. It answers structural questions about source trees, and
 only that. Domain meaning belongs to the agents and teams composing on top.
 
+codetopo is a product of **AIMLDS** (2351485 ALBERTA INC.) — the house
+behind [Conduit](https://pipavia.com), managed MCP connector rails where
+every call is routed, metered, and receipted.
+
 ![Illustrative mock-up of a codetopo dependency graph (not actual tool output)](assets/codetopo-demo.svg)
 
 **Live demo:** [codetopo.aimlds.org](https://codetopo.aimlds.org) — codetopo's real map of this repository, drawn by codetopo itself and refreshed on every push to `main`.
@@ -224,7 +228,7 @@ across this product line: a hash-chained, append-only record, verified by
 
 ## Privacy Policy
 
-codetopo runs entirely on your machine. The MCP server (`codetopo-mcp`), the CLI, and the index databases they create never send your code, your queries, or any usage data anywhere: there are no accounts, no API keys, no telemetry, and no network calls at runtime. Indexing reads only the repositories you point it at and writes only the database paths you give it. To delete your data, delete the index database files (the `.db` files, or the HTTP server's data directory) — nothing is held on any server, so there is nothing elsewhere to erase. To take your data with you, export it with the `snapshot` command, which writes the whole graph as one portable JSON file. Questions about privacy: info@nrupalakolkar.com.
+codetopo runs entirely on your machine. The MCP server (`codetopo-mcp`), the CLI, and the index databases they create never send your code, your queries, or any usage data anywhere: there are no accounts, no API keys, no telemetry, and no network calls at runtime. Indexing reads only the repositories you point it at and writes only the database paths you give it. To delete your data, delete the index database files (the `.db` files, or the HTTP server's data directory) — nothing is held on any server, so there is nothing elsewhere to erase. To take your data with you, export it with the `snapshot` command, which writes the whole graph as one portable JSON file. Questions about privacy: info@aimlds.org.
 
 ## License
 
