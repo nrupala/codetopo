@@ -43,6 +43,8 @@ pub enum MailTls {
     /// No encryption. Only sane for a loopback sink or a local test
     /// double — a configured password must never be sent this way to
     /// a remote host; the setting exists for hermetic tests.
+    /// [`MailConfig::from_lookup`] enforces that: credentials plus
+    /// `none` parse only for a loopback host.
     None,
 }
 
@@ -150,6 +152,10 @@ impl MailConfig {
     /// - `CODETOPO_SMTP_USERNAME` / `CODETOPO_SMTP_PASSWORD`:
     ///   both or neither — submission authentication is
     ///   all-or-nothing. The password is never logged.
+    /// - Credentials with `CODETOPO_SMTP_TLS=none` are refused for
+    ///   any host but loopback: lettre would authenticate in the
+    ///   clear, and a comment saying "loopback only" is not a check
+    ///   (release-gate delta finding D-1).
     /// - `CODETOPO_SMTP_FROM`: default [`DEFAULT_SMTP_FROM`].
     pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Option<Self>, BridgeError> {
         let get = |name: &str| -> Option<String> {
@@ -191,6 +197,14 @@ impl MailConfig {
                     .to_string(),
             ));
         }
+        if tls == MailTls::None && password.is_some() && !is_loopback_host(&host) {
+            return Err(BridgeError::Config(format!(
+                "CODETOPO_SMTP_TLS=none would send the configured credentials \
+                 unencrypted to '{host}'; use 'starttls' or 'tls' for a remote \
+                 host (TLS 'none' with credentials is accepted only for a \
+                 loopback host)"
+            )));
+        }
         let from = get("CODETOPO_SMTP_FROM").unwrap_or_else(|| DEFAULT_SMTP_FROM.to_string());
         Ok(Some(MailConfig {
             host,
@@ -200,6 +214,21 @@ impl MailConfig {
             from,
             tls,
         }))
+    }
+}
+
+/// Whether an SMTP host names this machine: `localhost`, a
+/// 127.0.0.0/8 address, or `::1` — the loopback sink shape the
+/// hermetic tests use, and the only shape in which credentials may
+/// cross unencrypted (TLS `none`). Anything unparseable is not
+/// loopback: the check fails closed.
+fn is_loopback_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => false,
     }
 }
 
@@ -310,5 +339,68 @@ mod tests {
         // A TLS mode the transport does not speak.
         let vars = [host, ("CODETOPO_SMTP_TLS", "carrier-pigeon")];
         assert!(MailConfig::from_lookup(lookup(&vars)).is_err());
+    }
+
+    #[test]
+    fn mail_config_rejects_credentials_over_plaintext_to_a_remote_host() {
+        // D-1: TLS `none` + credentials would AUTH in the clear to
+        // whatever host is configured. Rejected at parse time, with
+        // the problem named.
+        let vars = [
+            ("CODETOPO_SMTP_HOST", "smtp.example.com"),
+            ("CODETOPO_SMTP_TLS", "none"),
+            ("CODETOPO_SMTP_USERNAME", "codetopo@aimlds.org"),
+            ("CODETOPO_SMTP_PASSWORD", "app-password"),
+        ];
+        let err = MailConfig::from_lookup(lookup(&vars))
+            .expect_err("credentials + plaintext + remote host is refused");
+        assert!(
+            err.to_string().contains("unencrypted"),
+            "the error names the problem"
+        );
+        // Encrypted modes to the same host with the same credentials
+        // are the supported shape and keep parsing.
+        for tls in ["starttls", "tls"] {
+            let vars = [
+                ("CODETOPO_SMTP_HOST", "smtp.example.com"),
+                ("CODETOPO_SMTP_TLS", tls),
+                ("CODETOPO_SMTP_USERNAME", "codetopo@aimlds.org"),
+                ("CODETOPO_SMTP_PASSWORD", "app-password"),
+            ];
+            assert!(
+                MailConfig::from_lookup(lookup(&vars)).is_ok(),
+                "credentials over {tls} parse"
+            );
+        }
+    }
+
+    #[test]
+    fn mail_config_allows_credentials_over_plaintext_on_loopback_only() {
+        // The hermetic-sink shape: plaintext on this machine only,
+        // where nothing crosses a wire.
+        for host in ["127.0.0.1", "localhost", "::1"] {
+            let vars = [
+                ("CODETOPO_SMTP_HOST", host),
+                ("CODETOPO_SMTP_TLS", "none"),
+                ("CODETOPO_SMTP_USERNAME", "codetopo@aimlds.org"),
+                ("CODETOPO_SMTP_PASSWORD", "app-password"),
+            ];
+            let config = MailConfig::from_lookup(lookup(&vars))
+                .expect("loopback parse")
+                .expect("configured");
+            assert_eq!(config.tls, MailTls::None, "host {host}");
+        }
+        // Plaintext without credentials exposes no secret; a remote
+        // host in that shape still parses (e.g. a trusted relay on a
+        // private network is the operator's call, not a leak).
+        let vars = [
+            ("CODETOPO_SMTP_HOST", "smtp.example.com"),
+            ("CODETOPO_SMTP_TLS", "none"),
+        ];
+        let config = MailConfig::from_lookup(lookup(&vars))
+            .expect("parse")
+            .expect("configured");
+        assert_eq!(config.tls, MailTls::None);
+        assert_eq!(config.username, None);
     }
 }
