@@ -123,7 +123,7 @@ curl -H "Authorization: Bearer $KEY" \
   "localhost:8080/v1/graphs/<uuid>/descendants?node=<node-id>&expand=true"
 ```
 
-Eight endpoints under `/v1`, one index operation plus seven read-only
+Twelve endpoints under `/v1`, one index operation plus eleven read-only
 queries: `POST /v1/index`, `GET /v1/graphs/{id}/{descendants, ancestors,
 blast-radius, path, stats, verify, snapshot, neighborhood, symbol,
 search}`, `GET /v1/schema`. Full contract in
