@@ -23,6 +23,7 @@ use tokio::net::TcpListener;
 
 use codetopo_bridge::config::BridgeConfig;
 use codetopo_bridge::http::{router, BridgeState};
+use codetopo_bridge::mail::{KeyMailer, SmtpMailer};
 use codetopo_bridge::service::{sweep, Policy};
 use codetopo_bridge::store::BridgeStore;
 use codetopo_bridge::BridgeError;
@@ -60,6 +61,38 @@ async fn run() -> Result<(), BridgeError> {
         );
     }
 
+    // Key-delivery email (see `codetopo_bridge::mail`): configured
+    // SMTP becomes the mailer; anything else — unconfigured, or a
+    // configured from-address the transport cannot use — leaves the
+    // bridge claim-page-only and says so in the log. Email trouble
+    // must never stop the bridge from booting: purchases are the
+    // bridge's job, email is a second delivery channel for them.
+    let mailer: Option<Arc<dyn KeyMailer>> = match &config.mail {
+        Some(mail_config) => match SmtpMailer::new(mail_config.clone()) {
+            Ok(mailer) => {
+                eprintln!(
+                    "codetopo-bridge: key email enabled (smtp {}:{}, from {})",
+                    mail_config.host, mail_config.port, mail_config.from
+                );
+                Some(Arc::new(mailer))
+            }
+            Err(err) => {
+                eprintln!(
+                    "codetopo-bridge: key email DISABLED — {err}; \
+                     keys are delivered by the claim page only"
+                );
+                None
+            }
+        },
+        None => {
+            eprintln!(
+                "codetopo-bridge: key email not configured (CODETOPO_SMTP_HOST unset); \
+                 keys are delivered by the claim page only"
+            );
+            None
+        }
+    };
+
     let state = Arc::new(BridgeState {
         store,
         keys,
@@ -69,6 +102,7 @@ async fn run() -> Result<(), BridgeError> {
             claim_key: config.claim_key,
         },
         webhook_secret: config.webhook_secret.clone(),
+        mailer,
     });
 
     // The periodic sweep shares the state; the stores serialise

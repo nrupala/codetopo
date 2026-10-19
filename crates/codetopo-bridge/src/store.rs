@@ -19,6 +19,12 @@
 //!   their subscription's entitlement existed: a session id waiting to
 //!   become a claim token at issuance. Swept on the claim horizon so
 //!   abandoned (or other products') checkouts cannot grow it forever.
+//! - `bridge_buyer_emails` — one row per subscription: the buyer
+//!   address its checkout session carried (key-delivery email, see
+//!   [`crate::mail`]), and the record a support resend would work
+//!   from. Delivery rows themselves gain `emailed_at`: when the key
+//!   email for that issuance went out, so a replay or a second
+//!   triggering event can never send it twice.
 //!
 //! The tables live in the same `keys.db` file the server reads, so one
 //! file is the whole billing-and-keys state a backup must capture. The
@@ -81,6 +87,11 @@ pub struct Delivery {
     pub expires_at: i64,
     /// Unix seconds the delivery was claimed, if it was.
     pub claimed_at: Option<i64>,
+    /// Unix seconds the key email for this issuance was sent, if it
+    /// was. The send marker lives on the delivery — one per issued
+    /// key — so a replacement key gets its own send and the first
+    /// key's marker can never suppress or duplicate it.
+    pub emailed_at: Option<i64>,
 }
 
 /// The bridge store: one SQLite connection, serialised behind a mutex.
@@ -145,9 +156,40 @@ impl BridgeStore {
                  token           TEXT PRIMARY KEY,
                  subscription_id TEXT NOT NULL,
                  created_at      INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS bridge_buyer_emails (
+                 subscription_id TEXT PRIMARY KEY,
+                 email           TEXT NOT NULL,
+                 updated_at      INTEGER NOT NULL
              );",
         )
         .map_err(|err| BridgeError::Store(format!("cannot initialise bridge store: {err}")))?;
+        // Migration for stores created before key-delivery email:
+        // `key_deliveries` gains the per-issuance send marker.
+        let has_emailed_at = {
+            let mut statement = conn
+                .prepare("PRAGMA table_info(key_deliveries)")
+                .map_err(|err| BridgeError::Store(format!("cannot inspect deliveries: {err}")))?;
+            let columns = statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|err| BridgeError::Store(format!("cannot inspect deliveries: {err}")))?;
+            let mut found = false;
+            for column in columns {
+                let column = column
+                    .map_err(|err| BridgeError::Store(format!("cannot inspect deliveries: {err}")))?;
+                if column == "emailed_at" {
+                    found = true;
+                }
+            }
+            found
+        };
+        if !has_emailed_at {
+            conn.execute(
+                "ALTER TABLE key_deliveries ADD COLUMN emailed_at INTEGER",
+                [],
+            )
+            .map_err(|err| BridgeError::Store(format!("cannot migrate deliveries: {err}")))?;
+        }
         Ok(BridgeStore {
             conn: Mutex::new(conn),
         })
@@ -297,7 +339,8 @@ impl BridgeStore {
                  nonce = excluded.nonce,
                  created_at = excluded.created_at,
                  expires_at = excluded.expires_at,
-                 claimed_at = NULL",
+                 claimed_at = NULL,
+                 emailed_at = NULL",
             rusqlite::params![key_id, sealed.ciphertext, sealed.nonce, created_at, expires_at],
         )
         .map_err(|err| BridgeError::Store(format!("cannot save delivery: {err}")))?;
@@ -308,7 +351,7 @@ impl BridgeStore {
     pub fn delivery(&self, key_id: &str) -> Result<Option<Delivery>, BridgeError> {
         let conn = self.lock()?;
         conn.query_row(
-            "SELECT key_id, ciphertext, nonce, created_at, expires_at, claimed_at
+            "SELECT key_id, ciphertext, nonce, created_at, expires_at, claimed_at, emailed_at
              FROM key_deliveries WHERE key_id = ?1",
             rusqlite::params![key_id],
             |row| {
@@ -323,11 +366,64 @@ impl BridgeStore {
                     created_at: row.get(3)?,
                     expires_at: row.get(4)?,
                     claimed_at: row.get(5)?,
+                    emailed_at: row.get(6)?,
                 })
             },
         )
         .optional()
         .map_err(|err| BridgeError::Store(format!("cannot read delivery: {err}")))
+    }
+
+    /// Stamps the key email for one issuance as sent. Called only
+    /// after the transport accepted the message; a failed send leaves
+    /// the stamp unset, so a later event for the same subscription
+    /// may retry while the delivery still lives.
+    pub fn mark_delivery_emailed(&self, key_id: &str, now: i64) -> Result<(), BridgeError> {
+        let conn = self.lock()?;
+        conn.execute(
+            "UPDATE key_deliveries SET emailed_at = ?2 WHERE key_id = ?1",
+            rusqlite::params![key_id, now],
+        )
+        .map_err(|err| BridgeError::Store(format!("cannot stamp delivery emailed: {err}")))?;
+        Ok(())
+    }
+
+    // -- buyer emails (key-delivery email, per subscription) -----------
+
+    /// Records the buyer address a checkout session carried for a
+    /// subscription. The newest checkout wins: a buyer who re-buys
+    /// with a corrected address gets their key at the new one. The
+    /// record outlives the entitlement — it is what a support resend
+    /// would work from — and it is never an authority for anything.
+    pub fn record_buyer_email(
+        &self,
+        subscription_id: &str,
+        email: &str,
+        now: i64,
+    ) -> Result<(), BridgeError> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO bridge_buyer_emails (subscription_id, email, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(subscription_id) DO UPDATE SET
+                 email = excluded.email,
+                 updated_at = excluded.updated_at",
+            rusqlite::params![subscription_id, email, now],
+        )
+        .map_err(|err| BridgeError::Store(format!("cannot record buyer email: {err}")))?;
+        Ok(())
+    }
+
+    /// The recorded buyer address for a subscription, if any.
+    pub fn buyer_email(&self, subscription_id: &str) -> Result<Option<String>, BridgeError> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT email FROM bridge_buyer_emails WHERE subscription_id = ?1",
+            rusqlite::params![subscription_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|err| BridgeError::Store(format!("cannot read buyer email: {err}")))
     }
 
     /// Registers a claim token for a key. Idempotent: a token already
@@ -555,6 +651,76 @@ mod tests {
         assert_eq!(store.purge_expired_deliveries(199).expect("purge"), 0);
         assert_eq!(store.purge_expired_deliveries(200).expect("purge"), 1);
         assert!(store.delivery("k2").expect("read").expect("present").sealed.is_none());
+    }
+
+    #[test]
+    fn buyer_emails_round_trip_and_the_newest_wins() {
+        let store = store();
+        assert!(store.buyer_email("sub_1").expect("read").is_none());
+        store.record_buyer_email("sub_1", "first@example.com", 100).expect("record");
+        assert_eq!(
+            store.buyer_email("sub_1").expect("read").as_deref(),
+            Some("first@example.com")
+        );
+        store.record_buyer_email("sub_1", "second@example.com", 200).expect("record");
+        assert_eq!(
+            store.buyer_email("sub_1").expect("read").as_deref(),
+            Some("second@example.com"),
+            "a later checkout corrects the address"
+        );
+        assert!(store.buyer_email("sub_2").expect("read").is_none(), "scoped per subscription");
+    }
+
+    #[test]
+    fn deliveries_carry_the_emailed_marker() {
+        let store = store();
+        let sealed = Sealed { ciphertext: vec![1, 2, 3], nonce: vec![4; 12] };
+        store.create_delivery("k1", &sealed, 100, 200).expect("create");
+        let delivery = store.delivery("k1").expect("read").expect("present");
+        assert_eq!(delivery.emailed_at, None);
+        store.mark_delivery_emailed("k1", 150).expect("stamp");
+        let delivery = store.delivery("k1").expect("read").expect("present");
+        assert_eq!(delivery.emailed_at, Some(150));
+        // A re-created delivery (a retried issuance) starts un-emailed.
+        store.create_delivery("k1", &sealed, 160, 260).expect("recreate");
+        let delivery = store.delivery("k1").expect("read").expect("present");
+        assert_eq!(delivery.emailed_at, None);
+    }
+
+    #[test]
+    fn a_store_created_before_key_email_migrates_on_open() {
+        // The pre-email schema: key_deliveries without emailed_at.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("keys.db");
+        {
+            let conn = Connection::open(&path).expect("old store");
+            conn.execute_batch(
+                "CREATE TABLE key_deliveries (
+                     key_id     TEXT PRIMARY KEY,
+                     ciphertext BLOB,
+                     nonce      BLOB,
+                     created_at INTEGER NOT NULL,
+                     expires_at INTEGER NOT NULL,
+                     claimed_at INTEGER
+                 );
+                 INSERT INTO key_deliveries VALUES ('k1', X'0102', X'0405', 100, 200, NULL);",
+            )
+            .expect("old schema");
+        }
+        let store = BridgeStore::open(&path).expect("migrated store");
+        let delivery = store.delivery("k1").expect("read").expect("present");
+        assert_eq!(delivery.emailed_at, None);
+        store.mark_delivery_emailed("k1", 150).expect("stamp works after migration");
+        assert_eq!(
+            store.delivery("k1").expect("read").expect("present").emailed_at,
+            Some(150)
+        );
+        // Opening again does not re-run the migration into an error.
+        let store = BridgeStore::open(&path).expect("second open");
+        assert_eq!(
+            store.delivery("k1").expect("read").expect("present").emailed_at,
+            Some(150)
+        );
     }
 
     #[test]

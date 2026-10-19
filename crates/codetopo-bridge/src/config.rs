@@ -25,6 +25,49 @@ use crate::BridgeError;
 /// exposing the listener is that proxy's decision, not a default here.
 pub const DEFAULT_BRIDGE_BIND: &str = "127.0.0.1:8788";
 
+/// Default from-address for key-delivery email, on the domain the
+/// business sells under. Configuration may override it; the address
+/// must be one the SMTP credential is allowed to send as.
+pub const DEFAULT_SMTP_FROM: &str = "codetopo@aimlds.org";
+/// Default SMTP submission port (STARTTLS submission).
+pub const DEFAULT_SMTP_PORT: u16 = 587;
+
+/// How the SMTP conversation is encrypted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MailTls {
+    /// Plain connection upgraded with STARTTLS (submission, usually
+    /// port 587). The default: the credential never crosses in clear.
+    StartTls,
+    /// TLS from the first byte (usually port 465).
+    ImplicitTls,
+    /// No encryption. Only sane for a loopback sink or a local test
+    /// double — a configured password must never be sent this way to
+    /// a remote host; the setting exists for hermetic tests.
+    None,
+}
+
+/// SMTP submission settings for key-delivery email (see
+/// [`crate::mail`]). Optional as a whole: with no host configured
+/// the bridge runs exactly as before, keys delivered by the claim
+/// page alone. The password lives only in the environment, like
+/// every other bridge secret.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MailConfig {
+    /// Submission host.
+    pub host: String,
+    /// Submission port.
+    pub port: u16,
+    /// Submission username, when the host requires authentication.
+    /// Set exactly when `password` is set (enforced at parse time).
+    pub username: Option<String>,
+    /// Submission password. Environment-only; never logged.
+    pub password: Option<String>,
+    /// From-address for key emails, on the aimlds.org domain.
+    pub from: String,
+    /// Transport encryption.
+    pub tls: MailTls,
+}
+
 /// Resolved bridge configuration.
 #[derive(Debug, Clone)]
 pub struct BridgeConfig {
@@ -46,6 +89,10 @@ pub struct BridgeConfig {
     /// AES-256 key sealing unclaimed key deliveries, as 64 hex chars
     /// decoded to 32 bytes. Exists only in the environment.
     pub claim_key: [u8; 32],
+    /// Key-delivery email settings, when SMTP submission is
+    /// configured. `None` is a supported state — the claim page is
+    /// then the only delivery channel, as before this feature.
+    pub mail: Option<MailConfig>,
 }
 
 impl BridgeConfig {
@@ -55,7 +102,9 @@ impl BridgeConfig {
     /// siblings, via [`ServerConfig::from_env`]), plus
     /// `CODETOPO_BRIDGE_BIND`, `CODETOPO_STRIPE_WEBHOOK_SECRET`,
     /// `CODETOPO_STRIPE_PRICE_ID`, `CODETOPO_CLAIM_KEY`, and optionally
-    /// `CODETOPO_PLAN` (default: the hosted plan).
+    /// `CODETOPO_PLAN` (default: the hosted plan). Key-delivery email
+    /// is configured by the `CODETOPO_SMTP_*` family (see
+    /// [`MailConfig::from_lookup`]); unconfigured, it is simply off.
     pub fn from_env() -> Result<Self, BridgeError> {
         let server = ServerConfig::from_env().map_err(|err| {
             BridgeError::Config(format!("server configuration is unusable: {err}"))
@@ -70,6 +119,7 @@ impl BridgeConfig {
         let price_id = required("CODETOPO_STRIPE_PRICE_ID")?;
         let plan = env_string("CODETOPO_PLAN", DEFAULT_PLAN);
         let claim_key = parse_claim_key(&required("CODETOPO_CLAIM_KEY")?)?;
+        let mail = MailConfig::from_lookup(|name| std::env::var(name).ok())?;
         let keys_db_path = server.keys_db_path();
         Ok(BridgeConfig {
             data_dir: server.data_dir,
@@ -79,7 +129,77 @@ impl BridgeConfig {
             price_id,
             plan,
             claim_key,
+            mail,
         })
+    }
+}
+
+impl MailConfig {
+    /// Resolves the `CODETOPO_SMTP_*` family through `lookup` (the
+    /// environment, in production; a fixture map in tests).
+    ///
+    /// `CODETOPO_SMTP_HOST` is the switch: absent or empty, email is
+    /// off and the rest of the family is ignored. With a host set,
+    /// the family is validated strictly — a half-configured mailer
+    /// is a startup error, never a silent no-op:
+    ///
+    /// - `CODETOPO_SMTP_PORT`: default [`DEFAULT_SMTP_PORT`]; must
+    ///   parse as a port number.
+    /// - `CODETOPO_SMTP_TLS`: `starttls` (default), `tls`, or
+    ///   `none`; anything else is an error.
+    /// - `CODETOPO_SMTP_USERNAME` / `CODETOPO_SMTP_PASSWORD`:
+    ///   both or neither — submission authentication is
+    ///   all-or-nothing. The password is never logged.
+    /// - `CODETOPO_SMTP_FROM`: default [`DEFAULT_SMTP_FROM`].
+    pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Option<Self>, BridgeError> {
+        let get = |name: &str| -> Option<String> {
+            lookup(name).and_then(|value| {
+                let trimmed = value.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            })
+        };
+        let Some(host) = get("CODETOPO_SMTP_HOST") else {
+            return Ok(None);
+        };
+        let port = match get("CODETOPO_SMTP_PORT") {
+            None => DEFAULT_SMTP_PORT,
+            Some(raw) => raw.parse::<u16>().map_err(|_| {
+                BridgeError::Config(format!(
+                    "CODETOPO_SMTP_PORT must be a port number, got '{raw}'"
+                ))
+            })?,
+        };
+        let tls = match get("CODETOPO_SMTP_TLS").as_deref() {
+            None | Some("starttls") => MailTls::StartTls,
+            Some("tls") => MailTls::ImplicitTls,
+            Some("none") => MailTls::None,
+            Some(other) => {
+                return Err(BridgeError::Config(format!(
+                    "CODETOPO_SMTP_TLS must be 'starttls', 'tls', or 'none', got '{other}'"
+                )));
+            }
+        };
+        let username = get("CODETOPO_SMTP_USERNAME");
+        let password = get("CODETOPO_SMTP_PASSWORD");
+        if username.is_some() != password.is_some() {
+            return Err(BridgeError::Config(
+                "CODETOPO_SMTP_USERNAME and CODETOPO_SMTP_PASSWORD must be set together"
+                    .to_string(),
+            ));
+        }
+        let from = get("CODETOPO_SMTP_FROM").unwrap_or_else(|| DEFAULT_SMTP_FROM.to_string());
+        Ok(Some(MailConfig {
+            host,
+            port,
+            username,
+            password,
+            from,
+            tls,
+        }))
     }
 }
 
@@ -115,6 +235,7 @@ fn parse_claim_key(raw: &str) -> Result<[u8; 32], BridgeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn claim_key_must_be_exactly_32_hex_bytes() {
@@ -123,5 +244,71 @@ mod tests {
         assert!(parse_claim_key("abcd").is_err(), "too short");
         assert!(parse_claim_key(&"zz".repeat(32)).is_err(), "not hex");
         assert!(parse_claim_key(&"ab".repeat(33)).is_err(), "too long");
+    }
+
+    fn lookup(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let map: HashMap<String, String> = vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |name| map.get(name).cloned()
+    }
+
+    #[test]
+    fn mail_is_off_without_a_host() {
+        assert_eq!(MailConfig::from_lookup(lookup(&[])).expect("parse"), None);
+        // The rest of the family alone does not switch it on.
+        let vars = [("CODETOPO_SMTP_PORT", "2525"), ("CODETOPO_SMTP_FROM", "x@aimlds.org")];
+        assert_eq!(MailConfig::from_lookup(lookup(&vars)).expect("parse"), None);
+    }
+
+    #[test]
+    fn mail_config_defaults_are_submission_shaped() {
+        let vars = [("CODETOPO_SMTP_HOST", "smtp.example.com")];
+        let config = MailConfig::from_lookup(lookup(&vars))
+            .expect("parse")
+            .expect("configured");
+        assert_eq!(config.host, "smtp.example.com");
+        assert_eq!(config.port, DEFAULT_SMTP_PORT);
+        assert_eq!(config.tls, MailTls::StartTls);
+        assert_eq!(config.from, DEFAULT_SMTP_FROM);
+        assert_eq!(config.username, None);
+        assert_eq!(config.password, None);
+    }
+
+    #[test]
+    fn mail_config_reads_the_full_family() {
+        let vars = [
+            ("CODETOPO_SMTP_HOST", "smtp.example.com"),
+            ("CODETOPO_SMTP_PORT", "465"),
+            ("CODETOPO_SMTP_TLS", "tls"),
+            ("CODETOPO_SMTP_USERNAME", "codetopo@aimlds.org"),
+            ("CODETOPO_SMTP_PASSWORD", "app-password"),
+            ("CODETOPO_SMTP_FROM", "keys@aimlds.org"),
+        ];
+        let config = MailConfig::from_lookup(lookup(&vars))
+            .expect("parse")
+            .expect("configured");
+        assert_eq!(config.port, 465);
+        assert_eq!(config.tls, MailTls::ImplicitTls);
+        assert_eq!(config.username.as_deref(), Some("codetopo@aimlds.org"));
+        assert_eq!(config.password.as_deref(), Some("app-password"));
+        assert_eq!(config.from, "keys@aimlds.org");
+    }
+
+    #[test]
+    fn mail_config_rejects_a_half_built_family() {
+        let host = ("CODETOPO_SMTP_HOST", "smtp.example.com");
+        // Username without its password (and the mirror image).
+        let vars = [host, ("CODETOPO_SMTP_USERNAME", "codetopo@aimlds.org")];
+        assert!(MailConfig::from_lookup(lookup(&vars)).is_err());
+        let vars = [host, ("CODETOPO_SMTP_PASSWORD", "app-password")];
+        assert!(MailConfig::from_lookup(lookup(&vars)).is_err());
+        // A port that is not a number.
+        let vars = [host, ("CODETOPO_SMTP_PORT", "soon")];
+        assert!(MailConfig::from_lookup(lookup(&vars)).is_err());
+        // A TLS mode the transport does not speak.
+        let vars = [host, ("CODETOPO_SMTP_TLS", "carrier-pigeon")];
+        assert!(MailConfig::from_lookup(lookup(&vars)).is_err());
     }
 }

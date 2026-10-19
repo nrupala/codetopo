@@ -48,6 +48,7 @@ fn rig() -> Rig {
             },
         },
         webhook_secret: SECRET.to_string(),
+        mailer: None,
     });
     let keys_handle = Arc::new(KeyStore::open(&db_path).expect("key store handle"));
     Rig {

@@ -44,8 +44,10 @@
 //!   is gone and is never resurrected.
 
 use codetopo_server::keys::KeyStore;
+use codetopo_server::limits::plan_limits;
 
 use crate::crypto;
+use crate::mail::{compose_key_email, KeyMailer};
 use crate::store::{
     BridgeStore, Entitlement, STATUS_ACTIVE, STATUS_CANCEL_SCHEDULED, STATUS_PAST_DUE,
     STATUS_REVOKED,
@@ -89,10 +91,16 @@ pub struct Policy {
 /// `now` is the caller's clock; `created` (inside the event) is the
 /// ordering clock. The event is recorded only after its handler runs,
 /// so a failure leaves Stripe's retry free to converge.
+///
+/// `mailer` is the key-delivery email transport, when configured.
+/// After an event applies, [`maybe_email_key`] offers the send for
+/// the event's subscription; email is a side channel with its own
+/// failure rules (see there) and never changes the outcome here.
 pub fn apply_event(
     store: &BridgeStore,
     keys: &KeyStore,
     policy: &Policy,
+    mailer: Option<&dyn KeyMailer>,
     event: &WebhookEvent,
     now: i64,
 ) -> Result<EventOutcome, BridgeError> {
@@ -164,7 +172,88 @@ pub fn apply_event(
         _ => EventOutcome::Ignored,
     };
     store.record_event(&event.event_id, &event.event_type, occurred, now)?;
+    if outcome == EventOutcome::Applied {
+        // The event is recorded before any send is attempted: if the
+        // send is slow or Stripe redelivers meanwhile, the replay is
+        // a duplicate and the hook below never runs twice for it.
+        maybe_email_key(store, policy, mailer, event, now);
+    }
     Ok(outcome)
+}
+
+/// Offers the one key email for an applied event's subscription.
+///
+/// The send happens when everything it needs has converged — an
+/// entitlement, a live (unclaimed, unexpired, not-yet-emailed)
+/// delivery, and a recorded buyer address — whichever event
+/// completes that set triggers it: the checkout that records the
+/// address, or the creation that issues the key when the checkout
+/// landed first. A replacement key is a fresh delivery with its own
+/// unset marker, so it is emailed like the first.
+///
+/// Failure rules are strict: nothing in here may fail the webhook.
+/// A missing address, an already-claimed delivery, or a transport
+/// error is a log line on the bridge host (naming the event), and
+/// the claim page remains the buyer's path. A failed send leaves
+/// the delivery's marker unset, so a later event for the same
+/// subscription may retry inside the claim window.
+fn maybe_email_key(
+    store: &BridgeStore,
+    policy: &Policy,
+    mailer: Option<&dyn KeyMailer>,
+    event: &WebhookEvent,
+    now: i64,
+) {
+    let Some(mailer) = mailer else {
+        return;
+    };
+    let Some(subscription_id) = event_subscription_id(event) else {
+        return;
+    };
+    let attempt = |store: &BridgeStore| -> Result<bool, String> {
+        let fail = |err: BridgeError| err.to_string();
+        let Some(ent) = store.entitlement(&subscription_id).map_err(fail)? else {
+            return Ok(false);
+        };
+        let Some(delivery) = store.delivery(&ent.key_id).map_err(fail)? else {
+            return Ok(false);
+        };
+        if delivery.claimed_at.is_some()
+            || delivery.emailed_at.is_some()
+            || now >= delivery.expires_at
+        {
+            return Ok(false);
+        }
+        let Some(sealed) = &delivery.sealed else {
+            return Ok(false);
+        };
+        let Some(to) = store.buyer_email(&subscription_id).map_err(fail)? else {
+            eprintln!(
+                "codetopo-bridge: no buyer email recorded for subscription \
+                 {subscription_id} (event {}); the key is delivered by the claim page only",
+                event.event_id
+            );
+            return Ok(false);
+        };
+        let secret = crypto::open(&policy.claim_key, sealed).map_err(fail)?;
+        let email = compose_key_email(&to, &ent.key_id, &secret, &plan_limits(&policy.plan));
+        mailer
+            .send_key_email(&email)
+            .map_err(|err| err.to_string())?;
+        store.mark_delivery_emailed(&ent.key_id, now).map_err(fail)?;
+        eprintln!(
+            "codetopo-bridge: key email sent for subscription {subscription_id} (event {})",
+            event.event_id
+        );
+        Ok(true)
+    };
+    if let Err(err) = attempt(store) {
+        eprintln!(
+            "codetopo-bridge: key email not sent for event {} (subscription \
+             {subscription_id}): {err}",
+            event.event_id
+        );
+    }
 }
 
 /// Exchanges a claim token for the credential it addresses, once.
@@ -255,6 +344,15 @@ fn apply_checkout(
     let Some(subscription_id) = data.subscription.as_deref() else {
         return Ok(EventOutcome::Ignored); // a paid session with no subscription sells no key
     };
+    // The buyer address rides this event and no other: record it
+    // against the subscription whether the entitlement already
+    // exists or is still to come, so the key email can be offered
+    // the moment both halves converge (see `maybe_email_key`). A
+    // session that carried no usable address records nothing — the
+    // claim page stays the only channel for that purchase.
+    if let Some(email) = data.buyer_email() {
+        store.record_buyer_email(subscription_id, email, now)?;
+    }
     match store.entitlement(subscription_id)? {
         Some(ent) => {
             if let Some(delivery) = store.delivery(&ent.key_id)? {
@@ -690,6 +788,63 @@ mod tests {
         }
     }
 
+    fn checkout_event_with_email(
+        event_id: &str,
+        session: &str,
+        sub: &str,
+        created: i64,
+        email: &str,
+    ) -> WebhookEvent {
+        let mut event = checkout_event(event_id, session, sub, created);
+        event.data["customer_details"] = serde_json::json!({ "email": email });
+        event
+    }
+
+    /// The transport double: records every message it is asked to
+    /// send, and can be told to fail. Hermetic by construction.
+    struct RecordingMailer {
+        sent: std::sync::Mutex<Vec<crate::mail::KeyEmail>>,
+        failing: std::sync::Mutex<bool>,
+    }
+
+    impl RecordingMailer {
+        fn new() -> Self {
+            RecordingMailer {
+                sent: std::sync::Mutex::new(Vec::new()),
+                failing: std::sync::Mutex::new(false),
+            }
+        }
+        fn sent(&self) -> Vec<crate::mail::KeyEmail> {
+            self.sent.lock().expect("sent lock").clone()
+        }
+        fn set_failing(&self, failing: bool) {
+            *self.failing.lock().expect("failing lock") = failing;
+        }
+    }
+
+    impl crate::mail::KeyMailer for RecordingMailer {
+        fn send_key_email(
+            &self,
+            email: &crate::mail::KeyEmail,
+        ) -> Result<(), crate::mail::MailError> {
+            if *self.failing.lock().expect("failing lock") {
+                return Err(crate::mail::MailError("test transport is down".to_string()));
+            }
+            self.sent.lock().expect("sent lock").push(email.clone());
+            Ok(())
+        }
+    }
+
+    fn apply_with_mailer(
+        store: &BridgeStore,
+        keys: &KeyStore,
+        mailer: &RecordingMailer,
+        event: &WebhookEvent,
+        now: i64,
+    ) -> EventOutcome {
+        apply_event(store, keys, &policy(), Some(mailer), event, now).expect("apply event")
+    }
+
     fn invoice_event(event_id: &str, event_type: &str, sub: &str, created: i64) -> WebhookEvent {
         WebhookEvent {
             event_id: event_id.to_string(),
@@ -708,7 +863,7 @@ mod tests {
         event: &WebhookEvent,
         now: i64,
     ) -> EventOutcome {
-        apply_event(store, keys, &policy(), event, now).expect("apply event")
+        apply_event(store, keys, &policy(), None, event, now).expect("apply event")
     }
 
     /// A completed purchase, subscription event first: entitlement,
@@ -1109,5 +1264,201 @@ mod tests {
             claim_key(&store, &policy(), "cs_R", NOW + CLAIM_TTL_SECS),
             Err(BridgeError::ClaimUnavailable)
         ));
+    }
+
+    /// Extracts the credential a key email carries, asserting it is
+    /// present exactly once — the same bar the composition tests set.
+    fn emailed_credential(email: &crate::mail::KeyEmail, key_id: &str) -> String {
+        let marker = format!("{key_id}:");
+        let start = email.text.find(&marker).expect("credential in the email") + marker.len();
+        let secret: String = email.text[start..]
+            .chars()
+            .take_while(|ch| ch.is_ascii_hexdigit())
+            .collect();
+        assert_eq!(secret.len(), 64, "the full secret, from the email");
+        assert_eq!(
+            email.text.matches(&format!("{marker}{secret}")).count(),
+            1,
+            "exactly one appearance of the credential"
+        );
+        secret
+    }
+
+    #[test]
+    fn the_key_email_goes_out_once_when_the_checkout_records_the_address() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        // Creation first: no address is known yet, so nothing sends.
+        let created = created_event("evt_c", "sub_S", NOW);
+        apply_with_mailer(&store, &keys, &mailer, &created, NOW);
+        assert!(mailer.sent().is_empty());
+        // The checkout records the address and completes the set.
+        let checkout =
+            checkout_event_with_email("evt_k", "cs_S", "sub_S", NOW + 30, "buyer@example.com");
+        apply_with_mailer(&store, &keys, &mailer, &checkout, NOW + 30);
+        assert_eq!(
+            store.buyer_email("sub_S").expect("read").as_deref(),
+            Some("buyer@example.com"),
+            "the checkout's address is stored with the subscription"
+        );
+        let sent = mailer.sent();
+        assert_eq!(sent.len(), 1, "exactly one key email");
+        assert_eq!(sent[0].to, "buyer@example.com");
+        let secret = emailed_credential(&sent[0], "sub_S");
+        assert!(keys.verify("sub_S", &secret).is_ok(), "the emailed key works");
+        let delivery = store.delivery("sub_S").expect("read").expect("delivery");
+        assert_eq!(delivery.emailed_at, Some(NOW + 30));
+        // Emailing did not consume the claim: the buyer can still
+        // claim, and gets the same credential.
+        let (_, claimed) = claim_key(&store, &policy(), "cs_S", NOW + 60).expect("claim");
+        assert_eq!(claimed, secret);
+    }
+
+    #[test]
+    fn the_key_email_goes_out_at_issuance_when_the_checkout_landed_first() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        let checkout =
+            checkout_event_with_email("evt_k", "cs_T", "sub_T", NOW, "early@example.com");
+        apply_with_mailer(&store, &keys, &mailer, &checkout, NOW);
+        assert!(mailer.sent().is_empty(), "no key exists yet, so no key email");
+        let created = created_event("evt_c", "sub_T", NOW + 30);
+        apply_with_mailer(&store, &keys, &mailer, &created, NOW + 30);
+        let sent = mailer.sent();
+        assert_eq!(sent.len(), 1, "issuance completes the set and sends");
+        assert_eq!(sent[0].to, "early@example.com");
+        let secret = emailed_credential(&sent[0], "sub_T");
+        assert!(keys.verify("sub_T", &secret).is_ok());
+    }
+
+    #[test]
+    fn replayed_events_never_resend_the_key_email() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        let created = created_event("evt_c", "sub_U", NOW);
+        let checkout =
+            checkout_event_with_email("evt_k", "cs_U", "sub_U", NOW + 30, "buyer@example.com");
+        apply_with_mailer(&store, &keys, &mailer, &created, NOW);
+        apply_with_mailer(&store, &keys, &mailer, &checkout, NOW + 30);
+        assert_eq!(mailer.sent().len(), 1);
+        // Stripe redelivers both events (at-least-once): duplicates,
+        // and the send count does not move.
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &checkout, NOW + 60),
+            EventOutcome::Duplicate
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &created, NOW + 60),
+            EventOutcome::Duplicate
+        );
+        assert_eq!(mailer.sent().len(), 1, "no second send on replay");
+        // A fresh, distinct event for the same subscription does not
+        // re-send either: the delivery's marker is already set.
+        let update = subscription_event(
+            "evt_u",
+            "customer.subscription.updated",
+            "sub_U",
+            NOW + 120,
+            serde_json::json!({}),
+        );
+        apply_with_mailer(&store, &keys, &mailer, &update, NOW + 120);
+        assert_eq!(mailer.sent().len(), 1);
+    }
+
+    #[test]
+    fn a_failed_send_leaves_the_purchase_and_the_claim_intact() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        mailer.set_failing(true);
+        let created = created_event("evt_c", "sub_V", NOW);
+        let checkout =
+            checkout_event_with_email("evt_k", "cs_V", "sub_V", NOW + 30, "buyer@example.com");
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &created, NOW),
+            EventOutcome::Applied,
+            "email failure never fails the purchase"
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &checkout, NOW + 30),
+            EventOutcome::Applied
+        );
+        assert!(mailer.sent().is_empty());
+        let ent = store.entitlement("sub_V").expect("read").expect("entitlement");
+        assert_eq!(ent.status, STATUS_ACTIVE);
+        let delivery = store.delivery("sub_V").expect("read").expect("delivery");
+        assert_eq!(delivery.emailed_at, None, "a failed send leaves the marker unset");
+        // The claim path carries the purchase on its own.
+        let (_, secret) = claim_key(&store, &policy(), "cs_V", NOW + 60).expect("claim");
+        assert!(keys.verify("sub_V", &secret).is_ok());
+    }
+
+    #[test]
+    fn a_failed_send_is_retried_by_a_later_event() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        mailer.set_failing(true);
+        let created = created_event("evt_c", "sub_W", NOW);
+        let checkout =
+            checkout_event_with_email("evt_k", "cs_W", "sub_W", NOW + 30, "buyer@example.com");
+        apply_with_mailer(&store, &keys, &mailer, &created, NOW);
+        apply_with_mailer(&store, &keys, &mailer, &checkout, NOW + 30);
+        assert!(mailer.sent().is_empty());
+        mailer.set_failing(false);
+        let update = subscription_event(
+            "evt_u",
+            "customer.subscription.updated",
+            "sub_W",
+            NOW + 120,
+            serde_json::json!({}),
+        );
+        apply_with_mailer(&store, &keys, &mailer, &update, NOW + 120);
+        assert_eq!(mailer.sent().len(), 1, "the retry sends once the transport recovers");
+    }
+
+    #[test]
+    fn a_checkout_without_an_address_sends_nothing() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        let created = created_event("evt_c", "sub_X2", NOW);
+        let checkout = checkout_event("evt_k", "cs_X2", "sub_X2", NOW + 30);
+        apply_with_mailer(&store, &keys, &mailer, &created, NOW);
+        apply_with_mailer(&store, &keys, &mailer, &checkout, NOW + 30);
+        assert!(mailer.sent().is_empty());
+        assert!(store.buyer_email("sub_X2").expect("read").is_none());
+        // And the purchase is whole: the claim still delivers the key.
+        let (_, secret) = claim_key(&store, &policy(), "cs_X2", NOW + 60).expect("claim");
+        assert!(keys.verify("sub_X2", &secret).is_ok());
+    }
+
+    #[test]
+    fn a_replacement_key_is_emailed_as_its_own_issuance() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        let created = created_event("evt_c", "sub_Y", NOW);
+        let checkout =
+            checkout_event_with_email("evt_k", "cs_Y", "sub_Y", NOW + 30, "buyer@example.com");
+        apply_with_mailer(&store, &keys, &mailer, &created, NOW);
+        apply_with_mailer(&store, &keys, &mailer, &checkout, NOW + 30);
+        assert_eq!(mailer.sent().len(), 1);
+        let deleted = subscription_event(
+            "evt_d",
+            "customer.subscription.deleted",
+            "sub_Y",
+            NOW + 120,
+            serde_json::json!({ "status": "canceled" }),
+        );
+        apply_with_mailer(&store, &keys, &mailer, &deleted, NOW + 120);
+        let back = subscription_event(
+            "evt_u",
+            "customer.subscription.updated",
+            "sub_Y",
+            NOW + 180,
+            serde_json::json!({ "status": "active" }),
+        );
+        apply_with_mailer(&store, &keys, &mailer, &back, NOW + 180);
+        let sent = mailer.sent();
+        assert_eq!(sent.len(), 2, "the replacement key is a new issuance and is emailed");
+        let secret = emailed_credential(&sent[1], "sub_Y~2");
+        assert!(keys.verify("sub_Y~2", &secret).is_ok());
     }
 }
