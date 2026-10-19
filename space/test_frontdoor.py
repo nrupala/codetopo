@@ -15,7 +15,8 @@ and pins the two behaviours the fleet release gate called out:
     failure detail (host paths, store error text) and the public demo
     must never publish it. Non-5xx bodies pass through untouched.
 
-Plus the standing surface pins: unknown paths 404, non-GET 405.
+Plus the standing surface pins: unknown paths 404, non-GET 405, and
+the development log served byte-for-byte at /log.
 
 Standard library only, like the front door itself.
 """
@@ -32,6 +33,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SPACE_DIR = os.path.dirname(os.path.abspath(__file__))
 LANDING = open(os.path.join(SPACE_DIR, "index.html"), "rb").read()
+LOG = open(os.path.join(SPACE_DIR, "log.html"), "rb").read()
 
 STATS_BODY = json.dumps({"nodes": 42, "edges": 87}).encode("utf-8")
 BOOM_BODY = json.dumps({
@@ -143,6 +145,13 @@ class FrontDoorTest(unittest.TestCase):
         self.assertEqual(body, STATS_BODY)
 
     # -- Standing surface pins -----------------------------------------
+
+    def test_log_page_served(self):
+        for path in ("/log", "/log/"):
+            status, ctype, body = request(self.port, "GET", path)
+            self.assertEqual(status, 200, path)
+            self.assertTrue(ctype.startswith("text/html"), ctype)
+            self.assertEqual(body, LOG)
 
     def test_unknown_path_404_and_post_405(self):
         status, _, _ = request(self.port, "GET", "/v1/graphs/demo/snapshot")

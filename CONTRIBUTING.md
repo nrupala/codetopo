@@ -47,5 +47,9 @@ official dependencies instead.
   semver: patch for fixes/chores, minor for features. Bumps touch
   `crates/*/Cargo.toml` and the matching `Cargo.lock` entries.
 - Merge commits reference the PR number. Releases are tagged `vX.Y.Z`.
+- Every release adds its entry to the public development log
+  (`space-static/log/index.html`, mirrored in `space/log.html`) in the
+  same change that cuts the release — the log ships with the release,
+  never after it.
 - Docs-only PRs don't need test runs, but every build/test command in the
   docs must be verified against the repo (or marked unverified).

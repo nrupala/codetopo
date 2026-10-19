@@ -11,6 +11,7 @@ the server stays on loopback inside the container and this front door is
 the only public listener. It:
 
   * serves the static landing page (index.html) at /,
+  * serves the public development log (log.html) at /log,
   * proxies an allowlist of GET query routes for the single demo index
     (the bundled copy of codetopo's own source, indexed at container
     start by entrypoint.sh) under the public alias /v1/graphs/demo/...,
@@ -84,6 +85,8 @@ class FrontDoor(BaseHTTPRequestHandler):
         path = parts.path
         if path in ("/", "/index.html"):
             return self._serve_landing()
+        if path in ("/log", "/log/"):
+            return self._serve_static("log.html", "development log missing")
         if path == "/v1/schema":
             return self._proxy(parts)
         prefix = "/v1/graphs/demo/"
@@ -97,12 +100,15 @@ class FrontDoor(BaseHTTPRequestHandler):
                                          "message": "unknown path"})
 
     def _serve_landing(self):
+        return self._serve_static("index.html", "landing page missing")
+
+    def _serve_static(self, filename, missing_message):
         try:
-            with open(os.path.join(STATIC_DIR, "index.html"), "rb") as fh:
+            with open(os.path.join(STATIC_DIR, filename), "rb") as fh:
                 body = fh.read()
         except OSError:
             return json_response(self, 500, {"error": "internal",
-                                             "message": "landing page missing"})
+                                             "message": missing_message})
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

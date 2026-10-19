@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>codetopo — development log</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+         margin: 0 auto; max-width: 880px; padding: 24px 16px 48px;
+         background: #0d1117; color: #e6edf3; line-height: 1.5; }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 28px 0 8px; }
+  h3 { font-size: 15px; margin: 22px 0 6px; }
+  .sub { color: #9da7b3; margin: 0 0 16px; }
+  .when { color: #9da7b3; font-weight: 400; }
+  a { color: #58a6ff; }
+  footer { margin-top: 40px; color: #9da7b3; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>codetopo — development log</h1>
+<p class="sub">How codetopo got here, and where it is going — in plain words.</p>
+
+<p>codetopo turns a source repository into a queryable code graph — symbols,
+calls, references, structure — with answers an AI coding agent can act on
+directly. This page is the public story of the build: what shipped, what it
+means if you use codetopo, and what is being worked on next. It is kept with
+the releases — every release adds its entry here in the same change. The demo
+itself is on the <a href="../">front page</a>.</p>
+
+<h2>The story so far</h2>
+
+<h3><span class="when">October 18–19, 2026 —</span> The hosted API goes live</h3>
+<p>codetopo Hosted is a real thing you can buy now: US$19 a month for a hosted
+key — up to 25 indexes of your own and 10,000 queries a month — without
+running a server yourself. Before it opened, the whole trip was walked the way
+a customer walks it: pay, claim the key (it is shown exactly once), ask the API
+real questions about a real repository, cancel, and watch the key stop working.
+It all held.</p>
+
+<h3><span class="when">October 14, 2026 —</span> 0.5.0: one version everywhere</h3>
+<p>All seven crates moved onto a single version line, 0.5.0, and were published
+together: crates.io, the GitHub release, and the official MCP Registry all say
+the same number. Before this, different pieces of codetopo carried three
+different versions at once; now, whatever you install agrees with everything
+else.</p>
+
+<h3><span class="when">October 14, 2026 —</span> A hosted service, built in stages</h3>
+<p>Underneath the launch, the hosted path was assembled piece by piece, each
+piece tested before the next landed: a real key store, where your indexes
+belong to your key — another key asking for your index gets the same answer as
+asking for one that does not exist; hosted ingest, where you hand the API a
+public repository URL or an archive instead of a path on a machine; plan
+limits, the envelope that keeps one key from eating the host; and a billing
+bridge that turns a payment into a key and a cancellation into a revocation.
+When the first customer-walk found a rough edge — the claim page arrived blank
+and made you hunt down a session id — the page learned to arrive pre-filled.</p>
+
+<h3><span class="when">October 14, 2026 —</span> The release gate, and fixing what it found</h3>
+<p>codetopo went through the same release gate every product here faces, and
+the fixes shipped the same day. API errors no longer leak internal detail. The
+quickstart no longer plants a published example password — it generates a
+random one, and the server refuses a keys file still carrying the example.
+Older indexes stop being readable by every key once a second key exists. And
+the README says plainly how to delete your data and how to export it.</p>
+
+<h3><span class="when">October 14, 2026 —</span> Listed where agents look</h3>
+<p>Glama approved the listing after inspecting the running server itself — all
+twelve tools, live. The Smithery bundle was refreshed at 0.5.0, and a Gemini
+CLI extension in the repository puts codetopo in the Gemini extensions
+gallery. Whichever door your agent uses, it finds the same codetopo.</p>
+
+<h3><span class="when">October 13, 2026 —</span> 0.3.5: tools that introduce themselves</h3>
+<p>Every MCP tool gained a human-readable title and honest annotations — what
+it does, that it is read-only — so agent clients and directories can present
+the tools properly. The README gained a Privacy Policy section the same day.</p>
+
+<h3><span class="when">October 11, 2026 —</span> 0.3.4: Windows works</h3>
+<p>The MCP server had never compiled on Windows — one part of it used
+Unix-only plumbing. It has a proper Win32 implementation now, and CI builds
+the shipped binaries on Windows so this cannot silently break again. Found,
+fittingly, by making the first Windows build in the project's history.</p>
+
+<h3><span class="when">October 10, 2026 —</span> 0.4.0: a trust setup for editor agents</h3>
+<p>Agents that speak the Agent Client Protocol gained
+<code>codetopo-trust-setup</code>: a one-time setup in your terminal that
+creates a local proof-verification key. Snapshots the agent takes can then be
+signed, and its answers can cite who stands behind them. codetopo still has no
+accounts — the only secret is a key that never leaves your machine.</p>
+
+<h3><span class="when">October 10, 2026 —</span> 0.3.0: published, and measured at 10,000 files</h3>
+<p>All seven crates reached crates.io for the first time; a few small listing
+releases followed over the next day to get the registry pages rendering right.
+The same stretch brought <code>codetopo render</code> — a picture of your
+graph that is a pure function of the data, byte-identical on any machine — a
+self-hosted Docker container, and a demo snapshot that re-captures itself on
+every merge, so this site never goes stale. And the scale gate: a
+10,000-file repository indexed in about 3.5 seconds. The gate earned its
+keep — a very deep call chain crashed the cycle detector, which is now built
+so depth is limited by memory, not by a stack.</p>
+
+<h3><span class="when">October 5, 2026 —</span> 0.2.0: the first public release</h3>
+<p>One engine, four doors. The core turns a repository into a graph — symbols,
+calls, references, structure — stored with a tamper-evident audit log. On top
+of it: a command-line tool, an HTTP API, an MCP server for agents, and an ACP
+agent for editors. All four answer the same questions with the same answers,
+because all four are thin doors over the same core.</p>
+
+<h2>What is coming</h2>
+
+<p>Drawn from the design in the repository (<code>DESIGN.md</code>).
+Directions, not promises — and no dates, because honest phase words beat
+invented deadlines.</p>
+
+<h3><span class="when">Next —</span> Deeper analysis</h3>
+<p>Today's answers are structural: what calls what, what breaks if this
+changes, how two modules connect. The design has always pointed further —
+richer answers computed where the graph lives, so an agent gets the
+conclusion, not a data dump. That deepening is the work in progress now, and
+it is the honest headline: the analysis gets deeper from here.</p>
+
+<h3><span class="when">After the hosted launch settles —</span> A working graph you can shape</h3>
+<p>The design's surgical operations — expand, collapse, annotate, prune — let
+an agent grow and trim a working view of a codebase instead of re-asking from
+scratch every time.</p>
+
+<h3><span class="when">Later —</span> More languages</h3>
+<p>Rust and TypeScript/JavaScript are parsed today. Each language is a front
+end against one shared contract, so new languages slot in without changing
+the questions you can ask.</p>
+
+<h3><span class="when">Later —</span> Always-fresh maps for your repository</h3>
+<p>This demo already redraws codetopo's own map on every push. The design aims
+the same trick at your repository: current architecture maps in your docs and
+pull requests, rebuilt by CI, never stale.</p>
+
+<h3><span class="when">Exploring —</span> A fuzzy layer beside the exact one</h3>
+<p>The design leaves room for an optional embeddings overlay — fuzzy search
+next to the exact graph, never instead of it. It stays optional, and it stays
+later.</p>
+
+<footer>
+  <p>Source of truth: <a href="https://github.com/nrupala/codetopo">github.com/nrupala/codetopo</a> (this Space is an automated mirror). The developer-grade record is the repository's <code>CHANGELOG.md</code>; this page is its plain-words companion.</p>
+  <p>Owned by <a href="https://nrupalakolkar.com">Nrupal Akolkar</a> · Built with <a href="https://muse.ai/join">Muse by Meta</a> — join Muse, then redeem code <strong>101EEK</strong> in Settings within 48 hours of joining and we both earn tokens.</p>
+</footer>
+
+<!--
+  Copyright (C) 2026 Nrupal Akolkar
+  SPDX-License-Identifier: AGPL-3.0-or-later
+  Part of codetopo — Owned by Nrupal Akolkar (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
+
+  Public development log for codetopo. Content is distilled only from the
+  repository's verified records (CHANGELOG.md, the GitHub release record,
+  DESIGN.md for what is ahead) — nothing here carries a date or a claim
+  those records do not carry. Kept with the releases: every release adds
+  its entry in the same change (rule in CONTRIBUTING.md).
+-->
+</body>
+</html>
