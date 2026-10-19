@@ -245,6 +245,7 @@ across this product line: a hash-chained, append-only record, verified by
 
 ## Docs
 
+- [Development log](https://codetopo.aimlds.org/log/) — how codetopo got here and where it is going, in plain words (kept with the releases; also linked from the demo site)
 - [`docs/render.md`](docs/render.md) — deterministic render: the frozen layout spec (JSON) + SVG rules behind `codetopo render`
 - [`docs/protocol-proof.md`](docs/protocol-proof.md) — MCP/ACP conformance evidence: strict stdio clients + official-schema validation
 - [`docs/scale-gate.md`](docs/scale-gate.md) — the 10,000-file scale gate and its measured record
