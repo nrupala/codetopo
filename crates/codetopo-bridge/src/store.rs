@@ -22,9 +22,11 @@
 //! - `bridge_buyer_emails` — one row per subscription: the buyer
 //!   address its checkout session carried (key-delivery email, see
 //!   [`crate::mail`]), and the record a support resend would work
-//!   from. Delivery rows themselves gain `emailed_at`: when the key
-//!   email for that issuance went out, so a replay or a second
-//!   triggering event can never send it twice.
+//!   from. Delivery rows themselves gain `emailed_at`, claimed
+//!   atomically before the send (see
+//!   [`BridgeStore::claim_delivery_email`]), so a replay, a second
+//!   triggering event, or two events processed concurrently can
+//!   never send an issuance's key email twice.
 //!
 //! The tables live in the same `keys.db` file the server reads, so one
 //! file is the whole billing-and-keys state a backup must capture. The
@@ -87,10 +89,11 @@ pub struct Delivery {
     pub expires_at: i64,
     /// Unix seconds the delivery was claimed, if it was.
     pub claimed_at: Option<i64>,
-    /// Unix seconds the key email for this issuance was sent, if it
-    /// was. The send marker lives on the delivery — one per issued
-    /// key — so a replacement key gets its own send and the first
-    /// key's marker can never suppress or duplicate it.
+    /// Unix seconds the key email for this issuance was claimed for
+    /// sending — stamped atomically just before the send, so in
+    /// practice the send moment. The marker lives on the delivery —
+    /// one per issued key — so a replacement key gets its own send
+    /// and the first key's marker can never suppress or duplicate it.
     pub emailed_at: Option<i64>,
 }
 
@@ -385,6 +388,53 @@ impl BridgeStore {
             rusqlite::params![key_id, now],
         )
         .map_err(|err| BridgeError::Store(format!("cannot stamp delivery emailed: {err}")))?;
+        Ok(())
+    }
+
+    /// Atomically claims the right to send one issuance's key email:
+    /// stamps `emailed_at` only if it is still unset, and reports
+    /// whether this caller won. One conditional UPDATE under the
+    /// store lock is the whole guard — two events for one
+    /// subscription processed concurrently cannot both observe the
+    /// marker unset, so exactly one of them sends (release-gate
+    /// delta finding D-3; previously the check → send → mark
+    /// sequence left that race open). The caller sends only on a
+    /// win, and on a transport failure hands the claim back with
+    /// [`BridgeStore::release_delivery_email_claim`] so a later
+    /// event may retry. A process crash between claim and send
+    /// leaves the stamp set and the email unsent — the bounded
+    /// other side of the at-least-once trade, and safe: the key
+    /// itself still delivers by the claim page, and the recorded
+    /// buyer address is what a support resend works from.
+    pub fn claim_delivery_email(&self, key_id: &str, now: i64) -> Result<bool, BridgeError> {
+        let conn = self.lock()?;
+        let changed = conn
+            .execute(
+                "UPDATE key_deliveries SET emailed_at = ?2
+                 WHERE key_id = ?1 AND emailed_at IS NULL",
+                rusqlite::params![key_id, now],
+            )
+            .map_err(|err| BridgeError::Store(format!("cannot claim delivery email: {err}")))?;
+        Ok(changed == 1)
+    }
+
+    /// Hands back a claim taken by
+    /// [`BridgeStore::claim_delivery_email`] after a failed send, so
+    /// a later event may retry. Guarded by the claim's own stamp:
+    /// only the caller's stamp is cleared, never a stamp another
+    /// issuance has since set.
+    pub fn release_delivery_email_claim(
+        &self,
+        key_id: &str,
+        claimed_at: i64,
+    ) -> Result<(), BridgeError> {
+        let conn = self.lock()?;
+        conn.execute(
+            "UPDATE key_deliveries SET emailed_at = NULL
+             WHERE key_id = ?1 AND emailed_at = ?2",
+            rusqlite::params![key_id, claimed_at],
+        )
+        .map_err(|err| BridgeError::Store(format!("cannot release delivery email claim: {err}")))?;
         Ok(())
     }
 
@@ -685,6 +735,36 @@ mod tests {
         store.create_delivery("k1", &sealed, 160, 260).expect("recreate");
         let delivery = store.delivery("k1").expect("read").expect("present");
         assert_eq!(delivery.emailed_at, None);
+    }
+
+    #[test]
+    fn the_email_claim_is_atomic_and_releasable() {
+        let store = store();
+        let sealed = Sealed { ciphertext: vec![1, 2, 3], nonce: vec![4; 12] };
+        store.create_delivery("k1", &sealed, 100, 200).expect("create");
+        // The first claim wins and stamps the marker; a second
+        // claim — the concurrent event that lost the race — does not.
+        assert!(store.claim_delivery_email("k1", 150).expect("claim"));
+        assert_eq!(
+            store.delivery("k1").expect("read").expect("present").emailed_at,
+            Some(150)
+        );
+        assert!(!store.claim_delivery_email("k1", 151).expect("second claim"));
+        // A release naming a stamp that is not the claim's clears
+        // nothing; the claim's own stamp releases it.
+        store.release_delivery_email_claim("k1", 999).expect("foreign release");
+        assert_eq!(
+            store.delivery("k1").expect("read").expect("present").emailed_at,
+            Some(150),
+            "a foreign stamp cannot release the claim"
+        );
+        store.release_delivery_email_claim("k1", 150).expect("release");
+        assert_eq!(
+            store.delivery("k1").expect("read").expect("present").emailed_at,
+            None,
+            "a released claim leaves the issuance retryable"
+        );
+        assert!(store.claim_delivery_email("k1", 160).expect("re-claim after release"));
     }
 
     #[test]

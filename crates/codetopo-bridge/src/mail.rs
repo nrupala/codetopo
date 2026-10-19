@@ -315,20 +315,27 @@ mod tests {
         let transcript = rx
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("sink transcript");
+        // Failure messages never interpolate the transcript: it
+        // carries a credential, and assertion output is a log
+        // surface — the same rule the composition tests state
+        // (release-gate delta finding D-2).
         assert!(
             transcript.contains("MAIL FROM:<codetopo@aimlds.org>"),
-            "{transcript}"
+            "the envelope sender is the configured from address"
         );
         assert!(
             transcript.contains("RCPT TO:<buyer@example.com>"),
-            "{transcript}"
+            "the envelope recipient is the buyer"
         );
         assert_eq!(
             transcript.matches("sub_Example:deadbeefcafe").count(),
             1,
-            "the credential crosses the wire exactly once: {transcript}"
+            "the credential crosses the wire exactly once"
         );
-        assert!(transcript.contains("Subject: Your codetopo API key"), "{transcript}");
+        assert!(
+            transcript.contains("Subject: Your codetopo API key"),
+            "the subject line crosses the wire"
+        );
     }
 
     #[test]

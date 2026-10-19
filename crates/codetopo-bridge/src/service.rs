@@ -194,9 +194,12 @@ pub fn apply_event(
 /// Failure rules are strict: nothing in here may fail the webhook.
 /// A missing address, an already-claimed delivery, or a transport
 /// error is a log line on the bridge host (naming the event), and
-/// the claim page remains the buyer's path. A failed send leaves
-/// the delivery's marker unset, so a later event for the same
-/// subscription may retry inside the claim window.
+/// the claim page remains the buyer's path. The send itself is
+/// guarded by an atomic claim on the delivery's marker
+/// ([`BridgeStore::claim_delivery_email`]): exactly one caller
+/// sends, even when two events for one subscription are processed
+/// concurrently. A failed send releases the claim, so a later event
+/// for the same subscription may retry inside the claim window.
 fn maybe_email_key(
     store: &BridgeStore,
     policy: &Policy,
@@ -237,10 +240,25 @@ fn maybe_email_key(
         };
         let secret = crypto::open(&policy.claim_key, sealed).map_err(fail)?;
         let email = compose_key_email(&to, &ent.key_id, &secret, &plan_limits(&policy.plan));
-        mailer
-            .send_key_email(&email)
-            .map_err(|err| err.to_string())?;
-        store.mark_delivery_emailed(&ent.key_id, now).map_err(fail)?;
+        // Claim the send before attempting it: the marker is the
+        // lock, taken atomically, so a concurrent event for this
+        // subscription backs off here instead of double-sending.
+        if !store.claim_delivery_email(&ent.key_id, now).map_err(fail)? {
+            return Ok(false);
+        }
+        if let Err(err) = mailer.send_key_email(&email) {
+            // A failed send hands the claim back, so a later event
+            // may retry inside the claim window; the retry property
+            // matters more than the stamp's precision.
+            if let Err(release_err) = store.release_delivery_email_claim(&ent.key_id, now) {
+                eprintln!(
+                    "codetopo-bridge: could not release the key-email claim for \
+                     subscription {subscription_id} (event {}): {release_err}",
+                    event.event_id
+                );
+            }
+            return Err(err.to_string());
+        }
         eprintln!(
             "codetopo-bridge: key email sent for subscription {subscription_id} (event {})",
             event.event_id
@@ -830,6 +848,33 @@ mod tests {
             if *self.failing.lock().expect("failing lock") {
                 return Err(crate::mail::MailError("test transport is down".to_string()));
             }
+            self.sent.lock().expect("sent lock").push(email.clone());
+            Ok(())
+        }
+    }
+
+    /// A transport double that lingers inside the send, widening
+    /// the window in which a second, concurrently processed event
+    /// could also decide to send (D-3). Records what it sends.
+    struct SlowMailer {
+        sent: std::sync::Mutex<Vec<crate::mail::KeyEmail>>,
+    }
+
+    impl SlowMailer {
+        fn new() -> Self {
+            SlowMailer { sent: std::sync::Mutex::new(Vec::new()) }
+        }
+        fn sent(&self) -> Vec<crate::mail::KeyEmail> {
+            self.sent.lock().expect("sent lock").clone()
+        }
+    }
+
+    impl crate::mail::KeyMailer for SlowMailer {
+        fn send_key_email(
+            &self,
+            email: &crate::mail::KeyEmail,
+        ) -> Result<(), crate::mail::MailError> {
+            std::thread::sleep(std::time::Duration::from_millis(300));
             self.sent.lock().expect("sent lock").push(email.clone());
             Ok(())
         }
@@ -1460,5 +1505,53 @@ mod tests {
         assert_eq!(sent.len(), 2, "the replacement key is a new issuance and is emailed");
         let secret = emailed_credential(&sent[1], "sub_Y~2");
         assert!(keys.verify("sub_Y~2", &secret).is_ok());
+    }
+
+    #[test]
+    fn concurrent_events_send_the_key_email_once() {
+        let (store, keys) = stores();
+        // The purchase converges with no mailer attached, so the key
+        // email is still owed when the race begins.
+        let created = created_event("evt_c", "sub_Z", NOW);
+        assert_eq!(apply(&store, &keys, &created, NOW), EventOutcome::Applied);
+        let checkout =
+            checkout_event_with_email("evt_k", "cs_Z", "sub_Z", NOW + 30, "buyer@example.com");
+        assert_eq!(apply(&store, &keys, &checkout, NOW + 30), EventOutcome::Applied);
+
+        let mailer = SlowMailer::new();
+        let first = subscription_event(
+            "evt_u1",
+            "customer.subscription.updated",
+            "sub_Z",
+            NOW + 60,
+            serde_json::json!({}),
+        );
+        let second = subscription_event(
+            "evt_u2",
+            "customer.subscription.updated",
+            "sub_Z",
+            NOW + 60,
+            serde_json::json!({}),
+        );
+        // Two distinct events for one subscription, processed at the
+        // same time, with a send slow enough for both to reach the
+        // hook together. The atomic marker claim lets exactly one
+        // of them send (D-3: the old check → send → mark sequence
+        // sent twice here).
+        std::thread::scope(|scope| {
+            let a = scope.spawn(|| {
+                apply_event(&store, &keys, &policy(), Some(&mailer), &first, NOW + 60)
+            });
+            let b = scope.spawn(|| {
+                apply_event(&store, &keys, &policy(), Some(&mailer), &second, NOW + 60)
+            });
+            a.join().expect("first event thread").expect("first event applies");
+            b.join().expect("second event thread").expect("second event applies");
+        });
+        let sent = mailer.sent();
+        assert_eq!(sent.len(), 1, "exactly one key email under concurrency");
+        assert_eq!(sent[0].to, "buyer@example.com");
+        let delivery = store.delivery("sub_Z").expect("read").expect("delivery");
+        assert_eq!(delivery.emailed_at, Some(NOW + 60));
     }
 }
