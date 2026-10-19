@@ -46,6 +46,28 @@
 //! hash in `api_keys` is all that remains. A sweep (at startup and every
 //! minute) applies due revocations and purges expired deliveries.
 //!
+//! ## Key delivery by email (owner directive, 2026-10-18)
+//!
+//! Stripe's receipt proves payment; it does not carry the key. So
+//! when SMTP submission is configured (`CODETOPO_SMTP_*`, see
+//! [`config::MailConfig`]), the bridge also *emails* the credential
+//! to the address the checkout session carried
+//! (`customer_details.email`, falling back to `customer_email`),
+//! captured by the checkout handler and stored per subscription —
+//! the record a support resend would work from. The send happens
+//! once per issuance, at the moment the entitlement, the live
+//! delivery, and the address have all converged (either the
+//! checkout or the creation event can complete that set), and the
+//! delivery row carries the send marker, so replays and later
+//! events can never send it twice; a replacement key is a new
+//! issuance and is emailed as one. Email is a second *delivery
+//! channel* only — never an authority: nothing in the bridge
+//! accepts an address as proof of anything, claims still run on
+//! the tokens, and a failed or missing send changes nothing about
+//! the purchase (the failure is logged with its event id, and the
+//! claim page still holds the key). Unconfigured, the bridge is
+//! claim-page-only, exactly as before.
+//!
 //! Threat model, plainly: a claim token is a bearer capability. Whoever
 //! presents an unclaimed token inside its seven-day window gets the key,
 //! once. The tokens are Stripe's own 128-bit-class ids, disclosed only
@@ -54,10 +76,13 @@
 //! yields nothing — deliveries are ciphertext under an environment key,
 //! and keys are hashes. The accepted residual is the redirect URL itself
 //! sitting in browser history, the same exposure class as every
-//! receipt-link claim flow (Conduit's included); binding claims to a
-//! verified email is the documented future narrowing, deliberately not
-//! built here — email is a client-writable hint at checkout and must
-//! never become an authority (ADR-0008 amendment, 2026-10-06).
+//! receipt-link claim flow (Conduit's included). Email delivery adds
+//! one more copy of the credential in transit — the buyer's mailbox —
+//! accepted on the owner's explicit instruction (buyers expect the
+//! key to arrive like the receipt did); it does not widen authority:
+//! binding *claims* to an email remains deliberately unbuilt, because
+//! email is a client-writable hint at checkout and must never become
+//! an authority (ADR-0008 amendment, 2026-10-06).
 //!
 //! ## Event semantics
 //!
@@ -89,6 +114,7 @@
 pub mod config;
 pub mod crypto;
 pub mod http;
+pub mod mail;
 pub mod service;
 pub mod store;
 pub mod stripe;

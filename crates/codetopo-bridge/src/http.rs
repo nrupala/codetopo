@@ -37,6 +37,7 @@ use codetopo_server::keys::KeyStore;
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::mail::KeyMailer;
 use crate::stripe::{verify_signature, WebhookEvent};
 use crate::service::{apply_event, claim_key, Policy};
 use crate::store::BridgeStore;
@@ -54,6 +55,9 @@ pub struct BridgeState {
     pub policy: Policy,
     /// The Stripe webhook secret (never logged).
     pub webhook_secret: String,
+    /// The key-delivery email transport, when SMTP is configured.
+    /// `None` is the claim-page-only bridge, exactly as before.
+    pub mailer: Option<Arc<dyn KeyMailer>>,
 }
 
 /// Builds the bridge router.
@@ -92,7 +96,14 @@ async fn webhook(
             );
         }
     };
-    match apply_event(&state.store, &state.keys, &state.policy, &event, now_unix_secs()) {
+    match apply_event(
+        &state.store,
+        &state.keys,
+        &state.policy,
+        state.mailer.as_deref(),
+        &event,
+        now_unix_secs(),
+    ) {
         Ok(outcome) => (
             StatusCode::OK,
             Json(json!({ "ok": true, "outcome": format!("{outcome:?}").to_lowercase() })),

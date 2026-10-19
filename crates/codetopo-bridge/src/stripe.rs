@@ -217,6 +217,38 @@ pub struct CheckoutSessionData {
     pub payment_status: Option<String>,
     /// The subscription the checkout created, if any.
     pub subscription: Option<String>,
+    /// The buyer-details block Stripe collects at checkout.
+    pub customer_details: Option<CustomerDetails>,
+    /// The checkout's email field, on payloads that carry it at the
+    /// top level. [`CheckoutSessionData::buyer_email`] prefers the
+    /// details block and falls back to this.
+    pub customer_email: Option<String>,
+}
+
+impl CheckoutSessionData {
+    /// The address the key email goes to: `customer_details.email`
+    /// (what the buyer confirmed at checkout) first, the session's
+    /// `customer_email` as the fallback. Blank or whitespace-only
+    /// values count as absent — a checkout that collected no usable
+    /// address simply sends nothing.
+    pub fn buyer_email(&self) -> Option<&str> {
+        fn usable(raw: Option<&str>) -> Option<&str> {
+            raw.map(str::trim).filter(|email| !email.is_empty())
+        }
+        usable(
+            self.customer_details
+                .as_ref()
+                .and_then(|details| details.email.as_deref()),
+        )
+        .or_else(|| usable(self.customer_email.as_deref()))
+    }
+}
+
+/// The buyer-details block of a checkout session.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CustomerDetails {
+    /// The email address the buyer gave at checkout.
+    pub email: Option<String>,
 }
 
 /// The invoice fields the bridge acts on.
@@ -389,6 +421,41 @@ mod tests {
         }))
         .expect("subscription parses");
         assert_eq!(data.period_end(), Some(1_800_200_000), "top level wins");
+    }
+
+    #[test]
+    fn buyer_email_prefers_customer_details_and_falls_back() {
+        let both: CheckoutSessionData = serde_json::from_value(serde_json::json!({
+            "id": "cs_1",
+            "customer_details": { "email": "details@example.com" },
+            "customer_email": "plain@example.com",
+        }))
+        .expect("session parses");
+        assert_eq!(both.buyer_email(), Some("details@example.com"));
+        let fallback: CheckoutSessionData = serde_json::from_value(serde_json::json!({
+            "id": "cs_2",
+            "customer_email": "plain@example.com",
+        }))
+        .expect("session parses");
+        assert_eq!(fallback.buyer_email(), Some("plain@example.com"));
+        let blank: CheckoutSessionData = serde_json::from_value(serde_json::json!({
+            "id": "cs_3",
+            "customer_details": { "email": "  " },
+            "customer_email": "",
+        }))
+        .expect("session parses");
+        assert_eq!(blank.buyer_email(), None);
+        // A blank details email does not shadow a usable fallback.
+        let shadowed: CheckoutSessionData = serde_json::from_value(serde_json::json!({
+            "id": "cs_5",
+            "customer_details": { "email": " " },
+            "customer_email": "plain@example.com",
+        }))
+        .expect("session parses");
+        assert_eq!(shadowed.buyer_email(), Some("plain@example.com"));
+        let absent: CheckoutSessionData =
+            serde_json::from_value(serde_json::json!({ "id": "cs_4" })).expect("session parses");
+        assert_eq!(absent.buyer_email(), None);
     }
 
     #[test]
