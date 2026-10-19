@@ -1,4 +1,10 @@
+# Changelog
+
+All notable changes to this project are documented here.
+
 ## [Unreleased]
+
+- Docs hygiene: this changelog's two `[Unreleased]` sections are merged into one (every entry carried over), and the README's HTTP API prose now counts the surface its own route list enumerates — twelve endpoints under `/v1`, one index operation plus eleven read-only queries. No code changes.
 
 - **codetopo-bridge — key-email hardening (release-gate delta findings D-1/D-2/D-3).** Three fixes to the key-by-email delivery shipped below. **D-1:** SMTP configuration now refuses credentials combined with `CODETOPO_SMTP_TLS=none` for any host but loopback — lettre would otherwise authenticate in the clear to a remote host; the parse error names the problem, and encrypted modes (`starttls`/`tls`) with credentials parse as before. **D-2:** the hermetic SMTP sink test's assertion messages are static strings, completing the construction rule the rest of the suite already follows — no test failure message interpolates content that carries a credential, fixtures included. **D-3:** the key-email send is now guarded by an atomic claim on the delivery's `emailed_at` marker (one conditional UPDATE), claimed before the send and released if the transport fails — two events for one subscription processed concurrently can no longer both send, where the previous check → send → mark sequence could; the trade moves to the other bounded side, stated in the code: a process crash between claim and send leaves the email unsent (never duplicated), with the claim page and the recorded buyer address unaffected.
 
@@ -21,12 +27,6 @@
 
 
 - Added `SECURITY.md`: private vulnerability reporting (GitHub PVR) and the security scope notes for the read-only surfaces.
-
-# Changelog
-
-All notable changes to this project are documented here.
-
-## [Unreleased]
 
 - **codetopo-bridge — the key now also arrives by email.** On the owner's instruction ("one email is the receipt, and another one is the key"), a purchase produces two emails: Stripe's receipt, and the bridge's own key email. The checkout handler captures the buyer address from `checkout.session.completed` (`customer_details.email`, falling back to `customer_email`) and stores it per subscription — the record a support resend would work from. When SMTP submission is configured (new `CODETOPO_SMTP_HOST` / `CODETOPO_SMTP_PORT` / `CODETOPO_SMTP_TLS` / `CODETOPO_SMTP_USERNAME` / `CODETOPO_SMTP_PASSWORD` / `CODETOPO_SMTP_FROM` environment family; the password is environment-only and never logged), the bridge sends one plain-text email per issued key — at whichever event completes the set of entitlement + live delivery + address, so checkout-first and creation-first orderings both send — carrying the full credential exactly once, the API base (`https://codetopo-api.aimlds.org`), the plan's limits read from the server's own limits table, and the support address. The delivery row gains an `emailed_at` marker (existing stores migrate on open): replays and later events never re-send, and a replacement key is emailed as its own issuance. Email is a delivery channel, never an authority — claims, revocation, and the price guard are untouched, the claim page still delivers the key, and a failed or unconfigured send changes nothing about the purchase (the failure is logged with its event id; a later event may retry inside the claim window). Unconfigured, the bridge behaves exactly as before. New transport: `lettre` (rustls) for SMTP submission. Tests: +4 in `config` (the SMTP family parses strictly, off without a host), +3 in `store` (buyer-email round-trip, the emailed marker, migration of a pre-email store), +1 in `stripe` (buyer-email precedence), +5 in `mail` (the credential appears exactly once, limits/support stated, the production transport delivering to a hermetic loopback SMTP sink, a refused connection as a clean failure), +7 in `service` (send on convergence in both event orderings, no resend on replay or later events, failure leaves purchase and claim intact, a later event retries a failed send, no address no send, a replacement key emailed as its own issuance).
 
