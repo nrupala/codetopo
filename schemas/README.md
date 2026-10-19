@@ -104,6 +104,7 @@ reproducible across runs and machines.
 | `CODETOPO_DATA_DIR` | `./data` | Root for index storage. |
 | `CODETOPO_KEYS_FILE` | `./api_keys` | Bearer credentials. |
 | `CODETOPO_METERING_LOG` | `./metering.log` | Accepted-request log. |
+| `CODETOPO_DENY_OWNERLESS_INDEXES` | unset | `1`/`true`: ownerless (legacy) indexes refused to every key. `0`/`false`: allowed to every key. Any other value is a startup error. When unset, ownerless indexes are refused once the key store holds more than one active key, and readable while it holds one. |
 
 An empty value is treated as unset. The default bind is loopback because the
 API holds a full source-code index and is meant to sit behind an SSH tunnel

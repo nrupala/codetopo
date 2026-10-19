@@ -167,6 +167,37 @@ stats / snapshot / verify) straight to the same `codetopo-core` queries —
 no LLM, no network, no file writes. Edit requests get an honest read-only
 refusal. stdout carries only protocol frames; diagnostics go to stderr.
 
+## Hosted API (`codetopo` Hosted)
+
+The same HTTP API, run by us, always on. We host the index; you send a
+repository (public git URL or archive upload) and query the graph from
+anywhere with your key — no local install, no server to run.
+
+**US$19/month per key.**
+
+| Included | |
+|---|---|
+| Active indexes | 25 |
+| Queries | 10,000 / month |
+| Repository size | up to 50,000 files per index |
+
+How it works:
+
+1. [Subscribe](https://buy.stripe.com/cNi00j0hYbEIbT9bz89Zm02) — checkout is handled by Stripe.
+2. After payment you land on a claim page. Claim your API key there —
+   it is shown exactly once, so save it when it appears.
+3. Call the API at `https://codetopo-api.aimlds.org` with
+   `Authorization: Bearer <key_id>:<secret>`, the same contract as the
+   self-hosted server (see `schemas/`).
+
+Cancel any time from the Stripe receipt link; the key stays active
+until the end of the paid period and is then revoked.
+
+This is the hosted form of the same product. The local CLI, MCP server,
+and ACP agent in this repository stay free and open source (AGPL-3.0)
+and are unchanged — the hosted tier is for when you want the graph
+served, not installed.
+
 ## Architecture
 
 ```
