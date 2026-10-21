@@ -72,7 +72,7 @@ https://codetopo.aimlds.org
 |---|---|
 | Name | codetopo |
 | Registry name | io.github.nrupala/codetopo |
-| Version | 0.5.0 |
+| Version | 0.6.0 |
 | Repository | https://github.com/nrupala/codetopo |
 | License | AGPL-3.0-or-later |
 | Transport | stdio |

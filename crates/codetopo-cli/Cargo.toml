@@ -1,6 +1,6 @@
 [package]
 name = "codetopo-cli"
-version = "0.5.0"
+version = "0.6.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -15,9 +15,9 @@ name = "codetopo"
 path = "src/main.rs"
 
 [dependencies]
-codetopo-core = { version = "0.5.0", path = "../codetopo-core" }
-codetopo-extract = { version = "0.5.0", path = "../codetopo-extract" }
-codetopo-store = { version = "0.5.0", path = "../codetopo-store" }
+codetopo-core = { version = "0.6.0", path = "../codetopo-core" }
+codetopo-extract = { version = "0.6.0", path = "../codetopo-extract" }
+codetopo-store = { version = "0.6.0", path = "../codetopo-store" }
 clap = { version = "4", features = ["derive"] }
 rayon = "1"
 walkdir = "2"
