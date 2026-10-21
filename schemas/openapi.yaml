@@ -435,11 +435,16 @@ paths:
     get:
       tags: [query]
       operationId: symbol
-      summary: One node in full.
+      summary: One node in full — the symbol dossier.
       description: |
-        The whole node object — kind, location, tier, defines and refs —
-        for a caller that already holds an id (from `search`, a closure,
-        or a path). An unknown node is `404 unknown_node`.
+        The DESIGN §3 dossier for a caller that already holds an id (from
+        `search`, a closure, or a path): the whole node object — kind,
+        location, tier, defines and refs — plus every incident dependency
+        edge, grouped by kind within each direction, with the counts.
+        `contains` edges are excluded (containment is hierarchy, not
+        dependency). The same object serves the CLI's `symbol` command
+        and the MCP `codetopo_get_symbol` tool. An unknown node is
+        `404 unknown_node`.
       parameters:
         - $ref: '#/components/parameters/IndexId'
         - $ref: '#/components/parameters/NodeParam'
@@ -482,6 +487,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SearchResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
+  /v1/graphs/{id}/diagnostics:
+    get:
+      tags: [query]
+      operationId: diagnostics
+      summary: The diagnostics recorded when the index was built.
+      description: |
+        Well-formedness violations found while the graph was built —
+        dependency cycles, multi-definitions, unresolved calls, and the
+        rest (CODE_SCHEMA §5) — persisted with the index and returned as
+        data, in builder order. The same list serves the CLI's
+        `diagnostics` command and the MCP `codetopo_diagnostics` tool.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+      responses:
+        '200':
+          description: The recorded diagnostics (possibly none).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiagnosticsResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -997,12 +1032,62 @@ components:
             $ref: '#/components/schemas/Edge'
     SymbolResponse:
       type: object
-      required: [index_id, node]
+      description: |
+        The DESIGN §3 dossier: the node plus its incident edges grouped
+        by kind within each direction, with the totals stated before the
+        lists. `contains` edges are excluded — containment is hierarchy,
+        not dependency (CODE_SCHEMA §1.4).
+      required: [index_id, node, outgoing, incoming, outgoing_count, incoming_count]
       properties:
         index_id:
           type: string
         node:
           $ref: '#/components/schemas/Node'
+        outgoing:
+          type: object
+          description: Edges leaving the node, grouped by edge-kind wire name.
+          additionalProperties:
+            type: array
+            items:
+              $ref: '#/components/schemas/Edge'
+        incoming:
+          type: object
+          description: Edges entering the node, grouped by edge-kind wire name.
+          additionalProperties:
+            type: array
+            items:
+              $ref: '#/components/schemas/Edge'
+        outgoing_count:
+          type: integer
+          minimum: 0
+        incoming_count:
+          type: integer
+          minimum: 0
+    DiagnosticsResponse:
+      type: object
+      required: [index_id, total, diagnostics]
+      properties:
+        index_id:
+          type: string
+        total:
+          type: integer
+          minimum: 0
+          description: The number of diagnostics recorded for this index.
+        diagnostics:
+          type: array
+          items:
+            $ref: '#/components/schemas/Diagnostic'
+    Diagnostic:
+      type: object
+      description: |
+        A well-formedness violation recorded at index time (CODE_SCHEMA
+        §5), serialized by the core type: a single-key object whose key
+        names the variant — `Cycle`, `MultiDefinition`, `UnresolvedCall`,
+        `InvalidAttribute`, or `UnknownSymbol` — and whose value carries
+        that variant's fields (a cycle's member ids, a multi-definition's
+        symbol and locations, an unresolved call's source, target, and
+        line).
+      additionalProperties: true
     SearchResponse:
       type: object
       required: [index_id, query, total, results]

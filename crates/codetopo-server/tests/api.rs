@@ -876,3 +876,103 @@ async fn default_package_matches_the_other_surfaces() {
         "no id may carry the retired 'unknown' package"
     );
 }
+
+/// Writes the planted diagnostics fixture — a mutual call (a cycle), a
+/// duplicated definition, and an unresolved call — into `dir` and
+/// returns the repository path.
+fn planted_repo(dir: &Path) -> PathBuf {
+    let repo = dir.join("planted");
+    std::fs::create_dir_all(&repo).expect("repo dir");
+    std::fs::write(
+        repo.join("cyc.rs"),
+        "pub fn a() {\n    b();\n    missing_fn();\n}\n\npub fn b() {\n    a();\n}\n",
+    )
+    .expect("write cyc.rs");
+    std::fs::write(repo.join("dup.rs"), "pub fn d() {}\n\npub fn d() {}\n")
+        .expect("write dup.rs");
+    repo
+}
+
+/// The diagnostics route returns exactly the CLI's list for the same
+/// database — the planted cycle, the planted duplicate, and the
+/// unresolved call, in the shared `{total, diagnostics}` shape.
+#[tokio::test]
+async fn diagnostics_route_returns_exactly_the_cli_list() {
+    let harness = Harness::new();
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let repo = planted_repo(tmp.path());
+    let (status, report) = harness
+        .send(
+            Method::POST,
+            "/v1/index",
+            Some(json!({ "repo_path": repo.to_string_lossy(), "package": "planted" })),
+            Some(format!("Bearer {KEY_ID}:{SECRET}")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "index failed: {report}");
+    assert_eq!(report["diagnostics"], 3, "planted index report: {report}");
+    let index_id = report["index_id"].as_str().expect("index_id").to_string();
+
+    let (status, body) = harness.get(&format!("/v1/graphs/{index_id}/diagnostics")).await;
+    assert_eq!(status, StatusCode::OK, "diagnostics: {body}");
+    let mut via_http = body.clone();
+    let claimed_id = via_http
+        .as_object_mut()
+        .expect("object")
+        .remove("index_id")
+        .expect("index_id present");
+    assert_eq!(claimed_id, index_id);
+    let via_cli =
+        codetopo_cli::diagnostics_value(&harness.db(&index_id)).expect("cli diagnostics value");
+    assert_eq!(via_http, via_cli, "HTTP diagnostics == CLI diagnostics");
+    let kinds: Vec<&str> = body["diagnostics"]
+        .as_array()
+        .expect("diagnostics array")
+        .iter()
+        .map(|d| {
+            d.as_object()
+                .and_then(|o| o.keys().next())
+                .map(|k| k.as_str())
+                .expect("variant tag")
+        })
+        .collect();
+    assert!(kinds.contains(&"Cycle"), "planted cycle reported: {kinds:?}");
+    assert!(
+        kinds.contains(&"MultiDefinition"),
+        "planted duplicate reported: {kinds:?}"
+    );
+    assert!(
+        kinds.contains(&"UnresolvedCall"),
+        "planted unresolved call reported: {kinds:?}"
+    );
+
+    // An unknown index is refused exactly like every other route.
+    let (status, _) = harness.get("/v1/graphs/no-such-index/diagnostics").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "unknown index must 404");
+}
+
+/// The symbol route returns the core dossier (node + incident edges +
+/// counts) — the same object the CLI prints and the MCP tool returns,
+/// plus `index_id`.
+#[tokio::test]
+async fn symbol_route_returns_the_core_dossier() {
+    let harness = Harness::new();
+    let report = harness.index_fixture().await;
+    let index_id = report["index_id"].as_str().expect("index_id").to_string();
+    let graph = load_graph_from_db(&harness.db(&index_id)).expect("load graph");
+    for node in graph.nodes() {
+        let (status, body) = harness
+            .get(&format!("/v1/graphs/{index_id}/symbol?node={}", node.id))
+            .await;
+        assert_eq!(status, StatusCode::OK, "symbol {}: {body}", node.id);
+        let mut via_http = body.clone();
+        via_http
+            .as_object_mut()
+            .expect("object")
+            .remove("index_id")
+            .expect("index_id present");
+        let core = serde_json::to_value(graph.dossier(&node.id).expect("dossier"))
+            .expect("dossier serializes");
+        assert_eq!(via_http, core, "dossier parity for {}", node.id);
+    }
+}

@@ -806,7 +806,8 @@ pub fn describe_schema() -> serde_json::Value {
             "optional": "everything else",
         },
         "queries": ["descendants", "ancestors", "blast_radius", "path",
-                    "neighborhood", "search", "symbol", "stats", "verify"],
+                    "neighborhood", "search", "symbol", "stats", "verify",
+                    "diagnostics"],
     })
 }
 
@@ -883,6 +884,24 @@ pub fn print_diagnostics(db_path: &Path) -> Result<(), CliError> {
     for d in &diags {
         println!("{d}");
     }
+    Ok(())
+}
+
+/// JSON form of the diagnostics answer: aggregate-first
+/// `{total, diagnostics}`, the diagnostics serialized by the core type
+/// itself. This is the one computation behind the CLI's
+/// `diagnostics --json`, the HTTP diagnostics route (which adds
+/// `index_id`), and the MCP `codetopo_diagnostics` tool, so the three
+/// surfaces cannot disagree about what was recorded at index time.
+pub fn diagnostics_value(db_path: &Path) -> Result<serde_json::Value, CliError> {
+    let store = Store::open(db_path)?;
+    let diags = store.load_diagnostics()?;
+    Ok(json!({"total": diags.len(), "diagnostics": diags}))
+}
+
+/// Print [`diagnostics_value`] as pretty JSON.
+pub fn print_diagnostics_json(db_path: &Path) -> Result<(), CliError> {
+    println!("{}", serde_json::to_string_pretty(&diagnostics_value(db_path)?)?);
     Ok(())
 }
 
