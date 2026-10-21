@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Dependency security update (0.6.0 release-gate fix loop).**
+  `webpki-roots` 1.0.9 → 1.0.10 and `rustls-webpki` 0.103.15 → 0.103.16
+  (RUSTSEC-2026-0381 / RUSTSEC-2026-0382: certificate verification could
+  accept chains through the distrusted emSign intermediates). Both reach
+  codetopo only through the bridge's SMTP TLS (lettre/rustls); the change
+  is Cargo.lock-only, two version lines. Found by the 0.6.0 release gate's
+  machine pass before the release graduated; the fixed tree is the gated
+  0.6.0 tree (tag moved, recorded in the gate pack).
+
 ## [0.6.0] — 2026-10-20
 
 - **Version 0.6.0 — the analytics-depth release.** All eight crates move to
