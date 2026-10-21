@@ -179,7 +179,7 @@ fn a_session_answers_every_step_of_the_read_only_recipe() {
             .as_array()
             .expect("an array")
             .len(),
-        13
+        14
     );
 
     let indexed = client.request(

@@ -298,6 +298,21 @@ pub fn tool_catalog() -> Vec<Value> {
             },
         }),
         json!({
+            "name": "codetopo_rank",
+            "title": "Rank symbols by a measured count",
+            "description": "The top symbols by fan-in, fan-out, or blast-radius size - counts over the graph, with the count's method stated in the result. A ranking of measurements, never a score of code quality.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "db_path": {"type": "string", "description": "Path to the index database."},
+                    "by": {"type": "string", "description": "Metric to rank by: fan_in, fan_out, or blast_radius (default)."},
+                    "limit": {"type": "integer", "description": "Maximum entries to return. Default 20."},
+                },
+                "required": ["db_path"],
+            },
+        }),
+        json!({
             "name": "codetopo_neighborhood",
             "title": "Get a node's neighborhood",
             "description": "The subgraph within a few hops of a node, in both directions (contains/defines excluded).",
@@ -370,6 +385,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, ToolError> {
         "codetopo_verify" => tool_verify(args),
         "codetopo_snapshot" => tool_snapshot(args),
         "codetopo_diagnostics" => tool_diagnostics(args),
+        "codetopo_rank" => tool_rank(args),
         "codetopo_neighborhood" => tool_neighborhood(args),
         "codetopo_get_symbol" => tool_get_symbol(args),
         "codetopo_search_symbols" => tool_search_symbols(args),
@@ -648,6 +664,18 @@ fn tool_diagnostics(args: &Value) -> Result<Value, ToolError> {
     codetopo_cli::diagnostics_value(&db_path).map_err(ToolError::Cli)
 }
 
+/// `codetopo_rank` — the top symbols by a measured count, in the shared
+/// `{metric, method, total, results}` shape the CLI's `rank --json` and
+/// the HTTP rank route also return.
+fn tool_rank(args: &Value) -> Result<Value, ToolError> {
+    let graph = open_graph(args)?;
+    let by = optional_str(args, "by")?.unwrap_or("blast_radius");
+    let metric = codetopo_core::RankMetric::parse(by)
+        .ok_or_else(|| ToolError::MissingParam("by".to_string()))?;
+    let limit = optional_limit(args)?;
+    Ok(codetopo_cli::rank_value(&graph, metric, limit))
+}
+
 fn tool_search_symbols(args: &Value) -> Result<Value, ToolError> {
     let graph = open_graph(args)?;
     let query = require_str(args, "query")?;
@@ -761,9 +789,9 @@ mod tests {
     // -- catalogue ---------------------------------------------------------
 
     #[test]
-    fn catalogue_lists_thirteen_tools() {
+    fn catalogue_lists_fourteen_tools() {
         let catalog = tool_catalog();
-        assert_eq!(catalog.len(), 13, "expected 13 tools: {catalog:?}");
+        assert_eq!(catalog.len(), 14, "expected 14 tools: {catalog:?}");
 
         let names: Vec<&str> = catalog
             .iter()
@@ -781,6 +809,7 @@ mod tests {
                 "codetopo_verify",
                 "codetopo_snapshot",
                 "codetopo_diagnostics",
+                "codetopo_rank",
                 "codetopo_neighborhood",
                 "codetopo_get_symbol",
                 "codetopo_search_symbols",
@@ -1137,7 +1166,7 @@ mod tests {
         assert_eq!(response["id"], 7);
         assert_eq!(
             response["result"]["tools"].as_array().expect("tools").len(),
-            13
+            14
         );
     }
 
@@ -1300,6 +1329,28 @@ mod tests {
             kinds.contains(&"UnresolvedCall"),
             "planted unresolved call reported: {kinds:?}"
         );
+    }
+
+    #[test]
+    fn rank_tool_matches_the_cli_value_for_every_metric() {
+        let (_dir, db_path) = fixture_index();
+        let graph = load_graph_from_db(&db_path).expect("graph loads");
+        for (by, metric) in [
+            ("fan_in", codetopo_core::RankMetric::FanIn),
+            ("fan_out", codetopo_core::RankMetric::FanOut),
+            ("blast_radius", codetopo_core::RankMetric::BlastRadius),
+        ] {
+            let via_tool = result_of("codetopo_rank", &args(&db_path, json!({"by": by})));
+            assert_eq!(
+                via_tool,
+                codetopo_cli::rank_value(&graph, metric, 20),
+                "MCP rank == CLI rank for {by}"
+            );
+        }
+        // Default metric is blast_radius; an unknown metric is refused.
+        let via_tool = result_of("codetopo_rank", &args(&db_path, json!({})));
+        assert_eq!(via_tool["metric"], "blast_radius");
+        assert!(call_tool("codetopo_rank", &args(&db_path, json!({"by": "nope"}))).is_err());
     }
 
     #[test]

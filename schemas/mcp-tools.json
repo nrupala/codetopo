@@ -273,6 +273,36 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
+      "description": "The top symbols by fan-in, fan-out, or blast-radius size - counts over the graph, with the count's method stated in the result. A ranking of measurements, never a score of code quality.",
+      "inputSchema": {
+        "properties": {
+          "by": {
+            "description": "Metric to rank by: fan_in, fan_out, or blast_radius (default).",
+            "type": "string"
+          },
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum entries to return. Default 20.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "db_path"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_rank",
+      "title": "Rank symbols by a measured count"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "The subgraph within a few hops of a node, in both directions (contains/defines excluded).",
       "inputSchema": {
         "properties": {

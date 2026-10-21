@@ -15,7 +15,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use codetopo_core::snapshot::SnapshotAuditEntry;
-use codetopo_core::{EdgeKind, Graph, GraphBuilder, Node, NodeKind, PathStep, Snapshot};
+use codetopo_core::{
+    EdgeKind, Graph, GraphBuilder, Node, NodeKind, PathStep, RankMetric, Snapshot,
+};
 use codetopo_extract::{extract_file, is_supported};
 use codetopo_store::{hmac_proof, sha256_hex, verify_proof, AuditLog, InsertStats, Store};
 use rayon::prelude::*;
@@ -807,7 +809,7 @@ pub fn describe_schema() -> serde_json::Value {
         },
         "queries": ["descendants", "ancestors", "blast_radius", "path",
                     "neighborhood", "search", "symbol", "stats", "verify",
-                    "diagnostics"],
+                    "diagnostics", "rank"],
     })
 }
 
@@ -903,6 +905,21 @@ pub fn diagnostics_value(db_path: &Path) -> Result<serde_json::Value, CliError> 
 pub fn print_diagnostics_json(db_path: &Path) -> Result<(), CliError> {
     println!("{}", serde_json::to_string_pretty(&diagnostics_value(db_path)?)?);
     Ok(())
+}
+
+/// JSON form of a ranking answer — the shared shape behind the CLI's
+/// `rank --json`, the HTTP rank route (which adds `index_id`), and the
+/// MCP `codetopo_rank` tool. Aggregate-first: the metric, its method
+/// (the published definition of the count — no number without its
+/// method), the total number of ranked nodes, then the top-`limit`
+/// entries, each a full [`codetopo_core::RankedSymbol`].
+pub fn rank_value(graph: &Graph, metric: RankMetric, limit: usize) -> serde_json::Value {
+    json!({
+        "metric": metric.as_str(),
+        "method": metric.method(),
+        "total": graph.rank_total(metric),
+        "results": graph.rank(metric, limit),
+    })
 }
 
 /// Verify the tamper-evident audit chain: entry count, validity, head hash.

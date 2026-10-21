@@ -99,6 +99,21 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Rank symbols by a measured count — fan-in, fan-out, or
+    /// blast-radius size. A ranking of measurements (method stated in
+    /// the output), never a score of code quality.
+    Rank {
+        #[arg(long)]
+        db: PathBuf,
+        /// Metric: fan-in | fan-out | blast-radius.
+        #[arg(long, default_value = "blast-radius")]
+        by: String,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Emit the shared JSON shape ({metric, method, total, results}).
+        #[arg(long)]
+        json: bool,
+    },
     /// Aggregate graph statistics: node/edge totals and per-kind counts.
     Stats {
         #[arg(long)]
@@ -272,6 +287,31 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                     } else {
                         println!("no path");
                     }
+                }
+            }
+        }
+        Commands::Rank { db, by, limit, json } => {
+            let metric = codetopo_core::RankMetric::parse(&by).ok_or_else(|| {
+                codetopo_cli::CliError::Usage(format!(
+                    "unknown rank metric '{by}' (expected fan-in, fan-out, or blast-radius)"
+                ))
+            })?;
+            let graph = load_graph_from_db(&db)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&codetopo_cli::rank_value(&graph, metric, limit))
+                        .expect("rank serializes")
+                );
+            } else {
+                println!(
+                    "{} symbols ranked by {}",
+                    graph.rank_total(metric),
+                    metric.as_str()
+                );
+                println!("method: {}", metric.method());
+                for r in graph.rank(metric, limit) {
+                    println!("{}  {}", r.count, r.id);
                 }
             }
         }
