@@ -31,6 +31,21 @@ itself is on the <a href="../">front page</a>.</p>
 
 <h2>The story so far</h2>
 
+<h3><span class="when">October 20, 2026 —</span> 0.6.0: the analytics get deeper</h3>
+<p>codetopo's answers grow a layer. Asking about one symbol now returns its
+dossier — the symbol itself plus every connection it has, grouped by kind,
+with the counts stated first — the shape the design specified from the
+start. The warnings recorded while an index was built (dependency cycles,
+symbols defined twice, calls that resolve to nothing) can now be read by
+agents too, not only printed by the command line. Symbols can be ranked by
+how much depends on them, how much they depend on, and how much breaks if
+they change — measurements, with the method stated beside the numbers,
+never a score of whether code is good. And two indexes can be compared
+directly: what was added, what was removed, what changed, and how the
+blast radius of every touched symbol moved. All of it arrives on the same
+three doors — command line, HTTP, and the agent tools — and all eight
+crates move to 0.6.0 together.</p>
+
 <h3><span class="when">October 18–19, 2026 —</span> The hosted API goes live</h3>
 <p>codetopo Hosted is a real thing you can buy now: US$19 a month for a hosted
 key — up to 25 indexes of your own and 10,000 queries a month — without
@@ -113,12 +128,12 @@ because all four are thin doors over the same core.</p>
 Directions, not promises — and no dates, because honest phase words beat
 invented deadlines.</p>
 
-<h3><span class="when">Next —</span> Deeper analysis</h3>
-<p>Today's answers are structural: what calls what, what breaks if this
-changes, how two modules connect. The design has always pointed further —
-richer answers computed where the graph lives, so an agent gets the
-conclusion, not a data dump. That deepening is the work in progress now, and
-it is the honest headline: the analysis gets deeper from here.</p>
+<h3><span class="when">Next —</span> Deeper still: richer extraction</h3>
+<p>The design's derived views — complexity among them — need the extractors
+to capture more of each symbol than they do today: where it ends, its
+signature, its branching. With that in hand, codetopo can report coupling
+and complexity the same way it now reports structure: the measurement and
+its method, never a grade. That work is designed and waiting its turn.</p>
 
 <h3><span class="when">After the hosted launch settles —</span> A working graph you can shape</h3>
 <p>The design's surgical operations — expand, collapse, annotate, prune — let
