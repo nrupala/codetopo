@@ -809,7 +809,7 @@ pub fn describe_schema() -> serde_json::Value {
         },
         "queries": ["descendants", "ancestors", "blast_radius", "path",
                     "neighborhood", "search", "symbol", "stats", "verify",
-                    "diagnostics", "rank"],
+                    "diagnostics", "rank", "diff"],
     })
 }
 
@@ -905,6 +905,28 @@ pub fn diagnostics_value(db_path: &Path) -> Result<serde_json::Value, CliError> 
 pub fn print_diagnostics_json(db_path: &Path) -> Result<(), CliError> {
     println!("{}", serde_json::to_string_pretty(&diagnostics_value(db_path)?)?);
     Ok(())
+}
+
+/// JSON form of a change-impact diff — the shared shape behind the
+/// CLI's `diff --json`, the HTTP diff route (which adds the two index
+/// ids), and the MCP `codetopo_diff` tool.
+pub fn diff_value(before: &Graph, after: &Graph) -> serde_json::Value {
+    serde_json::to_value(codetopo_core::diff_graphs(before, after))
+        .expect("a graph diff always serializes")
+}
+
+/// Read a snapshot file into a graph for comparison. Deliberately NOT
+/// the restore gate: a diff reads two frozen exports and reports how
+/// they differ — it writes nothing and vouches for nothing. (Restore,
+/// the path that writes a database, keeps its full verification:
+/// schema, audit chain, proof certificate.) The schema-major rule
+/// (CODE_SCHEMA §8) is enforced here too, so an unreadable comparison
+/// is refused loudly rather than diffed by guessing.
+pub fn read_snapshot_graph(path: &Path) -> Result<Graph, CliError> {
+    let data = std::fs::read_to_string(path)?;
+    let snap = Snapshot::from_json(&data)?;
+    snap.check_schema_version().map_err(CliError::Usage)?;
+    Ok(snap.to_graph())
 }
 
 /// JSON form of a ranking answer — the shared shape behind the CLI's

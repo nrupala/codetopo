@@ -541,6 +541,98 @@ fn rank_reports_the_fixture_hub() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The change-impact pair: two repos differing by one known edit —
+/// `d` appended, and `c` now calls it. The diff is exactly that edit's
+/// footprint: `d` added (with its contains edge), `c` changed (its
+/// refs now name `d`), the calls and reads edges the schema derives
+/// from the new call site, and `d`'s blast radius moving 0 → 1.
+/// The snapshot pair reports the identical diff.
+#[test]
+fn diff_reports_exactly_the_one_known_edit() {
+    let dir = workdir("diff");
+    let write_repo = |name: &str, body: &str| {
+        let repo = dir.join(name);
+        std::fs::create_dir_all(&repo).expect("create repo dir");
+        std::fs::write(repo.join("main.rs"), body).expect("write main.rs");
+        repo
+    };
+    let repo1 = write_repo(
+        "repo1",
+        "pub fn a() {\n    b();\n}\n\npub fn b() {}\n\npub fn c() {}\n",
+    );
+    let repo2 = write_repo(
+        "repo2",
+        "pub fn a() {\n    b();\n}\n\npub fn b() {}\n\npub fn c() {\n    d();\n}\n\npub fn d() {}\n",
+    );
+    let db1 = dir.join("one.db");
+    let db2 = dir.join("two.db");
+    index_repo(&repo1, &db1, "pair", None, None).expect("index repo1");
+    index_repo(&repo2, &db2, "pair", None, None).expect("index repo2");
+    let g1 = load_graph_from_db(&db1).expect("graph 1");
+    let g2 = load_graph_from_db(&db2).expect("graph 2");
+
+    let value = codetopo_cli::diff_value(&g1, &g2);
+    let ids = |list: &serde_json::Value| -> Vec<String> {
+        list.as_array()
+            .expect("array")
+            .iter()
+            .map(|n| n["id"].as_str().expect("id").to_string())
+            .collect()
+    };
+    assert_eq!(ids(&value["added_nodes"]), vec!["pair::main::d".to_string()]);
+    assert!(ids(&value["removed_nodes"]).is_empty());
+    assert_eq!(ids(&value["changed_nodes"]), vec!["pair::main::c".to_string()]);
+    let edge_triples: Vec<(&str, &str, &str)> = value["added_edges"]
+        .as_array()
+        .expect("edges")
+        .iter()
+        .map(|e| {
+            (
+                e["from"].as_str().expect("from"),
+                e["to"].as_str().expect("to"),
+                e["kind"].as_str().expect("kind"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        edge_triples,
+        vec![
+            ("pair::/main.rs", "pair::main::d", "contains"),
+            ("pair::main::c", "pair::main::d", "calls"),
+            ("pair::main::c", "pair::main::d", "reads"),
+        ]
+    );
+    assert!(value["removed_edges"].as_array().expect("edges").is_empty());
+    let impact: Vec<(&str, u64, u64, i64)> = value["impact"]
+        .as_array()
+        .expect("impact")
+        .iter()
+        .map(|i| {
+            (
+                i["id"].as_str().expect("id"),
+                i["blast_radius_before"].as_u64().expect("before"),
+                i["blast_radius_after"].as_u64().expect("after"),
+                i["delta"].as_i64().expect("delta"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        impact,
+        vec![("pair::main::c", 0, 0, 0), ("pair::main::d", 0, 1, 1)]
+    );
+
+    // The snapshot pair reports the identical diff.
+    let snap1 = dir.join("one.json");
+    let snap2 = dir.join("two.json");
+    codetopo_cli::snapshot_db(&db1, &snap1, None).expect("snapshot 1");
+    codetopo_cli::snapshot_db(&db2, &snap2, None).expect("snapshot 2");
+    let s1 = codetopo_cli::read_snapshot_graph(&snap1).expect("read snapshot 1");
+    let s2 = codetopo_cli::read_snapshot_graph(&snap2).expect("read snapshot 2");
+    assert_eq!(codetopo_cli::diff_value(&s1, &s2), value);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The planted diagnostics fixture, end to end through the CLI library:
 /// a mutual call (a cycle), a duplicated definition, and an unresolved
 /// call are recorded at index time, and the shared JSON shape behind

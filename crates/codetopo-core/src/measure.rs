@@ -239,6 +239,166 @@ impl Graph {
 }
 
 // ---------------------------------------------------------------------------
+// Change-impact diff — Bohner & Arnold (1996): "identifying the potential
+// consequences of a change, or estimating what needs to be modified to
+// accomplish a change", computed over two frozen graphs.
+// ---------------------------------------------------------------------------
+
+/// A node present in both graphs whose record changed (kind, label,
+/// location, tier, defines, or refs). Both records are carried so a
+/// consumer can show the change without re-reading either graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeChange {
+    pub id: String,
+    pub before: Node,
+    pub after: Node,
+}
+
+/// The blast-radius movement of one added / removed / changed node:
+/// its radius in the before graph, in the after graph, and the signed
+/// delta (`after - before`). A node absent from one side has radius 0
+/// there — the closure over an unknown id is empty by definition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImpactEntry {
+    pub id: String,
+    pub blast_radius_before: usize,
+    pub blast_radius_after: usize,
+    pub delta: i64,
+}
+
+/// The difference between two frozen graphs, as data.
+///
+/// Identity rules, stated because a diff is only as honest as its
+/// identity: a node is its `id` (same id, different record = changed);
+/// an edge is its full record — `(from, to, kind, line, attrs)` — so
+/// an edge whose line moved appears as one removal plus one addition,
+/// never as a silent edit. Every list is sorted (nodes by id, edges by
+/// `(from, to, kind)`) so two runs over the same pair agree byte for
+/// byte.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphDiff {
+    pub added_nodes: Vec<Node>,
+    pub removed_nodes: Vec<Node>,
+    pub changed_nodes: Vec<NodeChange>,
+    pub added_edges: Vec<Edge>,
+    pub removed_edges: Vec<Edge>,
+    /// Blast-radius movement for every added, removed, or changed
+    /// node, sorted by id.
+    pub impact: Vec<ImpactEntry>,
+}
+
+/// Sort key for the edge lists of a diff: `(from, to, kind rank, line)`.
+/// `(from, to, kind)` is unique within a graph, so the key is total.
+fn edge_key(e: &Edge) -> (String, String, u8, u32) {
+    (
+        e.from.clone(),
+        e.to.clone(),
+        e.kind.rank(),
+        e.line.unwrap_or(0),
+    )
+}
+
+/// Diff two frozen graphs (see [`GraphDiff`] for the identity rules).
+///
+/// The inputs are any two graphs this crate can hold — two indexes
+/// loaded from stores, or two snapshots via
+/// [`crate::snapshot::Snapshot::to_graph`]; the computation does not
+/// care which, and a test pins the two paths to the same answer.
+pub fn diff_graphs(before: &Graph, after: &Graph) -> GraphDiff {
+    let mut added_nodes = Vec::new();
+    let mut removed_nodes = Vec::new();
+    let mut changed_nodes = Vec::new();
+    for n in after.nodes() {
+        match before.get(&n.id) {
+            None => added_nodes.push(n.clone()),
+            Some(old) if old != n => changed_nodes.push(NodeChange {
+                id: n.id.clone(),
+                before: old.clone(),
+                after: n.clone(),
+            }),
+            _ => {}
+        }
+    }
+    for n in before.nodes() {
+        if after.get(&n.id).is_none() {
+            removed_nodes.push(n.clone());
+        }
+    }
+
+    // Edges: full-record set difference over lists sorted by the
+    // identity triple. Same triple, different record (a moved line)
+    // falls out as one removal plus one addition, as documented.
+    let mut b_edges: Vec<Edge> = before.edges().cloned().collect();
+    let mut a_edges: Vec<Edge> = after.edges().cloned().collect();
+    b_edges.sort_by_key(edge_key);
+    a_edges.sort_by_key(edge_key);
+    let mut added_edges = Vec::new();
+    let mut removed_edges = Vec::new();
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < b_edges.len() && j < a_edges.len() {
+        // The key tuple orders lexicographically, which is what makes
+        // the two-pointer walk a set difference: equal keys pair up (and
+        // a pair whose full records differ — same line, other attrs —
+        // falls out as removal + addition), a lesser key exists only on
+        // its own side.
+        match edge_key(&b_edges[i]).cmp(&edge_key(&a_edges[j])) {
+            std::cmp::Ordering::Equal => {
+                if b_edges[i] != a_edges[j] {
+                    removed_edges.push(b_edges[i].clone());
+                    added_edges.push(a_edges[j].clone());
+                }
+                i += 1;
+                j += 1;
+            }
+            std::cmp::Ordering::Less => {
+                removed_edges.push(b_edges[i].clone());
+                i += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                added_edges.push(a_edges[j].clone());
+                j += 1;
+            }
+        }
+    }
+    removed_edges.extend(b_edges[i..].iter().cloned());
+    added_edges.extend(a_edges[j..].iter().cloned());
+
+    // Impact: every touched node's blast radius on both sides.
+    let mut touched: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for n in &added_nodes {
+        touched.insert(n.id.as_str());
+    }
+    for n in &removed_nodes {
+        touched.insert(n.id.as_str());
+    }
+    for c in &changed_nodes {
+        touched.insert(c.id.as_str());
+    }
+    let impact = touched
+        .into_iter()
+        .map(|id| {
+            let b = before.blast_radius(id).len();
+            let a = after.blast_radius(id).len();
+            ImpactEntry {
+                id: id.to_string(),
+                blast_radius_before: b,
+                blast_radius_after: a,
+                delta: a as i64 - b as i64,
+            }
+        })
+        .collect();
+
+    GraphDiff {
+        added_nodes,
+        removed_nodes,
+        changed_nodes,
+        added_edges,
+        removed_edges,
+        impact,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -500,6 +660,149 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The diff pair: before — a calls b (b at line 5), c stands alone.
+    /// After — b moved to line 6, c removed, d added and called by a.
+    fn diff_pair() -> (Graph, Graph) {
+        let mut b1 = GraphBuilder::new();
+        b1.add_file(file(
+            "t",
+            "m.rs",
+            "t::m",
+            vec![
+                sym("t::m::a", NodeKind::Function, 1),
+                sym("t::m::b", NodeKind::Function, 5),
+                sym("t::m::c", NodeKind::Function, 9),
+            ],
+            vec![call("t::m::a", "b", 2)],
+        ));
+        let (before, _) = b1.build();
+        let mut b2 = GraphBuilder::new();
+        b2.add_file(file(
+            "t",
+            "m.rs",
+            "t::m",
+            vec![
+                sym("t::m::a", NodeKind::Function, 1),
+                sym("t::m::b", NodeKind::Function, 6),
+                sym("t::m::d", NodeKind::Function, 12),
+            ],
+            vec![call("t::m::a", "b", 2), call("t::m::a", "d", 3)],
+        ));
+        let (after, _) = b2.build();
+        (before, after)
+    }
+
+    fn edge_triples(edges: &[Edge]) -> Vec<(String, String, EdgeKind)> {
+        edges
+            .iter()
+            .map(|e| (e.from.clone(), e.to.clone(), e.kind))
+            .collect()
+    }
+
+    #[test]
+    fn diff_reports_exactly_the_planted_edit() {
+        let (before, after) = diff_pair();
+        let diff = diff_graphs(&before, &after);
+        assert_eq!(
+            diff.added_nodes.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
+            vec!["t::m::d"]
+        );
+        assert_eq!(
+            diff.removed_nodes.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
+            vec!["t::m::c"]
+        );
+        assert_eq!(diff.changed_nodes.len(), 1);
+        let change = &diff.changed_nodes[0];
+        assert_eq!(change.id, "t::m::b");
+        assert_eq!(change.before.loc.line, 5);
+        assert_eq!(change.after.loc.line, 6);
+        // Added edges: d's contains edge, then the new call — sorted by
+        // (from, to, kind), and "t::/m.rs" sorts before "t::m::a".
+        assert_eq!(
+            edge_triples(&diff.added_edges),
+            vec![
+                ("t::/m.rs".to_string(), "t::m::d".to_string(), EdgeKind::Contains),
+                ("t::m::a".to_string(), "t::m::d".to_string(), EdgeKind::Calls),
+            ]
+        );
+        // Removed edges: c's contains edge — a removed node takes its
+        // containment with it, and nothing else was removed.
+        assert_eq!(
+            edge_triples(&diff.removed_edges),
+            vec![("t::/m.rs".to_string(), "t::m::c".to_string(), EdgeKind::Contains)]
+        );
+        // Impact covers exactly the touched nodes, sorted by id.
+        assert_eq!(
+            diff.impact,
+            vec![
+                ImpactEntry {
+                    id: "t::m::b".to_string(),
+                    blast_radius_before: 1,
+                    blast_radius_after: 1,
+                    delta: 0,
+                },
+                ImpactEntry {
+                    id: "t::m::c".to_string(),
+                    blast_radius_before: 0,
+                    blast_radius_after: 0,
+                    delta: 0,
+                },
+                ImpactEntry {
+                    id: "t::m::d".to_string(),
+                    blast_radius_before: 0,
+                    blast_radius_after: 1,
+                    delta: 1,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn diff_of_a_graph_with_itself_is_empty() {
+        let (before, _after) = diff_pair();
+        let diff = diff_graphs(&before, &before);
+        assert!(diff.added_nodes.is_empty());
+        assert!(diff.removed_nodes.is_empty());
+        assert!(diff.changed_nodes.is_empty());
+        assert!(diff.added_edges.is_empty());
+        assert!(diff.removed_edges.is_empty());
+        assert!(diff.impact.is_empty());
+    }
+
+    #[test]
+    fn diff_over_snapshots_equals_diff_over_graphs() {
+        let (before, after) = diff_pair();
+        let before_snap = crate::Snapshot::from_graph(&before, &[]).to_graph();
+        let after_snap = crate::Snapshot::from_graph(&after, &[]).to_graph();
+        assert_eq!(diff_graphs(&before_snap, &after_snap), diff_graphs(&before, &after));
+    }
+
+    #[test]
+    fn diff_edge_line_move_is_removal_plus_addition() {
+        let build_with_call_line = |line: u32| {
+            let mut b = GraphBuilder::new();
+            b.add_file(file(
+                "t",
+                "m.rs",
+                "t::m",
+                vec![
+                    sym("t::m::a", NodeKind::Function, 1),
+                    sym("t::m::b", NodeKind::Function, 5),
+                ],
+                vec![call("t::m::a", "b", line)],
+            ));
+            b.build().0
+        };
+        let diff = diff_graphs(&build_with_call_line(2), &build_with_call_line(7));
+        assert!(diff.added_nodes.is_empty() && diff.removed_nodes.is_empty());
+        assert!(diff.changed_nodes.is_empty());
+        assert_eq!(diff.removed_edges.len(), 1);
+        assert_eq!(diff.removed_edges[0].line, Some(2));
+        assert_eq!(diff.added_edges.len(), 1);
+        assert_eq!(diff.added_edges[0].line, Some(7));
+        assert!(diff.impact.is_empty(), "no node was touched");
     }
 
     #[test]

@@ -313,6 +313,22 @@ pub fn tool_catalog() -> Vec<Value> {
             },
         }),
         json!({
+            "name": "codetopo_diff",
+            "title": "Diff two indexes (change impact)",
+            "description": "Compare two indexes (or two snapshot files): added, removed, and changed nodes and edges, plus the blast-radius movement of every touched symbol. Give exactly one before source and one after source.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "before_db_path": {"type": "string", "description": "Path to the before index database."},
+                    "after_db_path": {"type": "string", "description": "Path to the after index database."},
+                    "before_snapshot": {"type": "string", "description": "Path to the before snapshot file (alternative to before_db_path)."},
+                    "after_snapshot": {"type": "string", "description": "Path to the after snapshot file (alternative to after_db_path)."},
+                },
+                "required": [],
+            },
+        }),
+        json!({
             "name": "codetopo_neighborhood",
             "title": "Get a node's neighborhood",
             "description": "The subgraph within a few hops of a node, in both directions (contains/defines excluded).",
@@ -386,6 +402,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, ToolError> {
         "codetopo_snapshot" => tool_snapshot(args),
         "codetopo_diagnostics" => tool_diagnostics(args),
         "codetopo_rank" => tool_rank(args),
+        "codetopo_diff" => tool_diff(args),
         "codetopo_neighborhood" => tool_neighborhood(args),
         "codetopo_get_symbol" => tool_get_symbol(args),
         "codetopo_search_symbols" => tool_search_symbols(args),
@@ -664,6 +681,31 @@ fn tool_diagnostics(args: &Value) -> Result<Value, ToolError> {
     codetopo_cli::diagnostics_value(&db_path).map_err(ToolError::Cli)
 }
 
+/// `codetopo_diff` — the change-impact diff of two indexes (or two
+/// snapshot files), in the shared shape the CLI's `diff --json` and
+/// the HTTP diff route also return. Exactly one before source and one
+/// after source, the CLI command's rule.
+fn tool_diff(args: &Value) -> Result<Value, ToolError> {
+    let load = |db_key: &str, snap_key: &str| -> Result<codetopo_core::Graph, ToolError> {
+        match (optional_str(args, db_key)?, optional_str(args, snap_key)?) {
+            (Some(db), None) => {
+                let path = PathBuf::from(db);
+                if !path.is_file() {
+                    return Err(ToolError::UnknownIndex(db.to_string()));
+                }
+                load_graph_from_db(&path).map_err(ToolError::Cli)
+            }
+            (None, Some(snap)) => {
+                codetopo_cli::read_snapshot_graph(&PathBuf::from(snap)).map_err(ToolError::Cli)
+            }
+            _ => Err(ToolError::MissingParam(format!("{db_key} / {snap_key}"))),
+        }
+    };
+    let before = load("before_db_path", "before_snapshot")?;
+    let after = load("after_db_path", "after_snapshot")?;
+    Ok(codetopo_cli::diff_value(&before, &after))
+}
+
 /// `codetopo_rank` — the top symbols by a measured count, in the shared
 /// `{metric, method, total, results}` shape the CLI's `rank --json` and
 /// the HTTP rank route also return.
@@ -789,9 +831,9 @@ mod tests {
     // -- catalogue ---------------------------------------------------------
 
     #[test]
-    fn catalogue_lists_fourteen_tools() {
+    fn catalogue_lists_fifteen_tools() {
         let catalog = tool_catalog();
-        assert_eq!(catalog.len(), 14, "expected 14 tools: {catalog:?}");
+        assert_eq!(catalog.len(), 15, "expected 15 tools: {catalog:?}");
 
         let names: Vec<&str> = catalog
             .iter()
@@ -810,6 +852,7 @@ mod tests {
                 "codetopo_snapshot",
                 "codetopo_diagnostics",
                 "codetopo_rank",
+                "codetopo_diff",
                 "codetopo_neighborhood",
                 "codetopo_get_symbol",
                 "codetopo_search_symbols",
@@ -1166,7 +1209,7 @@ mod tests {
         assert_eq!(response["id"], 7);
         assert_eq!(
             response["result"]["tools"].as_array().expect("tools").len(),
-            14
+            15
         );
     }
 
@@ -1351,6 +1394,68 @@ mod tests {
         let via_tool = result_of("codetopo_rank", &args(&db_path, json!({})));
         assert_eq!(via_tool["metric"], "blast_radius");
         assert!(call_tool("codetopo_rank", &args(&db_path, json!({"by": "nope"}))).is_err());
+    }
+
+    #[test]
+    fn diff_tool_matches_the_shared_diff_for_db_and_snapshot_pairs() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let write_repo = |name: &str, body: &str| {
+            let repo = dir.path().join(name);
+            std::fs::create_dir_all(&repo).expect("create repo dir");
+            std::fs::write(repo.join("main.rs"), body).expect("write main.rs");
+            repo
+        };
+        let repo1 = write_repo(
+            "repo1",
+            "pub fn a() {\n    b();\n}\n\npub fn b() {}\n\npub fn c() {}\n",
+        );
+        let repo2 = write_repo(
+            "repo2",
+            "pub fn a() {\n    b();\n}\n\npub fn b() {}\n\npub fn c() {\n    d();\n}\n\npub fn d() {}\n",
+        );
+        let db1 = dir.path().join("one.db");
+        let db2 = dir.path().join("two.db");
+        index_repo(&repo1, &db1, "pair", None, None).expect("index repo1");
+        index_repo(&repo2, &db2, "pair", None, None).expect("index repo2");
+        let g1 = load_graph_from_db(&db1).expect("graph 1");
+        let g2 = load_graph_from_db(&db2).expect("graph 2");
+        let expected = codetopo_cli::diff_value(&g1, &g2);
+        assert_eq!(expected["added_nodes"][0]["id"], "pair::main::d");
+
+        let via_tool = result_of(
+            "codetopo_diff",
+            &json!({
+                "before_db_path": db1.display().to_string(),
+                "after_db_path": db2.display().to_string(),
+            }),
+        );
+        assert_eq!(via_tool, expected, "MCP diff (db pair) == shared diff");
+
+        // The snapshot pair reports the identical diff.
+        let snap1 = dir.path().join("one.json");
+        let snap2 = dir.path().join("two.json");
+        codetopo_cli::snapshot_db(&db1, &snap1, None).expect("snapshot 1");
+        codetopo_cli::snapshot_db(&db2, &snap2, None).expect("snapshot 2");
+        let via_snaps = result_of(
+            "codetopo_diff",
+            &json!({
+                "before_snapshot": snap1.display().to_string(),
+                "after_snapshot": snap2.display().to_string(),
+            }),
+        );
+        assert_eq!(via_snaps, expected, "MCP diff (snapshot pair) == shared diff");
+
+        // Exactly one source per side: neither and both are refused.
+        assert!(call_tool("codetopo_diff", &json!({})).is_err());
+        assert!(call_tool(
+            "codetopo_diff",
+            &json!({
+                "before_db_path": db1.display().to_string(),
+                "before_snapshot": snap1.display().to_string(),
+                "after_db_path": db2.display().to_string(),
+            })
+        )
+        .is_err());
     }
 
     #[test]

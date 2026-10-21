@@ -178,6 +178,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/graphs/:id/search", get(search))
         .route("/v1/graphs/:id/diagnostics", get(diagnostics))
         .route("/v1/graphs/:id/rank", get(rank))
+        .route("/v1/graphs/:id/diff", get(diff))
         .route("/v1/schema", get(schema))
         .route_layer(axum::middleware::from_fn_with_state(
             envelope,
@@ -1096,6 +1097,42 @@ async fn rank(
     let graph = load_graph_blocking(&db, &index_id)?;
     let mut value = codetopo_cli::rank_value(&graph, metric, limit);
     value["index_id"] = json!(index_id);
+    Ok(Json(value))
+}
+
+/// Query for `diff`: the other index's id.
+#[derive(Debug, Default, Deserialize)]
+struct DiffQuery {
+    other: Option<String>,
+}
+
+/// `GET /v1/graphs/{id}/diff?other={other_id}` — the change-impact diff
+/// of this index (before) against another index (after): added,
+/// removed, and changed nodes and edges, plus the blast-radius
+/// movement of every touched symbol. Tenancy is enforced on BOTH
+/// indexes — naming another key's index as either side is answered
+/// exactly like a missing one. The shared
+/// [`codetopo_cli::diff_value`] shape plus the two index ids.
+async fn diff(
+    State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
+    UrlPath(index_id): UrlPath<String>,
+    Query(query): Query<DiffQuery>,
+) -> Result<Json<Value>, ApiError> {
+    enforce_tenancy(&state, &index_id, &key)?;
+    let other_id = query
+        .other
+        .as_deref()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .ok_or_else(|| ApiError::missing_param("other"))?
+        .to_string();
+    enforce_tenancy(&state, &other_id, &key)?;
+    let before = load_graph_blocking(&state.db_path(&index_id), &index_id)?;
+    let after = load_graph_blocking(&state.db_path(&other_id), &other_id)?;
+    let mut value = codetopo_cli::diff_value(&before, &after);
+    value["index_id"] = json!(index_id);
+    value["other_index_id"] = json!(other_id);
     Ok(Json(value))
 }
 

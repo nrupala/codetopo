@@ -114,6 +114,27 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Compare two indexes (or two snapshot files): added, removed,
+    /// and changed nodes and edges, plus the blast-radius movement of
+    /// every touched symbol — change-impact analysis (Bohner & Arnold)
+    /// over two frozen graphs.
+    Diff {
+        /// Before index database (pair with --after-db).
+        #[arg(long)]
+        before_db: Option<PathBuf>,
+        /// After index database.
+        #[arg(long)]
+        after_db: Option<PathBuf>,
+        /// Before snapshot file (pair with --after-snapshot).
+        #[arg(long)]
+        before_snapshot: Option<PathBuf>,
+        /// After snapshot file.
+        #[arg(long)]
+        after_snapshot: Option<PathBuf>,
+        /// Emit the shared JSON shape (the core GraphDiff object).
+        #[arg(long)]
+        json: bool,
+    },
     /// Aggregate graph statistics: node/edge totals and per-kind counts.
     Stats {
         #[arg(long)]
@@ -312,6 +333,73 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 println!("method: {}", metric.method());
                 for r in graph.rank(metric, limit) {
                     println!("{}  {}", r.count, r.id);
+                }
+            }
+        }
+        Commands::Diff {
+            before_db,
+            after_db,
+            before_snapshot,
+            after_snapshot,
+            json,
+        } => {
+            fn load_side(
+                db: &Option<PathBuf>,
+                snap: &Option<PathBuf>,
+                side: &str,
+            ) -> Result<codetopo_core::Graph, codetopo_cli::CliError> {
+                match (db, snap) {
+                    (Some(db), None) => load_graph_from_db(db),
+                    (None, Some(snap)) => codetopo_cli::read_snapshot_graph(snap),
+                    _ => Err(codetopo_cli::CliError::Usage(format!(
+                        "give exactly one of --{side}-db / --{side}-snapshot"
+                    ))),
+                }
+            }
+            let before = load_side(&before_db, &before_snapshot, "before")?;
+            let after = load_side(&after_db, &after_snapshot, "after")?;
+            let diff = codetopo_core::diff_graphs(&before, &after);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&diff).expect("diff serializes")
+                );
+            } else {
+                println!(
+                    "nodes: +{} -{} ~{}",
+                    diff.added_nodes.len(),
+                    diff.removed_nodes.len(),
+                    diff.changed_nodes.len()
+                );
+                println!(
+                    "edges: +{} -{}",
+                    diff.added_edges.len(),
+                    diff.removed_edges.len()
+                );
+                for n in &diff.added_nodes {
+                    println!("+ node {}", n.id);
+                }
+                for n in &diff.removed_nodes {
+                    println!("- node {}", n.id);
+                }
+                for c in &diff.changed_nodes {
+                    println!(
+                        "~ node {} ({}:{} -> {}:{})",
+                        c.id, c.before.loc.file, c.before.loc.line, c.after.loc.file,
+                        c.after.loc.line
+                    );
+                }
+                for e in &diff.added_edges {
+                    println!("+ edge {} --{}--> {}", e.from, e.kind.as_str(), e.to);
+                }
+                for e in &diff.removed_edges {
+                    println!("- edge {} --{}--> {}", e.from, e.kind.as_str(), e.to);
+                }
+                for i in &diff.impact {
+                    println!(
+                        "impact {}: blast radius {} -> {} ({:+})",
+                        i.id, i.blast_radius_before, i.blast_radius_after, i.delta
+                    );
                 }
             }
         }

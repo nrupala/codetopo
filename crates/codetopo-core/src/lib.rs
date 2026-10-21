@@ -28,7 +28,9 @@ pub mod snapshot;
 pub use diag::Diagnostic;
 pub use emit::{FileSymbols, RawCall, RawHeritage, RawImport, RawSymbol};
 pub use graph::{Graph, GraphBuilder, PathStep, Subgraph};
-pub use measure::{RankMetric, RankedSymbol, SymbolDossier};
+pub use measure::{
+    diff_graphs, GraphDiff, ImpactEntry, NodeChange, RankMetric, RankedSymbol, SymbolDossier,
+};
 pub use render::{layout, render_svg, LayoutEdge, LayoutNode, LayoutSpec};
 pub use schema::{Edge, EdgeKind, Loc, Node, NodeKind, Tier};
 pub use snapshot::Snapshot;
