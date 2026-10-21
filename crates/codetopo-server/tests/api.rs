@@ -951,6 +951,57 @@ async fn diagnostics_route_returns_exactly_the_cli_list() {
     assert_eq!(status, StatusCode::NOT_FOUND, "unknown index must 404");
 }
 
+/// The rank route returns the shared ranking object for every metric,
+/// and the fixture's known hub — `helper_b`, whose change breaks
+/// `helper_a`, `entry`, and `main` — tops the default blast-radius
+/// ranking with the count 3.
+#[tokio::test]
+async fn rank_route_matches_the_cli_value_and_finds_the_hub() {
+    let harness = Harness::new();
+    let report = harness.index_fixture().await;
+    let index_id = report["index_id"].as_str().expect("index_id").to_string();
+    let graph = load_graph_from_db(&harness.db(&index_id)).expect("load graph");
+    for (by, metric) in [
+        ("fan_in", codetopo_core::RankMetric::FanIn),
+        ("fan_out", codetopo_core::RankMetric::FanOut),
+        ("blast_radius", codetopo_core::RankMetric::BlastRadius),
+    ] {
+        let (status, body) = harness
+            .get(&format!("/v1/graphs/{index_id}/rank?by={by}"))
+            .await;
+        assert_eq!(status, StatusCode::OK, "rank {by}: {body}");
+        let mut via_http = body.clone();
+        via_http
+            .as_object_mut()
+            .expect("object")
+            .remove("index_id")
+            .expect("index_id present");
+        assert_eq!(
+            via_http,
+            codetopo_cli::rank_value(&graph, metric, 20),
+            "HTTP rank == CLI rank for {by}"
+        );
+    }
+
+    // Default metric, known hub.
+    let (status, body) = harness.get(&format!("/v1/graphs/{index_id}/rank")).await;
+    assert_eq!(status, StatusCode::OK, "rank default: {body}");
+    assert_eq!(body["metric"], "blast_radius");
+    assert!(
+        body["method"].as_str().expect("method").contains("CODE_SCHEMA"),
+        "the method is stated beside the numbers: {body}"
+    );
+    assert_eq!(body["results"][0]["id"], "fixture::alpha::helper_b");
+    assert_eq!(body["results"][0]["count"], 3);
+
+    // An unknown metric is a 400, in the API's flat error vocabulary.
+    let (status, body) = harness
+        .get(&format!("/v1/graphs/{index_id}/rank?by=nope"))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "bad metric: {body}");
+    assert_eq!(body["error"], "invalid_param");
+}
+
 /// The symbol route returns the core dossier (node + incident edges +
 /// counts) — the same object the CLI prints and the MCP tool returns,
 /// plus `index_id`.

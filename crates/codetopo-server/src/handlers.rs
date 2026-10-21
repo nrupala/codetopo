@@ -177,6 +177,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/graphs/:id/symbol", get(symbol))
         .route("/v1/graphs/:id/search", get(search))
         .route("/v1/graphs/:id/diagnostics", get(diagnostics))
+        .route("/v1/graphs/:id/rank", get(rank))
         .route("/v1/schema", get(schema))
         .route_layer(axum::middleware::from_fn_with_state(
             envelope,
@@ -1037,6 +1038,63 @@ async fn diagnostics(
         codetopo_cli::diagnostics_value(&db).map_err(|err| map_cli_error(&walk_index, err))
     })
     .await?;
+    value["index_id"] = json!(index_id);
+    Ok(Json(value))
+}
+
+/// Query for `rank`: the metric name and the cap, read as strings so a
+/// bad value is `invalid_param` naming the parameter (the closure
+/// routes' discipline).
+#[derive(Debug, Default, Deserialize)]
+struct RankQuery {
+    by: Option<String>,
+    limit: Option<String>,
+}
+
+/// `GET /v1/graphs/{id}/rank?by=&limit=` — the top symbols by a
+/// measured count (fan-in, fan-out, or blast-radius size), with the
+/// metric's published definition stated in the response. The shared
+/// [`codetopo_cli::rank_value`] shape plus `index_id`: the CLI's
+/// `rank` command and the MCP `codetopo_rank` tool return the same
+/// object. Default metric is `blast_radius`; `limit` follows the
+/// closure routes' rule (default 20, 1..=1000).
+async fn rank(
+    State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
+    UrlPath(index_id): UrlPath<String>,
+    Query(query): Query<RankQuery>,
+) -> Result<Json<Value>, ApiError> {
+    enforce_tenancy(&state, &index_id, &key)?;
+    let by = query
+        .by
+        .as_deref()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .unwrap_or("blast_radius");
+    let metric = codetopo_core::RankMetric::parse(by).ok_or_else(|| {
+        ApiError::invalid_param(
+            "by",
+            &format!("expected fan_in, fan_out, or blast_radius, got '{by}'"),
+        )
+    })?;
+    let limit: usize = match query.limit.as_deref().map(str::trim) {
+        None | Some("") => DEFAULT_LIMIT,
+        Some(raw) => {
+            let parsed: usize = raw.parse().map_err(|_| {
+                ApiError::invalid_param("limit", &format!("expected an integer, got '{raw}'"))
+            })?;
+            if parsed == 0 || parsed > MAX_LIMIT {
+                return Err(ApiError::invalid_param(
+                    "limit",
+                    &format!("must be 1..={MAX_LIMIT}, got {parsed}"),
+                ));
+            }
+            parsed
+        }
+    };
+    let db = state.db_path(&index_id);
+    let graph = load_graph_blocking(&db, &index_id)?;
+    let mut value = codetopo_cli::rank_value(&graph, metric, limit);
     value["index_id"] = json!(index_id);
     Ok(Json(value))
 }

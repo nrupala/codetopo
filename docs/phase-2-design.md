@@ -19,8 +19,21 @@ vocabulary; codetopo supplies only the structural substrate.
 
 The API is therefore deliberately **thin, generic, and total**: one indexing
 operation plus a small set of graph queries, all of which are pure functions of
-an indexed repository. There is no scoring, no ranking heuristic, and no
+an indexed repository. There is no scoring of code quality and no
 opinionated default that would bake a use case into the engine.
+
+> **Amendment (2026-10-21, Analytics Depth Program).** The sentence above
+> originally read "There is no scoring, no ranking heuristic…" — written
+> when the surface carried no rankings at all. The program that completed
+> DESIGN §3's `get_symbol` also ships its "top-k fan-out" default answer,
+> so the doctrine is now stated precisely, in the open: **codetopo reports
+> measurements — facts about the graph, each with its method stated. A
+> ranking is an ordering of a measurement (fan-in, fan-out, and
+> blast-radius size, defined in `codetopo-core::measure` from Henry &
+> Kafura and CODE_SCHEMA §6). codetopo does not score code quality and
+> does not judge code.** The ranking reports its method beside its
+> numbers, on every surface, so no consumer can mistake a count for a
+> verdict.
 
 ### 1.1 Why an API surface at all
 

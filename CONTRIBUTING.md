@@ -2,7 +2,7 @@
 
 ## Ground rules
 
-- **Read-only by design.** codetopo models code structure; it never edits source, scores code, or assigns meaning. Keep it that way.
+- **Read-only by design.** codetopo models code structure; it never edits source, never scores code quality, and never assigns meaning. It reports measurements — facts about the graph, each with its method stated — and a ranking of a measurement is not a score. Keep it that way.
 - **Thin adapters.** The CLI, HTTP server, MCP server, and ACP agent are all thin adapters over `codetopo-core` / `codetopo-store`. Graph logic lives in core — never duplicate it in an adapter.
 - **Evidence over assertion.** New behavior ships with tests and a verification note. If you claim a number, show the command that produced it.
 - **Deterministic.** No network calls, no LLMs, no randomness in the engine path.

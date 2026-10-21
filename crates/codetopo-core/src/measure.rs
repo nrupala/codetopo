@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::graph::Graph;
-use crate::schema::{Edge, EdgeKind, Node};
+use crate::schema::{Edge, EdgeKind, Node, NodeKind};
 
 // ---------------------------------------------------------------------------
 // Symbol dossier (DESIGN §3: get_symbol = node + incident edges + counts)
@@ -94,6 +94,147 @@ impl Graph {
             outgoing_count,
             incoming_count,
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Importance ranking — measurements, ordered (doctrine: docs/phase-2-design.md
+// §1, as amended 2026-10-21)
+// ---------------------------------------------------------------------------
+
+/// A ranking metric: a count over the graph, defined exactly, that nodes
+/// are ordered by. Every metric carries its published definition; the
+/// surfaces state it beside the numbers (`method`), because a number
+/// without its method is a claim, not a measurement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RankMetric {
+    /// Fan-in (Henry & Kafura, 1981): how much depends on this node —
+    /// here, the number of incoming dependency edges (all kinds except
+    /// `contains`; containment is hierarchy, not dependency).
+    FanIn,
+    /// Fan-out (Henry & Kafura, 1981): how much this node depends on —
+    /// the number of outgoing dependency edges (same exclusion).
+    FanOut,
+    /// Blast-radius size: the number of transitive dependents of this
+    /// node over calls / inherits / implements / reads / writes
+    /// (CODE_SCHEMA §6's blast radius, counted).
+    BlastRadius,
+}
+
+impl RankMetric {
+    /// Parse a metric name. Both spellings are accepted on every
+    /// surface — the wire name (`fan_in`, `fan_out`, `blast_radius`)
+    /// and the CLI's hyphenated form (`fan-in`, `fan-out`,
+    /// `blast-radius`) — so no surface can refuse a name another
+    /// surface taught.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "fan_in" | "fan-in" => Some(Self::FanIn),
+            "fan_out" | "fan-out" => Some(Self::FanOut),
+            "blast_radius" | "blast-radius" => Some(Self::BlastRadius),
+            _ => None,
+        }
+    }
+
+    /// The wire name the surfaces accept and report.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FanIn => "fan_in",
+            Self::FanOut => "fan_out",
+            Self::BlastRadius => "blast_radius",
+        }
+    }
+
+    /// The published definition of the count, stated wherever the
+    /// ranking is reported (the provenance rule: no number without
+    /// its method).
+    pub fn method(self) -> &'static str {
+        match self {
+            Self::FanIn => "fan-in (Henry & Kafura 1981): the number of incoming \
+                            dependency edges — every edge kind except contains; \
+                            external stub nodes are not ranked",
+            Self::FanOut => "fan-out (Henry & Kafura 1981): the number of outgoing \
+                             dependency edges — every edge kind except contains; \
+                             external stub nodes are not ranked",
+            Self::BlastRadius => "blast radius (CODE_SCHEMA §6): the number of \
+                                  transitive dependents over calls, inherits, \
+                                  implements, reads, and writes edges; \
+                                  external stub nodes are not ranked",
+        }
+    }
+}
+
+/// One ranked node: its identity and its count under the metric.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RankedSymbol {
+    pub id: String,
+    pub kind: NodeKind,
+    pub label: String,
+    pub count: usize,
+}
+
+impl Graph {
+    /// The top-`limit` nodes by `metric`, as a measurement: count
+    /// descending, node id ascending as the tie-break, so every surface
+    /// reports the same order. Nodes whose count is zero are excluded —
+    /// a ranking of everything is a census, not a ranking. `external`
+    /// stub nodes are excluded too: they mark the dependency boundary
+    /// (CODE_SCHEMA §2), not symbols of the indexed system, and in any
+    /// real corpus the unresolved-call stubs for constructor-like names
+    /// (`Ok`, `Some`, `std`) would bury every actual hub under boundary
+    /// noise. `limit == 0` returns an empty list.
+    pub fn rank(&self, metric: RankMetric, limit: usize) -> Vec<RankedSymbol> {
+        let mut counts: Vec<(String, usize)> = match metric {
+            RankMetric::FanIn | RankMetric::FanOut => {
+                let mut tally: std::collections::HashMap<&str, usize> =
+                    std::collections::HashMap::new();
+                for e in self.edges() {
+                    if e.kind == EdgeKind::Contains {
+                        continue;
+                    }
+                    let key = match metric {
+                        RankMetric::FanIn => e.to.as_str(),
+                        _ => e.from.as_str(),
+                    };
+                    *tally.entry(key).or_insert(0) += 1;
+                }
+                tally
+                    .into_iter()
+                    .map(|(id, c)| (id.to_string(), c))
+                    .collect()
+            }
+            RankMetric::BlastRadius => self
+                .nodes()
+                .map(|n| (n.id.clone(), self.blast_radius(&n.id).len()))
+                .collect(),
+        };
+        counts.retain(|(_, c)| *c > 0);
+        counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let mut ranked: Vec<RankedSymbol> = counts
+            .into_iter()
+            .map(|(id, count)| {
+                let node = self.get(&id).expect("ranked id is a node id");
+                RankedSymbol {
+                    id,
+                    kind: node.kind,
+                    label: node.label.clone(),
+                    count,
+                }
+            })
+            .filter(|r| r.kind != NodeKind::External)
+            .collect();
+        ranked.truncate(limit);
+        ranked
+    }
+
+    /// How many nodes have a non-zero count under `metric` — the `total`
+    /// the surfaces state before the (possibly truncated) ranking.
+    pub fn rank_total(&self, metric: RankMetric) -> usize {
+        // The full ranking without a limit is the count's definition;
+        // graphs here are index-sized, so clarity wins over a second
+        // counting path that could drift from `rank`.
+        self.rank(metric, usize::MAX).len()
     }
 }
 
@@ -246,6 +387,119 @@ mod tests {
         assert_eq!(in_calls[0].from, "t::m::b");
         // An unknown id has no dossier (the surfaces answer unknown_node).
         assert!(graph.dossier("t::m::nope").is_none());
+    }
+
+    /// Diamond: d calls b and c; b and c both call e.
+    fn diamond() -> Graph {
+        let mut b = GraphBuilder::new();
+        b.add_file(file(
+            "t",
+            "m.rs",
+            "t::m",
+            vec![
+                sym("t::m::d", NodeKind::Function, 1),
+                sym("t::m::b", NodeKind::Function, 10),
+                sym("t::m::c", NodeKind::Function, 20),
+                sym("t::m::e", NodeKind::Function, 30),
+            ],
+            vec![
+                call("t::m::d", "b", 2),
+                call("t::m::d", "c", 3),
+                call("t::m::b", "e", 11),
+                call("t::m::c", "e", 21),
+            ],
+        ));
+        let (g, diags) = b.build();
+        assert!(diags.is_empty(), "diamond is clean: {diags:?}");
+        g
+    }
+
+    fn ranked_pairs(g: &Graph, metric: RankMetric, limit: usize) -> Vec<(String, usize)> {
+        g.rank(metric, limit)
+            .iter()
+            .map(|r| (r.id.clone(), r.count))
+            .collect()
+    }
+
+    #[test]
+    fn rank_orders_by_count_then_id_on_the_diamond() {
+        let g = diamond();
+        // fan-in: e is called by b and c; b and c tie at 1, id order wins.
+        assert_eq!(
+            ranked_pairs(&g, RankMetric::FanIn, 20),
+            vec![
+                ("t::m::e".to_string(), 2),
+                ("t::m::b".to_string(), 1),
+                ("t::m::c".to_string(), 1),
+            ]
+        );
+        // fan-out: d calls two; b and c call one each.
+        assert_eq!(
+            ranked_pairs(&g, RankMetric::FanOut, 20),
+            vec![
+                ("t::m::d".to_string(), 2),
+                ("t::m::b".to_string(), 1),
+                ("t::m::c".to_string(), 1),
+            ]
+        );
+        // blast radius: changing e breaks b, c, and (through them) d.
+        assert_eq!(
+            ranked_pairs(&g, RankMetric::BlastRadius, 20),
+            vec![
+                ("t::m::e".to_string(), 3),
+                ("t::m::b".to_string(), 1),
+                ("t::m::c".to_string(), 1),
+            ]
+        );
+        // Zero counts are excluded and the limit truncates after sorting.
+        assert_eq!(g.rank_total(RankMetric::FanIn), 3);
+        assert_eq!(
+            ranked_pairs(&g, RankMetric::FanIn, 1),
+            vec![("t::m::e".to_string(), 2)]
+        );
+        assert!(g.rank(RankMetric::FanIn, 0).is_empty());
+        // Entries carry the node's identity, not just the count.
+        let top = &g.rank(RankMetric::FanIn, 1)[0];
+        assert_eq!(top.kind, NodeKind::Function);
+        assert_eq!(top.label, "e");
+    }
+
+    #[test]
+    fn rank_counts_cross_verify_against_raw_edges() {
+        // Every ranked count must equal an independent recount from the
+        // raw edge list / the closure itself — the ranking may not invent
+        // numbers the graph does not contain.
+        let (g, _diags) = planted_builder().build();
+        for metric in [RankMetric::FanIn, RankMetric::FanOut, RankMetric::BlastRadius] {
+            let ranked: std::collections::HashMap<String, usize> = g
+                .rank(metric, usize::MAX)
+                .into_iter()
+                .map(|r| (r.id, r.count))
+                .collect();
+            for node in g.nodes() {
+                let raw = match metric {
+                    RankMetric::FanIn => g
+                        .edges()
+                        .filter(|e| e.kind != EdgeKind::Contains && e.to == node.id)
+                        .count(),
+                    RankMetric::FanOut => g
+                        .edges()
+                        .filter(|e| e.kind != EdgeKind::Contains && e.from == node.id)
+                        .count(),
+                    RankMetric::BlastRadius => g.blast_radius(&node.id).len(),
+                };
+                // External stubs are boundary markers, not ranked symbols:
+                // their expected ranked count is "absent" whatever the raw
+                // recount says (the planted fixture's stub has fan-in 1).
+                let expected = if node.kind == NodeKind::External { 0 } else { raw };
+                assert_eq!(
+                    ranked.get(&node.id).copied().unwrap_or(0),
+                    expected,
+                    "{metric:?} for {}",
+                    node.id
+                );
+            }
+        }
     }
 
     #[test]

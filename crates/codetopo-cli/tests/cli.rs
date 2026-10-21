@@ -522,6 +522,25 @@ fn index_discovers_packages_from_manifests() {
     assert_eq!(loose, "fallback-pkg::loose::loose");
 }
 
+/// Ranking on the CLI fixture (a calls b): `b` is the only node with a
+/// blast radius, of exactly 1 — and the shared ranking object states
+/// the metric and its method beside the numbers.
+#[test]
+fn rank_reports_the_fixture_hub() {
+    let dir = workdir("rank");
+    let repo = fixture_repo(&dir);
+    let db = dir.join("index.db");
+    index_repo(&repo, &db, "fixture", None, None).expect("index fixture");
+    let graph = load_graph_from_db(&db).expect("load graph");
+    let b_id = find_id(&graph, NodeKind::Function, "b");
+    let value = codetopo_cli::rank_value(&graph, codetopo_core::RankMetric::BlastRadius, 20);
+    assert_eq!(value["metric"], "blast_radius");
+    assert_eq!(value["total"], 1);
+    assert_eq!(value["results"][0]["id"], b_id);
+    assert_eq!(value["results"][0]["count"], 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The planted diagnostics fixture, end to end through the CLI library:
 /// a mutual call (a cycle), a duplicated definition, and an unresolved
 /// call are recorded at index time, and the shared JSON shape behind

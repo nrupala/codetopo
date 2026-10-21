@@ -19,6 +19,7 @@ const EXPECTED_ROUTES: &[&str] = &[
     "/v1/graphs/{id}/diagnostics",
     "/v1/graphs/{id}/neighborhood",
     "/v1/graphs/{id}/path",
+    "/v1/graphs/{id}/rank",
     "/v1/graphs/{id}/search",
     "/v1/graphs/{id}/snapshot",
     "/v1/graphs/{id}/stats",

@@ -18,9 +18,11 @@ tree once and answers those questions as data — counts first, full lists
 only when asked — over a CLI, an HTTP API, or the MCP tools your agent
 already speaks.
 
-It is deliberately domain-blind: no scoring, no rankings, no opinions about
-what the code means. It answers structural questions about source trees, and
-only that. Domain meaning belongs to the agents and teams composing on top.
+It is deliberately domain-blind: it reports measurements — counts and
+rankings of structural facts, each with its method stated — and it never
+scores code quality or holds opinions about what the code means. It answers
+structural questions about source trees, and only that. Domain meaning
+belongs to the agents and teams composing on top.
 
 codetopo is a product of **AIMLDS** (2351485 ALBERTA INC.) — the house
 behind [Conduit](https://pipavia.com), managed MCP connector rails where
@@ -123,21 +125,21 @@ curl -H "Authorization: Bearer $KEY" \
   "localhost:8080/v1/graphs/<uuid>/descendants?node=<node-id>&expand=true"
 ```
 
-Thirteen endpoints under `/v1`, one index operation plus twelve read-only
+Fourteen endpoints under `/v1`, one index operation plus thirteen read-only
 queries: `POST /v1/index`, `GET /v1/graphs/{id}/{descendants, ancestors,
 blast-radius, path, stats, verify, snapshot, neighborhood, symbol,
-search, diagnostics}`, `GET /v1/schema`. Full contract in
+search, diagnostics, rank}`, `GET /v1/schema`. Full contract in
 [`schemas/openapi.yaml`](schemas/openapi.yaml) (OpenAPI 3.1.0), env knobs
 (`CODETOPO_BIND`, `CODETOPO_DATA_DIR`, `CODETOPO_KEYS_FILE`,
 `CODETOPO_METERING_LOG`) documented in [`schemas/README.md`](schemas/README.md).
 
 ### MCP (`codetopo-mcp`)
 
-A stdio JSON-RPC server exposing the same handler layer as thirteen tools —
-the nine query/integrity tools (`codetopo_index`, `codetopo_descendants`,
+A stdio JSON-RPC server exposing the same handler layer as fourteen tools —
+the ten query/integrity tools (`codetopo_index`, `codetopo_descendants`,
 `codetopo_ancestors`, `codetopo_blast_radius`, `codetopo_path`,
 `codetopo_stats`, `codetopo_verify`, `codetopo_snapshot`,
-`codetopo_diagnostics`) plus discovery
+`codetopo_diagnostics`, `codetopo_rank`) plus discovery
 (`codetopo_search_symbols`, `codetopo_get_symbol`,
 `codetopo_neighborhood`, `codetopo_describe_schema`) — so an in-process
 agent learns one surface and gets both. MCP answers are identical to the HTTP answers by

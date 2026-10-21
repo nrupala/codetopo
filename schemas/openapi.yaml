@@ -527,6 +527,53 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '504':
           $ref: '#/components/responses/RequestTimeout'
+  /v1/graphs/{id}/rank:
+    get:
+      tags: [query]
+      operationId: rank
+      summary: The top symbols by a measured count.
+      description: |
+        Nodes ordered by one measurement: `fan_in` or `fan_out` (Henry &
+        Kafura 1981 — incoming / outgoing dependency edges, `contains`
+        excluded) or `blast_radius` (CODE_SCHEMA §6 — the number of
+        transitive dependents). Count descending, node id ascending as
+        the tie-break; nodes with a zero count are excluded, and so are
+        `external` stub nodes (the dependency boundary, not symbols of
+        the indexed system). The response
+        states the metric's method beside the numbers — a ranking of a
+        measurement, never a score of code quality. The same object
+        serves the CLI's `rank` command and the MCP `codetopo_rank`
+        tool. Default `by` is `blast_radius`; an unknown metric is
+        `400 invalid_param`.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+        - name: by
+          in: query
+          required: false
+          description: The metric to rank by (default `blast_radius`).
+          schema:
+            type: string
+            enum: [fan_in, fan_out, blast_radius]
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: The ranking (possibly truncated to `limit`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RankResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/schema:
     get:
       tags: [query]
@@ -1088,6 +1135,45 @@ components:
         symbol and locations, an unresolved call's source, target, and
         line).
       additionalProperties: true
+    RankResponse:
+      type: object
+      description: |
+        A ranking of a measurement: the metric, its published definition
+        (`method` — no number without its method), the total number of
+        nodes with a non-zero count, and the top entries.
+      required: [index_id, metric, method, total, results]
+      properties:
+        index_id:
+          type: string
+        metric:
+          type: string
+          enum: [fan_in, fan_out, blast_radius]
+        method:
+          type: string
+          description: The published definition of the count being ranked.
+        total:
+          type: integer
+          minimum: 0
+          description: Nodes with a non-zero count (before `limit` truncation).
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/RankedSymbol'
+    RankedSymbol:
+      type: object
+      required: [id, kind, label, count]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          description: The node's kind (the schema's snake_case wire name).
+        label:
+          type: string
+        count:
+          type: integer
+          minimum: 1
+          description: The node's count under the ranked metric.
     SearchResponse:
       type: object
       required: [index_id, query, total, results]
