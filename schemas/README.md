@@ -122,13 +122,14 @@ returned when `expand=true`). CLI parity was used as the tie-breaker.
 ## `mcp-tools.json`
 
 The verbatim `result.tools` payload of a JSON-RPC `tools/list` call against
-`codetopo-mcp` over stdio. Fourteen tools:
+`codetopo-mcp` over stdio. Fifteen tools:
 
 `codetopo_index`, `codetopo_descendants`, `codetopo_ancestors`,
 `codetopo_blast_radius`, `codetopo_path`, `codetopo_stats`,
 `codetopo_verify`, `codetopo_snapshot`, `codetopo_diagnostics`,
-`codetopo_rank`, `codetopo_neighborhood`, `codetopo_get_symbol`,
-`codetopo_search_symbols`, `codetopo_describe_schema`
+`codetopo_rank`, `codetopo_diff`, `codetopo_neighborhood`,
+`codetopo_get_symbol`, `codetopo_search_symbols`,
+`codetopo_describe_schema`
 
 Regenerate with:
 
@@ -155,6 +156,7 @@ Every MCP tool has an HTTP twin:
 | `codetopo_snapshot` | `GET /v1/graphs/{id}/snapshot` |
 | `codetopo_diagnostics` | `GET /v1/graphs/{id}/diagnostics` |
 | `codetopo_rank` | `GET /v1/graphs/{id}/rank` |
+| `codetopo_diff` | `GET /v1/graphs/{id}/diff?other={other_id}` |
 | `codetopo_neighborhood` | `GET /v1/graphs/{id}/neighborhood` |
 | `codetopo_get_symbol` | `GET /v1/graphs/{id}/symbol` |
 | `codetopo_search_symbols` | `GET /v1/graphs/{id}/search` |

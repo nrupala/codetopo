@@ -574,6 +574,49 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '504':
           $ref: '#/components/responses/RequestTimeout'
+  /v1/graphs/{id}/diff:
+    get:
+      tags: [query]
+      operationId: diff
+      summary: The change-impact diff against another index.
+      description: |
+        This index as *before*, the `other` index as *after*: added,
+        removed, and changed nodes and edges, plus the blast-radius
+        movement of every touched symbol — change-impact analysis
+        (Bohner & Arnold 1996) over two frozen graphs. Node identity is
+        the id (same id, different record = changed); edge identity is
+        the full record, so an edge whose line moved appears as one
+        removal plus one addition. The caller's key must own both
+        indexes; another key's index on either side is answered exactly
+        like a missing one. The same object serves the CLI's `diff`
+        command and the MCP `codetopo_diff` tool.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+        - name: other
+          in: query
+          required: true
+          description: The index id to diff against (the *after* side).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The diff.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiffResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/schema:
     get:
       tags: [query]
@@ -1174,6 +1217,68 @@ components:
           type: integer
           minimum: 1
           description: The node's count under the ranked metric.
+    DiffResponse:
+      type: object
+      description: |
+        The change-impact diff of the path's index (before) against the
+        `other` index (after). Node identity is the id; edge identity
+        is the full record (see the route description).
+      required: [index_id, other_index_id, added_nodes, removed_nodes,
+                 changed_nodes, added_edges, removed_edges, impact]
+      properties:
+        index_id:
+          type: string
+        other_index_id:
+          type: string
+        added_nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Node'
+        removed_nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Node'
+        changed_nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeChange'
+        added_edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/Edge'
+        removed_edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/Edge'
+        impact:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImpactEntry'
+    NodeChange:
+      type: object
+      required: [id, before, after]
+      properties:
+        id:
+          type: string
+        before:
+          $ref: '#/components/schemas/Node'
+        after:
+          $ref: '#/components/schemas/Node'
+    ImpactEntry:
+      type: object
+      required: [id, blast_radius_before, blast_radius_after, delta]
+      properties:
+        id:
+          type: string
+        blast_radius_before:
+          type: integer
+          minimum: 0
+        blast_radius_after:
+          type: integer
+          minimum: 0
+        delta:
+          type: integer
+          description: `blast_radius_after - blast_radius_before` (signed).
     SearchResponse:
       type: object
       required: [index_id, query, total, results]

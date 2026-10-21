@@ -303,6 +303,38 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
+      "description": "Compare two indexes (or two snapshot files): added, removed, and changed nodes and edges, plus the blast-radius movement of every touched symbol. Give exactly one before source and one after source.",
+      "inputSchema": {
+        "properties": {
+          "after_db_path": {
+            "description": "Path to the after index database.",
+            "type": "string"
+          },
+          "after_snapshot": {
+            "description": "Path to the after snapshot file (alternative to after_db_path).",
+            "type": "string"
+          },
+          "before_db_path": {
+            "description": "Path to the before index database.",
+            "type": "string"
+          },
+          "before_snapshot": {
+            "description": "Path to the before snapshot file (alternative to before_db_path).",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "codetopo_diff",
+      "title": "Diff two indexes (change impact)"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "The subgraph within a few hops of a node, in both directions (contains/defines excluded).",
       "inputSchema": {
         "properties": {

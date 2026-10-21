@@ -1002,6 +1002,72 @@ async fn rank_route_matches_the_cli_value_and_finds_the_hub() {
     assert_eq!(body["error"], "invalid_param");
 }
 
+/// The diff route over two real indexes created through the API: the
+/// pair differs by one known edit (append `d`, call it from `c`), and
+/// the route's answer is exactly the shared diff object for the two
+/// stored graphs, plus the two index ids.
+#[tokio::test]
+async fn diff_route_matches_the_shared_diff() {
+    let harness = Harness::new();
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let write_repo = |name: &str, body: &str| {
+        let repo = tmp.path().join(name);
+        std::fs::create_dir_all(&repo).expect("create repo dir");
+        std::fs::write(repo.join("main.rs"), body).expect("write main.rs");
+        repo
+    };
+    let repo1 = write_repo(
+        "repo1",
+        "pub fn a() {\n    b();\n}\n\npub fn b() {}\n\npub fn c() {}\n",
+    );
+    let repo2 = write_repo(
+        "repo2",
+        "pub fn a() {\n    b();\n}\n\npub fn b() {}\n\npub fn c() {\n    d();\n}\n\npub fn d() {}\n",
+    );
+    let mut index_ids = Vec::new();
+    for repo in [&repo1, &repo2] {
+        let (status, report) = harness
+            .send(
+                Method::POST,
+                "/v1/index",
+                Some(json!({ "repo_path": repo.to_string_lossy(), "package": "pair" })),
+                Some(format!("Bearer {KEY_ID}:{SECRET}")),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "index failed: {report}");
+        index_ids.push(
+            report["index_id"].as_str().expect("index_id").to_string(),
+        );
+    }
+    let (before_id, after_id) = (&index_ids[0], &index_ids[1]);
+
+    let (status, body) = harness
+        .get(&format!("/v1/graphs/{before_id}/diff?other={after_id}"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "diff: {body}");
+    assert_eq!(body["other_index_id"], after_id.as_str());
+    let mut via_http = body.clone();
+    let obj = via_http.as_object_mut().expect("object");
+    obj.remove("index_id").expect("index_id present");
+    obj.remove("other_index_id").expect("other_index_id present");
+    let g1 = load_graph_from_db(&harness.db(before_id)).expect("graph 1");
+    let g2 = load_graph_from_db(&harness.db(after_id)).expect("graph 2");
+    assert_eq!(via_http, codetopo_cli::diff_value(&g1, &g2), "HTTP diff == shared diff");
+    // The known edit, spotted in the shared answer.
+    assert_eq!(body["added_nodes"][0]["id"], "pair::main::d");
+    assert_eq!(body["impact"][1]["id"], "pair::main::d");
+    assert_eq!(body["impact"][1]["delta"], 1);
+
+    // Missing `other` is a 400; an unknown other index is a 404,
+    // answered like any missing index.
+    let (status, _) = harness.get(&format!("/v1/graphs/{before_id}/diff")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "missing other must 400");
+    let (status, _) = harness
+        .get(&format!("/v1/graphs/{before_id}/diff?other=no-such-index"))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "unknown other must 404");
+}
+
 /// The symbol route returns the core dossier (node + incident edges +
 /// counts) — the same object the CLI prints and the MCP tool returns,
 /// plus `index_id`.
