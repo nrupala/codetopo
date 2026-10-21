@@ -10,9 +10,9 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use codetopo_cli::{
     default_package_name, describe_schema, index_repo, load_graph_from_db, node_kind_name,
-    print_diagnostics, print_id_list, print_id_list_json, print_stats, print_stats_json,
-    render_path, require_node, resolve_hmac_key, restore_snapshot, snapshot_db, verify_db,
-    verify_proof_file,
+    print_diagnostics, print_diagnostics_json, print_id_list, print_id_list_json, print_stats,
+    print_stats_json, render_path, require_node, resolve_hmac_key, restore_snapshot, snapshot_db,
+    verify_db, verify_proof_file,
 };
 
 #[derive(Parser)]
@@ -128,6 +128,10 @@ enum Commands {
     Diagnostics {
         #[arg(long)]
         db: PathBuf,
+        /// Emit the shared JSON shape ({total, diagnostics}) — the same
+        /// object the HTTP route and the MCP tool return.
+        #[arg(long)]
+        json: bool,
     },
     /// Everything within `depth` hops of an id, both directions
     /// (the schema's neighborhood query, now on every surface).
@@ -140,7 +144,8 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// One symbol in full: kind, location, tier, defines/refs.
+    /// One symbol in full: the node, its incident edges grouped by kind
+    /// and direction, and the counts (the DESIGN §3 dossier).
     Symbol {
         id: String,
         #[arg(long)]
@@ -317,9 +322,15 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
         }
         Commands::Symbol { id, db, json } => {
             let graph = load_graph_from_db(&db)?;
-            let node = require_node(&graph, &id)?;
+            let dossier = graph
+                .dossier(&id)
+                .ok_or_else(|| codetopo_cli::CliError::UnknownId(id.clone()))?;
+            let node = &dossier.node;
             if json {
-                println!("{}", serde_json::to_string_pretty(node).expect("node serializes"));
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&dossier).expect("dossier serializes")
+                );
             } else {
                 println!("{} ({})", node.label, node_kind_name(node.kind));
                 println!("id: {}", node.id);
@@ -333,6 +344,24 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 });
                 println!("defines: {}", node.defines.len());
                 println!("refs: {}", node.refs.len());
+                println!("outgoing: {}", dossier.outgoing_count);
+                for (kind, edges) in &dossier.outgoing {
+                    for e in edges {
+                        match e.line {
+                            Some(line) => println!("  {kind} -> {} (line {line})", e.to),
+                            None => println!("  {kind} -> {}", e.to),
+                        }
+                    }
+                }
+                println!("incoming: {}", dossier.incoming_count);
+                for (kind, edges) in &dossier.incoming {
+                    for e in edges {
+                        match e.line {
+                            Some(line) => println!("  {kind} <- {} (line {line})", e.from),
+                            None => println!("  {kind} <- {}", e.from),
+                        }
+                    }
+                }
             }
         }
         Commands::Search { query, db, limit, json } => {
@@ -362,7 +391,13 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
             }
         }
         Commands::Verify { db } => verify_db(&db)?,
-        Commands::Diagnostics { db } => print_diagnostics(&db)?,
+        Commands::Diagnostics { db, json } => {
+            if json {
+                print_diagnostics_json(&db)?;
+            } else {
+                print_diagnostics(&db)?;
+            }
+        }
         Commands::Snapshot { db, out, hmac_key } => {
             let key = resolve_hmac_key(hmac_key.as_deref());
             snapshot_db(&db, &out, key.as_deref())?;

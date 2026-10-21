@@ -251,6 +251,28 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
+      "description": "The diagnostics recorded when the index was built - dependency cycles, multi-definitions, unresolved calls, and the rest - as data, exactly as the CLI prints them.",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "db_path"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_diagnostics",
+      "title": "Read the index diagnostics"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "The subgraph within a few hops of a node, in both directions (contains/defines excluded).",
       "inputSchema": {
         "properties": {
@@ -282,7 +304,7 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "One node in full: kind, location, tier, defines and refs. Errors when the id is unknown.",
+      "description": "One node in full - kind, location, tier, defines and refs - plus its incident edges grouped by kind and direction, with counts (containment excluded). Errors when the id is unknown.",
       "inputSchema": {
         "properties": {
           "db_path": {

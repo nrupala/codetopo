@@ -285,6 +285,19 @@ pub fn tool_catalog() -> Vec<Value> {
             },
         }),
         json!({
+            "name": "codetopo_diagnostics",
+            "title": "Read the index diagnostics",
+            "description": "The diagnostics recorded when the index was built - dependency cycles, multi-definitions, unresolved calls, and the rest - as data, exactly as the CLI prints them.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "db_path": {"type": "string", "description": "Path to the index database."},
+                },
+                "required": ["db_path"],
+            },
+        }),
+        json!({
             "name": "codetopo_neighborhood",
             "title": "Get a node's neighborhood",
             "description": "The subgraph within a few hops of a node, in both directions (contains/defines excluded).",
@@ -302,7 +315,7 @@ pub fn tool_catalog() -> Vec<Value> {
         json!({
             "name": "codetopo_get_symbol",
             "title": "Get one symbol in full",
-            "description": "One node in full: kind, location, tier, defines and refs. Errors when the id is unknown.",
+            "description": "One node in full - kind, location, tier, defines and refs - plus its incident edges grouped by kind and direction, with counts (containment excluded). Errors when the id is unknown.",
             "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
             "inputSchema": {
                 "type": "object",
@@ -356,6 +369,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, ToolError> {
         "codetopo_stats" => tool_stats(args),
         "codetopo_verify" => tool_verify(args),
         "codetopo_snapshot" => tool_snapshot(args),
+        "codetopo_diagnostics" => tool_diagnostics(args),
         "codetopo_neighborhood" => tool_neighborhood(args),
         "codetopo_get_symbol" => tool_get_symbol(args),
         "codetopo_search_symbols" => tool_search_symbols(args),
@@ -618,9 +632,20 @@ fn tool_neighborhood(args: &Value) -> Result<Value, ToolError> {
 fn tool_get_symbol(args: &Value) -> Result<Value, ToolError> {
     let graph = open_graph(args)?;
     let node_id = require_str(args, "node")?;
-    let node = require_node(&graph, node_id)
-        .map_err(|_| ToolError::UnknownNode(node_id.to_string()))?;
-    serde_json::to_value(node).map_err(|e| ToolError::Cli(CliError::Json(e)))
+    // The DESIGN §3 dossier, serialized by the core type itself — the same
+    // object the CLI prints and the HTTP symbol route returns.
+    let dossier = graph
+        .dossier(node_id)
+        .ok_or_else(|| ToolError::UnknownNode(node_id.to_string()))?;
+    serde_json::to_value(dossier).map_err(|e| ToolError::Cli(CliError::Json(e)))
+}
+
+/// `codetopo_diagnostics` — the diagnostics recorded when the index was
+/// built, in the shared `{total, diagnostics}` shape the CLI's
+/// `diagnostics --json` and the HTTP diagnostics route also return.
+fn tool_diagnostics(args: &Value) -> Result<Value, ToolError> {
+    let db_path = require_index(args)?;
+    codetopo_cli::diagnostics_value(&db_path).map_err(ToolError::Cli)
 }
 
 fn tool_search_symbols(args: &Value) -> Result<Value, ToolError> {
@@ -736,9 +761,9 @@ mod tests {
     // -- catalogue ---------------------------------------------------------
 
     #[test]
-    fn catalogue_lists_twelve_tools() {
+    fn catalogue_lists_thirteen_tools() {
         let catalog = tool_catalog();
-        assert_eq!(catalog.len(), 12, "expected 12 tools: {catalog:?}");
+        assert_eq!(catalog.len(), 13, "expected 13 tools: {catalog:?}");
 
         let names: Vec<&str> = catalog
             .iter()
@@ -755,6 +780,7 @@ mod tests {
                 "codetopo_stats",
                 "codetopo_verify",
                 "codetopo_snapshot",
+                "codetopo_diagnostics",
                 "codetopo_neighborhood",
                 "codetopo_get_symbol",
                 "codetopo_search_symbols",
@@ -1111,7 +1137,7 @@ mod tests {
         assert_eq!(response["id"], 7);
         assert_eq!(
             response["result"]["tools"].as_array().expect("tools").len(),
-            12
+            13
         );
     }
 
@@ -1185,9 +1211,10 @@ mod tests {
             .iter()
             .any(|n| n["id"] == node));
 
-        // get_symbol returns the node itself; unknown ids are unknown_node
+        // get_symbol returns the dossier (the node under `node`, plus its
+        // incident edges and counts); unknown ids are unknown_node
         let fetched = result_of("codetopo_get_symbol", &args(&db_path, json!({"node": node})));
-        assert_eq!(fetched["id"], node);
+        assert_eq!(fetched["node"]["id"], node);
         let err = call_tool(
             "codetopo_get_symbol",
             &args(&db_path, json!({"node": "no::such::id"})),
@@ -1214,5 +1241,77 @@ mod tests {
             .expect("kinds")
             .iter()
             .any(|k| k == "function"));
+    }
+
+    // -- analytics depth: diagnostics read + symbol dossier ----------------
+
+    /// A planted repository — a mutual call (a cycle), a duplicated
+    /// definition, and an unresolved call — indexed through the tool
+    /// itself. Returns the temp dir (kept alive by the caller) and the
+    /// database path.
+    fn planted_index() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let repo = dir.path().join("planted");
+        std::fs::create_dir_all(&repo).expect("repo dir");
+        std::fs::write(
+            repo.join("cyc.rs"),
+            "pub fn a() {\n    b();\n    missing_fn();\n}\n\npub fn b() {\n    a();\n}\n",
+        )
+        .expect("write cyc.rs");
+        std::fs::write(repo.join("dup.rs"), "pub fn d() {}\n\npub fn d() {}\n")
+            .expect("write dup.rs");
+        let db_path = dir.path().join("planted.db");
+        let report = result_of(
+            "codetopo_index",
+            &json!({
+                "repo_path": repo.display().to_string(),
+                "db_path": db_path.display().to_string(),
+                "package": "planted",
+            }),
+        );
+        assert_eq!(report["diagnostics"], 3, "planted index report: {report}");
+        (dir, db_path)
+    }
+
+    #[test]
+    fn diagnostics_tool_returns_exactly_the_cli_list() {
+        let (_dir, db_path) = planted_index();
+        let via_tool = result_of("codetopo_diagnostics", &args(&db_path, json!({})));
+        let via_cli = codetopo_cli::diagnostics_value(&db_path).expect("cli diagnostics value");
+        assert_eq!(via_tool, via_cli, "MCP diagnostics == CLI diagnostics");
+        assert_eq!(via_tool["total"], 3);
+        let kinds: Vec<&str> = via_tool["diagnostics"]
+            .as_array()
+            .expect("diagnostics array")
+            .iter()
+            .map(|d| {
+                d.as_object()
+                    .and_then(|o| o.keys().next())
+                    .map(|k| k.as_str())
+                    .expect("variant tag")
+            })
+            .collect();
+        assert!(kinds.contains(&"Cycle"), "planted cycle reported: {kinds:?}");
+        assert!(
+            kinds.contains(&"MultiDefinition"),
+            "planted duplicate reported: {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&"UnresolvedCall"),
+            "planted unresolved call reported: {kinds:?}"
+        );
+    }
+
+    #[test]
+    fn get_symbol_returns_the_core_dossier_for_every_node() {
+        let (_dir, db_path) = fixture_index();
+        let graph = load_graph_from_db(&db_path).expect("graph loads");
+        for node in graph.nodes() {
+            let fetched =
+                result_of("codetopo_get_symbol", &args(&db_path, json!({"node": node.id})));
+            let core = serde_json::to_value(graph.dossier(&node.id).expect("dossier"))
+                .expect("dossier serializes");
+            assert_eq!(fetched, core, "dossier parity for {}", node.id);
+        }
     }
 }

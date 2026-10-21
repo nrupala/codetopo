@@ -521,3 +521,49 @@ fn index_discovers_packages_from_manifests() {
     let loose = find_id(&graph, NodeKind::Function, "loose");
     assert_eq!(loose, "fallback-pkg::loose::loose");
 }
+
+/// The planted diagnostics fixture, end to end through the CLI library:
+/// a mutual call (a cycle), a duplicated definition, and an unresolved
+/// call are recorded at index time, and the shared JSON shape behind
+/// `diagnostics --json` / the HTTP route / the MCP tool carries exactly
+/// those three, serialized from the stored records.
+#[test]
+fn planted_repo_diagnostics_are_recorded_and_shared() {
+    let dir = workdir("planted-diagnostics");
+    let repo = dir.join("planted");
+    std::fs::create_dir_all(&repo).expect("create repo dir");
+    std::fs::write(
+        repo.join("cyc.rs"),
+        "pub fn a() {\n    b();\n    missing_fn();\n}\n\npub fn b() {\n    a();\n}\n",
+    )
+    .expect("write cyc.rs");
+    std::fs::write(repo.join("dup.rs"), "pub fn d() {}\n\npub fn d() {}\n").expect("write dup.rs");
+    let db = dir.join("planted.db");
+    let report = index_repo(&repo, &db, "planted", None, None).expect("index planted repo");
+    assert_eq!(report.diagnostics, 3, "planted index report: {report:?}");
+
+    let value = codetopo_cli::diagnostics_value(&db).expect("diagnostics value");
+    assert_eq!(value["total"], 3);
+    let kinds: Vec<&str> = value["diagnostics"]
+        .as_array()
+        .expect("diagnostics array")
+        .iter()
+        .map(|d| {
+            d.as_object()
+                .and_then(|o| o.keys().next())
+                .map(|k| k.as_str())
+                .expect("variant tag")
+        })
+        .collect();
+    assert!(kinds.contains(&"Cycle"), "planted cycle reported: {kinds:?}");
+    assert!(
+        kinds.contains(&"MultiDefinition"),
+        "planted duplicate reported: {kinds:?}"
+    );
+    assert!(
+        kinds.contains(&"UnresolvedCall"),
+        "planted unresolved call reported: {kinds:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

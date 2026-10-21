@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Part of codetopo — Owned by Nrupal Akolkar (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
 
-//! The eight request handlers of the Phase 2 API (design §3).
+//! The request handlers of the HTTP API (Phase 2 design §3, extended by
+//! the analytics-depth program: the symbol dossier, the diagnostics read,
+//! the ranking, and the diff).
 //!
 //! This module owns no graph logic. Every route is a transport rename of a
 //! command the CLI already runs: the same `codetopo_core` query answers it, and
@@ -174,6 +176,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/graphs/:id/neighborhood", get(neighborhood))
         .route("/v1/graphs/:id/symbol", get(symbol))
         .route("/v1/graphs/:id/search", get(search))
+        .route("/v1/graphs/:id/diagnostics", get(diagnostics))
         .route("/v1/schema", get(schema))
         .route_layer(axum::middleware::from_fn_with_state(
             envelope,
@@ -938,7 +941,8 @@ async fn snapshot(
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// GET /v1/graphs/{id}/neighborhood, /symbol, /search; GET /v1/schema
+// GET /v1/graphs/{id}/neighborhood, /symbol, /search, /diagnostics;
+// GET /v1/schema
 // ---------------------------------------------------------------------------
 
 /// Query for `neighborhood`: the shared closure params plus `depth`.
@@ -984,7 +988,10 @@ async fn neighborhood(
     })))
 }
 
-/// `GET /v1/graphs/{id}/symbol?node=` — one node in full.
+/// `GET /v1/graphs/{id}/symbol?node=` — one node in full: the DESIGN §3
+/// dossier (the node, its incident edges grouped by kind and direction,
+/// and the counts), serialized by the core type itself so the CLI and
+/// MCP answers are the same object plus `index_id`.
 async fn symbol(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
@@ -1001,8 +1008,37 @@ async fn symbol(
         .to_string();
     let db = state.db_path(&index_id);
     let graph = load_graph_blocking(&db, &index_id)?;
-    let node = require_node(&graph, &node_id).map_err(|e| map_cli_error(&index_id, e))?;
-    Ok(Json(json!({"index_id": index_id, "node": node})))
+    let dossier = graph
+        .dossier(&node_id)
+        .ok_or_else(|| ApiError::unknown_node(&node_id))?;
+    let mut value = serde_json::to_value(&dossier)
+        .map_err(|err| ApiError::internal(format!("dossier does not serialize: {err}")))?;
+    value["index_id"] = json!(index_id);
+    Ok(Json(value))
+}
+
+/// `GET /v1/graphs/{id}/diagnostics` — the diagnostics recorded when the
+/// index was built (cycles, multi-definitions, unresolved calls, …),
+/// read from the store exactly as the CLI prints them: the shared
+/// [`codetopo_cli::diagnostics_value`] shape plus `index_id`.
+async fn diagnostics(
+    State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
+    UrlPath(index_id): UrlPath<String>,
+) -> Result<Json<Value>, ApiError> {
+    enforce_tenancy(&state, &index_id, &key)?;
+    let db = state.db_path(&index_id);
+    require_index(&db, &index_id)?;
+    // The blocking closure is 'static, so it takes its own copy of the id
+    // (the same pattern as the closure routes); the response still reports
+    // the caller's `index_id`.
+    let walk_index = index_id.clone();
+    let mut value = spawn_blocking(move || {
+        codetopo_cli::diagnostics_value(&db).map_err(|err| map_cli_error(&walk_index, err))
+    })
+    .await?;
+    value["index_id"] = json!(index_id);
+    Ok(Json(value))
 }
 
 /// Query for `search`.
