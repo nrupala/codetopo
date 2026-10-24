@@ -7,7 +7,11 @@
 # (with SHA-256 sidecars) to an existing GitHub release. Runs on a
 # version-tag push, or manually against an existing tag. The
 # release itself (notes, tagging) stays a deliberate, separate
-# step — this workflow only builds and uploads artifacts.
+# step — this workflow only builds and uploads artifacts. A
+# preflight job checks the release exists before any build starts:
+# v0.6.0's first two runs burned five full platform builds apiece
+# and then failed at upload with "release not found" because the
+# release object had not been created yet.
 name: release-binaries
 
 on:
@@ -23,8 +27,34 @@ permissions:
   contents: write
 
 jobs:
+  preflight:
+    name: Release exists
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve the tag
+        id: tag
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "value=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: The release must already exist
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh release view "${{ steps.tag.outputs.value }}" > /dev/null 2>&1; then
+            echo "::error::No GitHub release exists for ${{ steps.tag.outputs.value }}. Create the release first (a deliberate, separate step), then re-run this workflow."
+            exit 1
+          fi
+
   build:
     name: ${{ matrix.platform }}
+    needs: preflight
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
