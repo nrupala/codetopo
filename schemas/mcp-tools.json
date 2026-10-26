@@ -273,11 +273,11 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "The top symbols by fan-in, fan-out, or blast-radius size - counts over the graph, with the count's method stated in the result. A ranking of measurements, never a score of code quality.",
+      "description": "The top symbols by fan-in, fan-out, blast-radius size, or cyclomatic complexity - counts over the graph, with the count's method stated in the result. A ranking of measurements, never a score of code quality.",
       "inputSchema": {
         "properties": {
           "by": {
-            "description": "Metric to rank by: fan_in, fan_out, or blast_radius (default).",
+            "description": "Metric to rank by: fan_in, fan_out, blast_radius (default), or complexity.",
             "type": "string"
           },
           "db_path": {

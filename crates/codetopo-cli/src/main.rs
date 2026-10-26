@@ -99,13 +99,14 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Rank symbols by a measured count — fan-in, fan-out, or
-    /// blast-radius size. A ranking of measurements (method stated in
-    /// the output), never a score of code quality.
+    /// Rank symbols by a measured count — fan-in, fan-out,
+    /// blast-radius size, or cyclomatic complexity. A ranking of
+    /// measurements (method stated in the output), never a score of
+    /// code quality.
     Rank {
         #[arg(long)]
         db: PathBuf,
-        /// Metric: fan-in | fan-out | blast-radius.
+        /// Metric: fan-in | fan-out | blast-radius | complexity.
         #[arg(long, default_value = "blast-radius")]
         by: String,
         #[arg(long, default_value_t = 20)]
@@ -314,7 +315,7 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
         Commands::Rank { db, by, limit, json } => {
             let metric = codetopo_core::RankMetric::parse(&by).ok_or_else(|| {
                 codetopo_cli::CliError::Usage(format!(
-                    "unknown rank metric '{by}' (expected fan-in, fan-out, or blast-radius)"
+                    "unknown rank metric '{by}' (expected fan-in, fan-out, blast-radius, or complexity)"
                 ))
             })?;
             let graph = load_graph_from_db(&db)?;
@@ -472,6 +473,14 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 });
                 println!("defines: {}", node.defines.len());
                 println!("refs: {}", node.refs.len());
+                if let Some(m) = &dossier.measurements {
+                    if let Some(v) = m.complexity {
+                        println!("complexity: {v} (cyclomatic — McCabe: decision points + 1)");
+                    }
+                    if let Some(s) = m.size_lines {
+                        println!("size: {s} lines");
+                    }
+                }
                 println!("outgoing: {}", dossier.outgoing_count);
                 for (kind, edges) in &dossier.outgoing {
                     for e in edges {

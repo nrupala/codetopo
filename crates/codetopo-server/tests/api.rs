@@ -965,6 +965,7 @@ async fn rank_route_matches_the_cli_value_and_finds_the_hub() {
         ("fan_in", codetopo_core::RankMetric::FanIn),
         ("fan_out", codetopo_core::RankMetric::FanOut),
         ("blast_radius", codetopo_core::RankMetric::BlastRadius),
+        ("complexity", codetopo_core::RankMetric::Complexity),
     ] {
         let (status, body) = harness
             .get(&format!("/v1/graphs/{index_id}/rank?by={by}"))

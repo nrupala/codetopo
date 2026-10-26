@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Analytics depth, Phase B part 2 — cyclomatic complexity and size.**
+  The decision counts recorded since part 1 become the first derived
+  metrics (CODE_SCHEMA §9), computed once in core so the CLI, HTTP, and
+  MCP surfaces cannot disagree: cyclomatic complexity **v = decision
+  points + 1** (McCabe 1976) and declaration size in lines
+  (`end_line − line + 1`). The symbol dossier gains a `measurements`
+  block, present only when at least one measurement exists for the node
+  — unmeasured symbols carry no block, never zeros — and the CLI's
+  `symbol` text form prints it. Ranking gains `--by complexity` (HTTP
+  `?by=complexity`, MCP `by: "complexity"`): only symbols whose
+  decisions were measured are ranked, with the method stated beside the
+  numbers as every ranking states it. Proofs: hand-computed v for every
+  function of the part-1 conformance fixtures, verified end-to-end
+  (extract → index → query) in both languages — branch-free functions
+  measure exactly 1, the branchy fixtures 7 — plus core ranking/dossier
+  tests and the HTTP/MCP parity loops extended to the new metric.
+
 - **Analytics depth, Phase B part 1 — extractor enrichment (CODE_SCHEMA 1.1).**
   The schema moves from 1.0-draft to 1.1 (additive, per §8): every node record
   gains three optional measured fields — `end_line` (the declaration's last

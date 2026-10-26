@@ -678,3 +678,167 @@ fn planted_repo_diagnostics_are_recorded_and_shared() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// B2 exit proof, end to end in both languages: the B1 conformance
+/// fixtures (hand-counted decision points) indexed for real, and every
+/// function's cyclomatic complexity — v = decisions + 1 — read back
+/// through the shared ranking value and the dossier. A branch-free
+/// function measures exactly 1 in both languages.
+#[test]
+fn complexity_end_to_end_both_languages() {
+    // Rust: plain 0 decisions, branchy 6, fallible 2, bump 0.
+    let rs = r#"pub fn plain(x: u32) -> u32 {
+    x + 1
+}
+
+pub fn branchy(x: u32) -> u32 {
+    if x > 10 && x < 20 {
+        return 1;
+    }
+    let mut total = 0;
+    for i in 0..x {
+        total += i;
+    }
+    while total > 100 {
+        total -= 10;
+    }
+    match x {
+        0 => 0,
+        1 => 1,
+        _ => total,
+    }
+}
+
+pub fn fallible(x: Option<u32>) -> Option<u32> {
+    let v = x?;
+    if v == 0 { None } else { Some(v) }
+}
+
+pub struct Counter {
+    n: u32,
+}
+
+impl Counter {
+    pub fn bump(&mut self, by: u32) -> u32 {
+        self.n += by;
+        self.n
+    }
+}
+"#;
+    let dir = workdir("complexity-rs");
+    let repo = dir.join("repo");
+    std::fs::create_dir_all(&repo).expect("repo dir");
+    std::fs::write(repo.join("measured.rs"), rs).expect("write rs fixture");
+    let db = dir.join("index.db");
+    index_repo(&repo, &db, "fixture", None, None).expect("index rs fixture");
+    let graph = load_graph_from_db(&db).expect("load rs graph");
+
+    for (label, want_v, want_size) in [
+        ("plain", 1u32, 3u32),
+        ("branchy", 7, 17),
+        ("fallible", 3, 4),
+        ("bump", 1, 4),
+    ] {
+        let id = graph
+            .nodes()
+            .find(|n| {
+                (n.kind == NodeKind::Function || n.kind == NodeKind::Method) && n.label == label
+            })
+            .unwrap_or_else(|| panic!("callable {label} indexed"))
+            .id
+            .clone();
+        let d = graph.dossier(&id).expect("dossier");
+        let m = d.measurements.expect("measured");
+        assert_eq!(m.complexity, Some(want_v), "rust {label}: v = decisions + 1");
+        assert_eq!(m.size_lines, Some(want_size), "rust {label}: span");
+    }
+    let ranked = codetopo_cli::rank_value(&graph, codetopo_core::RankMetric::Complexity, 20);
+    assert_eq!(ranked["total"], 4, "only measured callables rank");
+    let order: Vec<(&str, u64)> = ranked["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .map(|r| {
+            (
+                r["id"].as_str().expect("id"),
+                r["count"].as_u64().expect("count"),
+            )
+        })
+        .collect();
+    assert_eq!(order[0].1, 7, "branchy tops the ranking");
+    assert!(order[0].0.ends_with("::branchy"));
+    assert_eq!(order[1].1, 3, "fallible second");
+    assert_eq!(order[2].1, 1, "branch-free functions measure exactly 1");
+    assert_eq!(order[3].1, 1);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // TypeScript: plain 0 decisions, branchy 6, bump 0, ready 1 (ternary).
+    let ts = r#"export function plain(x: number): number {
+  return x + 1;
+}
+
+export function branchy(x: number): number {
+  let total = 0;
+  if (x > 10 && x < 20) {
+    total = 1;
+  } else if (x >= 20) {
+    total = 2;
+  }
+  for (let i = 0; i < x; i++) {
+    total += i;
+  }
+  switch (x) {
+    case 0:
+      return 0;
+    case 1:
+      return 1;
+    default:
+      return total;
+  }
+}
+
+export class Counter {
+  n = 0;
+
+  bump(by: number): number {
+    this.n += by;
+    return this.n;
+  }
+
+  ready(): boolean {
+    return this.n > 0 ? this.n : 0;
+  }
+}
+"#;
+    let dir = workdir("complexity-ts");
+    let repo = dir.join("repo");
+    std::fs::create_dir_all(&repo).expect("repo dir");
+    std::fs::write(repo.join("measured.ts"), ts).expect("write ts fixture");
+    let db = dir.join("index.db");
+    index_repo(&repo, &db, "fixture", None, None).expect("index ts fixture");
+    let graph = load_graph_from_db(&db).expect("load ts graph");
+
+    for (label, want_v) in [("plain", 1u32), ("branchy", 7), ("bump", 1), ("ready", 2)] {
+        let id = graph
+            .nodes()
+            .find(|n| {
+                (n.kind == NodeKind::Function || n.kind == NodeKind::Method) && n.label == label
+            })
+            .unwrap_or_else(|| panic!("callable {label} indexed"))
+            .id
+            .clone();
+        let d = graph.dossier(&id).expect("dossier");
+        let m = d.measurements.expect("measured");
+        assert_eq!(m.complexity, Some(want_v), "ts {label}: v = decisions + 1");
+    }
+    let ranked = codetopo_cli::rank_value(&graph, codetopo_core::RankMetric::Complexity, 20);
+    assert_eq!(ranked["total"], 4, "only measured callables rank");
+    assert_eq!(ranked["results"][0]["count"], 7, "branchy tops the ranking");
+    assert!(
+        ranked["results"][0]["id"]
+            .as_str()
+            .expect("id")
+            .ends_with("::branchy")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
