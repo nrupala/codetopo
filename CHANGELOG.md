@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-25
+
 - **Analytics depth, Phase B part 4 — change history (local only).**
   New query: `codetopo history --db … --repo …`, `GET
   /v1/graphs/{id}/history`, and `codetopo_history` report hotspots
@@ -91,6 +93,8 @@ All notable changes to this project are documented here.
   per-language conformance fixtures, a hand-written 1.0-draft snapshot
   round-trip, and a hand-built pre-1.1 database migration test.
 
+## [0.6.0] — 2026-10-20
+
 - **Dependency security update (0.6.0 release-gate fix loop).**
   `webpki-roots` 1.0.9 → 1.0.10 and `rustls-webpki` 0.103.15 → 0.103.16
   (RUSTSEC-2026-0381 / RUSTSEC-2026-0382: certificate verification could
@@ -99,8 +103,6 @@ All notable changes to this project are documented here.
   is Cargo.lock-only, two version lines. Found by the 0.6.0 release gate's
   machine pass before the release graduated; the fixed tree is the gated
   0.6.0 tree (tag moved, recorded in the gate pack).
-
-## [0.6.0] — 2026-10-20
 
 - **Version 0.6.0 — the analytics-depth release.** All eight crates move to
   0.6.0 together. The headline is the Analytics Depth Program (the three

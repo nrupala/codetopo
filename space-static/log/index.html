@@ -31,6 +31,27 @@ itself is on the <a href="../">front page</a>.</p>
 
 <h2>The story so far</h2>
 
+<h3><span class="when">October 25, 2026 —</span> 0.7.0: the analytics engine, complete</h3>
+<p>codetopo now measures what it indexes. Every function and method carries
+its size in lines and its cyclomatic complexity — counted decision points
+plus one, with the counting rules published and the method stated wherever
+the number appears. Types carry coupling and cohesion measurements: how
+many other types they touch, what they can reach, and how far their methods
+share the type's own state. Packages carry their dependency balance —
+what depends on them, what they depend on, and how much of that points
+outward — with links to external libraries counted separately, never merged
+in. And on your own machine, codetopo reads a repository's git history to
+find its hotspots — the files that change often and are complex at once,
+both factors always shown — and the files that change together, reported as
+the counts themselves. Hosted indexes carry no history, and there the
+answer is honestly "not measured", never an invented number. Every one of
+these is a measurement with a stated method; codetopo still ships no
+verdicts about whether code is good. All of it arrives on the same three
+doors — command line, HTTP, and the agent tools — and all eight crates move
+to 0.7.0 together. 0.7.0 is a release candidate since October 25, 2026 —
+it graduates after a clean watched week; the published packages and the
+hosted service pick it up at graduation.</p>
+
 <h3><span class="when">October 20, 2026 —</span> 0.6.0: the analytics get deeper</h3>
 <p>codetopo's answers grow a layer. Asking about one symbol now returns its
 dossier — the symbol itself plus every connection it has, grouped by kind,
