@@ -138,6 +138,9 @@ fn extract_doc(package: &str, rel_path: &Path) -> FileSymbols {
             defines: Vec::new(),
             refs: Vec::new(),
             writes: Vec::new(),
+            end_line: None,
+            signature: None,
+            decisions: None,
         }],
         imports: Vec::new(),
         calls: Vec::new(),
@@ -160,6 +163,53 @@ pub(crate) fn text_of<'a>(node: tree_sitter::Node, src: &'a [u8]) -> Option<&'a 
 /// 1-based line number of a node's start.
 pub(crate) fn line_of(node: tree_sitter::Node) -> u32 {
     node.start_position().row as u32 + 1
+}
+
+/// 1-based line number of a node's end (inclusive) — CODE_SCHEMA §3.
+pub(crate) fn end_line_of(node: tree_sitter::Node) -> u32 {
+    node.end_position().row as u32 + 1
+}
+
+/// Declaration text of a symbol node (CODE_SCHEMA §3): the node's own
+/// text up to `cut` (its body / initializer / aliased-type node),
+/// whitespace runs collapsed to single spaces, with a trailing `{`,
+/// `;`, or `=` left by the cut — or terminating a body-less
+/// declaration — stripped. `cut` is `None` when the whole node text is
+/// the declaration (trait method signatures, type aliases).
+pub(crate) fn signature_of(
+    node: tree_sitter::Node,
+    cut: Option<tree_sitter::Node>,
+    src: &[u8],
+) -> Option<String> {
+    let start = node.start_byte();
+    let end = cut.map(|c| c.start_byte()).unwrap_or(node.end_byte());
+    let raw = std::str::from_utf8(src.get(start..end)?).ok()?;
+    let mut sig = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    while let Some(stripped) = sig.strip_suffix(['{', ';', '=']) {
+        sig = stripped.trim_end().to_string();
+    }
+    if sig.is_empty() {
+        None
+    } else {
+        Some(sig)
+    }
+}
+
+/// The CODE_SCHEMA §3 measured fields of one symbol node: end line and
+/// signature for every symbol. The signature cut is the node's `body`
+/// field, else its `value` (constant / declarator initializer), else
+/// its `type` (type alias target) — field names shared by both
+/// grammars. Decision counting is per-language (CODE_SCHEMA §3.2) and
+/// happens in the walkers; this helper leaves it `None`.
+pub(crate) fn measured_fields(
+    node: tree_sitter::Node,
+    src: &[u8],
+) -> (Option<u32>, Option<String>) {
+    let cut = node
+        .child_by_field_name("body")
+        .or_else(|| node.child_by_field_name("value"))
+        .or_else(|| node.child_by_field_name("type"));
+    (Some(end_line_of(node)), signature_of(node, cut, src))
 }
 
 /// Named children of a node, collected so the walker can recurse while

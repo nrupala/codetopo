@@ -101,9 +101,9 @@ fn execute_intent_descendants_real_graph() {
     b.add_file(FileSymbols {
         package: "p".into(), file: "f.rs".into(), module_id: "m".into(),
         symbols: vec![
-            RawSymbol { id: "a".into(), kind: NodeKind::Function, label: "a".into(), line: 1, column: None, defines: vec![], refs: vec![], writes: vec![] },
-            RawSymbol { id: "b".into(), kind: NodeKind::Function, label: "b".into(), line: 2, column: None, defines: vec![], refs: vec![], writes: vec![] },
-            RawSymbol { id: "c".into(), kind: NodeKind::Function, label: "c".into(), line: 3, column: None, defines: vec![], refs: vec![], writes: vec![] },
+            RawSymbol { id: "a".into(), kind: NodeKind::Function, label: "a".into(), line: 1, column: None, defines: vec![], refs: vec![], writes: vec![], end_line: None, signature: None, decisions: None },
+            RawSymbol { id: "b".into(), kind: NodeKind::Function, label: "b".into(), line: 2, column: None, defines: vec![], refs: vec![], writes: vec![], end_line: None, signature: None, decisions: None },
+            RawSymbol { id: "c".into(), kind: NodeKind::Function, label: "c".into(), line: 3, column: None, defines: vec![], refs: vec![], writes: vec![], end_line: None, signature: None, decisions: None },
         ],
         imports: vec![],
         calls: vec![

@@ -45,6 +45,23 @@ pub struct RawSymbol {
     /// are silent, like refs.
     #[serde(default)]
     pub writes: Vec<String>,
+    /// Last source line of the symbol's declaration (1-based, inclusive)
+    /// — CODE_SCHEMA §3, schema 1.1. `None` when the extractor did not
+    /// measure it; absence means *not measured*, never a span of zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
+    /// The declaration text of the symbol — body and initializer
+    /// excluded, whitespace collapsed (CODE_SCHEMA §3). `None` when not
+    /// measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Decision points counted in the symbol's body, per the
+    /// per-language enumeration in CODE_SCHEMA §3.2. Emitted only for
+    /// function/method symbols that have a body. `None` means *not
+    /// measured* (body-less declaration, non-callable symbol, or an
+    /// extractor that does not count) — never read it as zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decisions: Option<u32>,
 }
 
 /// One inheritance or implementation claim found in a file: the named

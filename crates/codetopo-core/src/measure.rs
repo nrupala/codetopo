@@ -421,6 +421,9 @@ mod tests {
             defines: Vec::new(),
             refs: Vec::new(),
             writes: Vec::new(),
+            end_line: None,
+            signature: None,
+            decisions: None,
         }
     }
 

@@ -4,6 +4,25 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Analytics depth, Phase B part 1 — extractor enrichment (CODE_SCHEMA 1.1).**
+  The schema moves from 1.0-draft to 1.1 (additive, per §8): every node record
+  gains three optional measured fields — `end_line` (the declaration's last
+  source line), `signature` (the declaration text, body and initializer
+  excluded, whitespace collapsed), and `decisions` (decision points counted in
+  a function/method body, per the normative per-language enumeration now in
+  CODE_SCHEMA §3.2; cyclomatic complexity is the derived view
+  `decisions + 1`, McCabe 1976, defined in §9). Absence is the contract: a
+  missing field is *not measured*, never zero — body-less declarations,
+  non-callable symbols, and snapshots/stores written before 1.1 all read as
+  absent. The Rust and TypeScript/JavaScript extractors emit the fields;
+  conformance fixtures in both languages assert hand-counted spans,
+  signatures, and decision counts (branch-free bodies count 0; closures count
+  toward their enclosing symbol; nested items are measured on their own
+  symbols). The SQLite store migrates pre-1.1 databases additively on open
+  (no format-version move; older builds ignore the new columns). Proofs: the
+  per-language conformance fixtures, a hand-written 1.0-draft snapshot
+  round-trip, and a hand-built pre-1.1 database migration test.
+
 - **Dependency security update (0.6.0 release-gate fix loop).**
   `webpki-roots` 1.0.9 → 1.0.10 and `rustls-webpki` 0.103.15 → 0.103.16
   (RUSTSEC-2026-0381 / RUSTSEC-2026-0382: certificate verification could

@@ -411,7 +411,7 @@ async fn snapshot_verifies_over_http() {
         .get(&format!("/v1/graphs/{index_id}/snapshot"))
         .await;
     assert_eq!(status, StatusCode::OK, "snapshot failed: {snapshot}");
-    assert_eq!(snapshot["schema_version"], json!("1.0-draft"));
+    assert_eq!(snapshot["schema_version"], json!("1.1"));
     assert_eq!(
         snapshot["nodes"].as_array().map(Vec::len),
         Some(graph.node_count())
@@ -787,7 +787,7 @@ async fn discovery_routes_match_the_core() {
     // schema needs no index
     let (status, schema) = harness.get("/v1/schema").await;
     assert_eq!(status, StatusCode::OK, "schema: {schema}");
-    assert_eq!(schema["schema_version"], "1.0-draft");
+    assert_eq!(schema["schema_version"], "1.1");
     assert!(schema["node_kinds"]
         .as_array()
         .expect("node kinds")

@@ -1307,7 +1307,7 @@ mod tests {
 
         // describe_schema needs no database at all
         let schema = result_of("codetopo_describe_schema", &json!({}));
-        assert_eq!(schema["schema_version"], "1.0-draft");
+        assert_eq!(schema["schema_version"], "1.1");
         assert!(schema["node_kinds"]
             .as_array()
             .expect("kinds")

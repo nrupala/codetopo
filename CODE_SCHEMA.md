@@ -1,6 +1,6 @@
 # CODE_SCHEMA — codetopo typed code-entity ontology
 
-**Version:** 1.0-draft (2026-09-26)
+**Version:** 1.1 (2026-10-25)
 **License:** Apache-2.0 — this spec is adoption-facing; anyone may implement against it.
 **Ownership:** Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join) — join Muse, then redeem code **101EEK** in Settings within 48 hours of joining and we both earn tokens.
 
@@ -48,7 +48,26 @@ any code, versioned independently of any implementation.
 - `tier` — `core` | `recommended` | `optional` (queryable priority, never a dash pattern). Classified by kind in the builder, identically for every surface: the package/module/file skeleton is `core`, class/interface declarations are `recommended`, everything else is `optional`.
 - `defines` / `refs` — the marimo contract: symbols defined here, symbols referenced here
 
-Everything else (signatures, docstrings, complexity) is a derived view, not the write path.
+*Amendment 1.1 (2026-10-25, Phase B).* Three **optional measured fields**
+join the record. They are extractor-emitted measurements, not derived
+views: each is a fact read off the source text at extraction time.
+
+- `end_line` — last source line of the declaration (1-based, inclusive).
+  With `loc.line` it gives the symbol's line span.
+- `signature` — the declaration text: body and initializer excluded,
+  whitespace runs collapsed to single spaces, the trailing separator
+  (`{`, `;`, `=`) stripped.
+- `decisions` — decision points counted in the symbol's body, per the
+  normative per-language enumeration in §3.2. Emitted only for
+  function/method symbols that have a body.
+
+All three are optional, and absence is meaningful: a missing field is
+**not measured**, never zero. Snapshots written before 1.1 carry none of
+them and read unchanged (§8: additive, minor bump); every metric built
+on these fields reports absence as absence, per §9. Everything else
+(docstrings, quality judgments) remains a derived view or out of scope
+— complexity and the §9 metrics are *computed from* these measurements
+by query code, identically on every surface.
 
 ## 3.1 Package discovery and import resolution
 
@@ -81,6 +100,32 @@ means "unresolved", never a doubled prefix — a workspace package of
 that name wins over the stub. Path-qualified calls resolve the same
 way: `crate` substitutes the caller's package root, then the tiered
 suffix match applies to the last segment.
+
+## 3.2 Decision points (normative enumeration)
+
+Cyclomatic complexity follows McCabe (1976): for one entry point,
+**v = decision points + 1**, where a decision point is a place the
+control flow can diverge. The extractor counts decision points;
+complexity itself is the derived view `decisions + 1` (§9). A k-way
+branch contributes k−1 decision points — each arm past the first is
+one more binary choice. Nested item declarations are never descended
+into (their decisions belong to their own symbols); closures, arrow
+functions, and function expressions are not symbols and *are*
+descended into — their branches count toward the enclosing symbol.
+
+**Rust** (tree-sitter-rust): `if` expression (including `if let`; each
+`else if` is a nested `if`) +1; `while`, `for`, `loop` +1 each; `match`
++(arms − 1); the `?` operator (`try_expression`) +1; each `&&` and
+`||` in a binary expression +1.
+
+**TypeScript / JavaScript** (tree-sitter-typescript): `if` +1; `for`,
+`for…in`/`for…of`, `while`, `do…while` +1 each; ternary (`?:`) +1;
+`switch` + (number of `case` clauses) — `default` is the fall-through
+path and is not counted; `catch` +1; each `&&`, `||`, and `??` in a
+binary expression +1.
+
+A branch-free function body counts 0 decision points in both
+languages, so its complexity is exactly 1.
 
 ## 4. Edge kinds (typed, kind-scoped attributes)
 
@@ -146,3 +191,18 @@ pathway; anything else (SVG, docs) is derived from JSON, never parallel to it.
 Additive changes (new optional attributes, new node/edge kinds) bump minor.
 Removals or renames bump major. Extractors declare the schema version they emit;
 consumers reject major mismatches loudly.
+
+## 9. Derived metrics (definitions are normative)
+
+codetopo reports **measurements** — facts with a stated method — and
+never quality scores, grades, or verdicts. Every metric below is
+computed from the §3 record by query code, identically on the CLI,
+HTTP, and MCP surfaces, and states its method beside its result. A
+metric whose inputs were not measured is **absent** from the answer —
+never zero, never estimated.
+
+- **Cyclomatic complexity** of a function/method: `v = decisions + 1`
+  (McCabe 1976; decisions per §3.2). Reported only where `decisions`
+  was measured.
+- **Size** of a symbol, in lines: `end_line − loc.line + 1`. Reported
+  only where `end_line` was measured.
