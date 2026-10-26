@@ -4,6 +4,30 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Analytics depth, Phase B part 3 — coupling and cohesion.**
+  New query on every surface: `codetopo metrics`, `GET
+  /v1/graphs/{id}/metrics`, and `codetopo_metrics` report, per type,
+  CBO, RFC, ATFD, and WMC (Chidamber & Kemerer 1994; Lanza &
+  Marinescu 2006) plus cohesion as LCOM raw pair counts with TCC —
+  and, per package, Ca/Ce and instability (Martin 1994) with links to
+  external libraries counted and named separately as `external_ce`,
+  never merged into Ce (the B0.3 rule). Every metric's method is
+  stated in the response beside the numbers; unmeasured metrics are
+  absent, never zero. Measurements only: codetopo attaches no
+  thresholds and no "God Class"-style verdicts — judgment is not its
+  layer. One computation in core (`Graph::metrics`), so the three
+  surfaces cannot disagree. Cohesion is measured over *recorded*
+  accesses (reads/writes edge targets and recorded refs, intersected
+  with the type's member names); its stated limits — field reads and
+  compound assignments are not recorded by the current extractors —
+  are documented in CODE_SCHEMA §9 with the definitions. Proofs:
+  every metric hand-verified on a planted two-package fixture with a
+  raw-edge recount cross-check, a WMC-absence test, HTTP/MCP parity
+  tests, and a two-crate end-to-end test whose coupling values are
+  asserted exactly. Sixteen HTTP endpoints, sixteen MCP tools;
+  OpenAPI (including the rank metric enum, which gains `complexity`)
+  and the MCP catalogue updated with the code.
+
 - **Analytics depth, Phase B part 2 — cyclomatic complexity and size.**
   The decision counts recorded since part 1 become the first derived
   metrics (CODE_SCHEMA §9), computed once in core so the CLI, HTTP, and

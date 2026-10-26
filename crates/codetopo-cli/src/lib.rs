@@ -809,7 +809,7 @@ pub fn describe_schema() -> serde_json::Value {
         },
         "queries": ["descendants", "ancestors", "blast_radius", "path",
                     "neighborhood", "search", "symbol", "stats", "verify",
-                    "diagnostics", "rank", "diff"],
+                    "diagnostics", "rank", "diff", "metrics"],
     })
 }
 
@@ -941,6 +941,21 @@ pub fn rank_value(graph: &Graph, metric: RankMetric, limit: usize) -> serde_json
         "method": metric.method(),
         "total": graph.rank_total(metric),
         "results": graph.rank(metric, limit),
+    })
+}
+
+/// The shared shape of the coupling/cohesion answer (CLI `metrics`,
+/// HTTP `GET /v1/graphs/{id}/metrics`, MCP `codetopo_metrics`): every
+/// type's and package's measurements from core's one computation, with
+/// each metric's published method stated beside the numbers.
+pub fn metrics_value(graph: &Graph) -> serde_json::Value {
+    let metrics = graph.metrics();
+    let methods: std::collections::BTreeMap<&str, &str> =
+        codetopo_core::METRIC_METHODS.iter().copied().collect();
+    json!({
+        "types": metrics.types,
+        "packages": metrics.packages,
+        "methods": methods,
     })
 }
 

@@ -1003,6 +1003,37 @@ async fn rank_route_matches_the_cli_value_and_finds_the_hub() {
     assert_eq!(body["error"], "invalid_param");
 }
 
+/// The metrics route returns the shared metrics object (plus
+/// `index_id`) — coupling and cohesion for the fixture's types and
+/// packages, computed by the same core function the CLI serves.
+#[tokio::test]
+async fn metrics_route_matches_the_cli_value() {
+    let harness = Harness::new();
+    let report = harness.index_fixture().await;
+    let index_id = report["index_id"].as_str().expect("index_id").to_string();
+    let graph = load_graph_from_db(&harness.db(&index_id)).expect("load graph");
+    let (status, body) = harness.get(&format!("/v1/graphs/{index_id}/metrics")).await;
+    assert_eq!(status, StatusCode::OK, "metrics: {body}");
+    let mut via_http = body.clone();
+    via_http
+        .as_object_mut()
+        .expect("object")
+        .remove("index_id")
+        .expect("index_id present");
+    assert_eq!(
+        via_http,
+        codetopo_cli::metrics_value(&graph),
+        "HTTP metrics == CLI metrics"
+    );
+    assert!(
+        body["methods"]["instability"]
+            .as_str()
+            .expect("method")
+            .contains("Martin"),
+        "the methods travel with the numbers: {body}"
+    );
+}
+
 /// The diff route over two real indexes created through the API: the
 /// pair differs by one known edit (append `d`, call it from `c`), and
 /// the route's answer is exactly the shared diff object for the two
