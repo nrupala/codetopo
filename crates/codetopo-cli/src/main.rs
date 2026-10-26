@@ -127,6 +127,27 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Change-history measurements — hotspots and change coupling —
+    /// from a local working tree's git history (CODE_SCHEMA §9).
+    /// Local only: an index carries no history, so the working tree is
+    /// named explicitly; a tree without history is answered "not
+    /// measured", never zeros.
+    History {
+        #[arg(long)]
+        db: PathBuf,
+        /// Working tree whose git history is read.
+        #[arg(long)]
+        repo: PathBuf,
+        /// Only commits since this date (passed to `git log --since`).
+        #[arg(long)]
+        since: Option<String>,
+        /// Minimum support for a coupled pair to be reported.
+        #[arg(long, default_value_t = 2)]
+        min_support: usize,
+        /// Emit the shared JSON shape (the core HistoryReport object).
+        #[arg(long)]
+        json: bool,
+    },
     /// Compare two indexes (or two snapshot files): added, removed,
     /// and changed nodes and edges, plus the blast-radius movement of
     /// every touched symbol — change-impact analysis (Bohner & Arnold)
@@ -380,6 +401,7 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 }
                 println!("packages: {}", metrics.packages.len());
                 for p in &metrics.packages {
+
                     match p.instability {
                         Some(i) => println!(
                             "{}: ca {} · ce {} · external-ce {} · instability {i:.2}",
@@ -390,6 +412,55 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                             p.id, p.ca, p.ce, p.external_ce
                         ),
                     }
+                }
+            }
+        }
+        Commands::History {
+            db,
+            repo,
+            since,
+            min_support,
+            json,
+        } => {
+            let graph = load_graph_from_db(&db)?;
+            let (input, reason) =
+                match codetopo_cli::repo_history_input(&graph, &repo, since.as_deref()) {
+                    Ok(input) => (Some(input), String::new()),
+                    Err(reason) => (None, reason),
+                };
+            let value = codetopo_cli::history_value(&graph, input, min_support, &reason);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).expect("history serializes")
+                );
+            } else if value["measured"] == serde_json::json!(false) {
+                println!("history: not measured — {}", value["reason"].as_str().unwrap_or(""));
+            } else {
+                println!(
+                    "history: {} transactions · {} · {}",
+                    value["transactions"],
+                    value["source"].as_str().unwrap_or(""),
+                    value["window"].as_str().unwrap_or("")
+                );
+                println!("hotspots (changes x complexity = score):");
+                for h in value["hotspots"].as_array().expect("hotspots") {
+                    match (h["complexity"].as_u64(), h["score"].as_u64()) {
+                        (Some(c), Some(s)) => {
+                            println!("  {}: {} x {} = {}", h["file"], h["changes"], c, s)
+                        }
+                        _ => println!(
+                            "  {}: {} changes · complexity not measured",
+                            h["file"], h["changes"]
+                        ),
+                    }
+                }
+                println!("change coupling (support >= {}):", min_support);
+                for c in value["coupling"].as_array().expect("coupling") {
+                    println!(
+                        "  {} + {}: support {} of {} transactions · confidence {:.2}",
+                        c["a"], c["b"], c["support"], c["either"], c["confidence"]
+                    );
                 }
             }
         }

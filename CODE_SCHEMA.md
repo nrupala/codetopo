@@ -252,3 +252,21 @@ dependency pairs (the B0.3 rule):
 - **External coupling** (`external_ce`): pairs from this package to
   `external::` stubs — counted and named separately, **never merged
   into Ce**.
+
+**Change history (local surfaces only).** History is an input, not
+something an index carries: a *transaction* is the set of files one
+commit touched (merge commits excluded), supplied by a local surface
+from the working tree's git log. Where no history is supplied — every
+hosted surface, and any tree without recorded history — the answer is
+an unmeasured report (`measured: false`, with the reason), never
+zeros.
+
+- **Hotspot** (Tornhill 2015): per file, *changes* = the transactions
+  in the stated window that touched it, and *complexity* = the sum of
+  its functions' cyclomatic complexities (absent unless every one was
+  measured). Both factors are always reported, and their product.
+- **Change coupling** (Zimmermann et al. 2005): per file pair,
+  *support* = transactions containing both files, *confidence* =
+  support / transactions containing either file. Reported as the pair
+  counts themselves, never a bare score; pairs below the query's
+  stated minimum support are not reported.

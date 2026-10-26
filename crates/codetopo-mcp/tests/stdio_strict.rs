@@ -107,7 +107,7 @@ fn strict_stdio_client_session() {
     // object input schema — the fields SDK clients validate.
     let list = client.request(3, "tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().expect("tools array");
-    assert_eq!(tools.len(), 16);
+    assert_eq!(tools.len(), 17);
     for tool in tools {
         assert!(tool["name"].is_string(), "tool name: {tool}");
         assert!(tool["description"].is_string(), "tool description: {tool}");

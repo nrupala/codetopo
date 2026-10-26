@@ -809,7 +809,7 @@ pub fn describe_schema() -> serde_json::Value {
         },
         "queries": ["descendants", "ancestors", "blast_radius", "path",
                     "neighborhood", "search", "symbol", "stats", "verify",
-                    "diagnostics", "rank", "diff", "metrics"],
+                    "diagnostics", "rank", "diff", "metrics", "history"],
     })
 }
 
@@ -956,6 +956,114 @@ pub fn metrics_value(graph: &Graph) -> serde_json::Value {
         "types": metrics.types,
         "packages": metrics.packages,
         "methods": methods,
+    })
+}
+
+/// The shared shape of the change-history answer (CLI `history`, HTTP
+/// `GET /v1/graphs/{id}/history`, MCP `codetopo_history`): core's
+/// report — measured from the supplied transactions, or unmeasured
+/// with the reason — with the metrics' methods stated beside it.
+pub fn history_value(
+    graph: &Graph,
+    input: Option<codetopo_core::HistoryInput>,
+    min_support: usize,
+    absent_reason: &str,
+) -> serde_json::Value {
+    let report = match input {
+        Some(input) => codetopo_core::graph_history(graph, &input, min_support),
+        None => codetopo_core::HistoryReport::not_measured(absent_reason, min_support),
+    };
+    let mut value = serde_json::to_value(&report).expect("history report serializes");
+    let methods: std::collections::BTreeMap<&str, &str> =
+        codetopo_core::HISTORY_METHODS.iter().copied().collect();
+    value["methods"] = json!(methods);
+    value
+}
+
+/// Read a local working tree's git history as codetopo transactions:
+/// one entry per non-merge commit, each the set of files it touched,
+/// mapped from repository-relative paths to the graph's file identity.
+///
+/// Mapping rule: an exact match wins; otherwise the longest trailing
+/// suffix of the repository path that is a graph file (a packaged
+/// file's graph path is relative to its package root — `alpha/src/
+/// lib.rs` in the repository is `src/lib.rs` in the graph). Files that
+/// match nothing are dropped; a commit left with no files is dropped.
+///
+/// `Err` carries the reason history could not be read (no git, not a
+/// repository, no commits in the window) — callers turn it into the
+/// unmeasured report rather than an error: absence is an answer.
+pub fn repo_history_input(
+    graph: &Graph,
+    repo: &Path,
+    since: Option<&str>,
+) -> Result<codetopo_core::HistoryInput, String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("-C").arg(repo)
+        .args(["log", "--no-merges", "--pretty=format:commit:%H", "--name-only"]);
+    if let Some(since) = since {
+        cmd.args(["--since", since]);
+    }
+    let output = cmd
+        .output()
+        .map_err(|e| format!("could not run git: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let first = stderr.lines().next().unwrap_or("git log failed");
+        return Err(format!("no git history available: {first}"));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut raw: Vec<Vec<String>> = Vec::new();
+    for line in text.lines() {
+        if let Some(_hash) = line.strip_prefix("commit:") {
+            raw.push(Vec::new());
+        } else if !line.trim().is_empty() {
+            if let Some(tx) = raw.last_mut() {
+                tx.push(line.trim().replace('\\', "/"));
+            }
+        }
+    }
+    if raw.is_empty() {
+        return Err("the repository has no recorded history in the window".to_string());
+    }
+    let known: std::collections::HashSet<&str> =
+        graph.nodes().map(|n| n.loc.file.as_str()).collect();
+    let map_path = |path: &str| -> Option<String> {
+        if known.contains(path) {
+            return Some(path.to_string());
+        }
+        // Longest trailing suffix that is a graph file.
+        let mut best: Option<&str> = None;
+        for (i, _) in path.match_indices('/') {
+            let suffix = &path[i + 1..];
+            if known.contains(suffix) && suffix.len() > best.map(|b| b.len()).unwrap_or(0) {
+                best = Some(suffix);
+            }
+        }
+        best.map(|s| s.to_string())
+    };
+    let transactions: Vec<Vec<String>> = raw
+        .iter()
+        .map(|tx| {
+            let mut files: Vec<String> = tx.iter().filter_map(|p| map_path(p)).collect();
+            files.sort();
+            files.dedup();
+            files
+        })
+        .filter(|tx| !tx.is_empty())
+        .collect();
+    if transactions.is_empty() {
+        return Err(
+            "no commit in the window touches a file this index knows".to_string(),
+        );
+    }
+    Ok(codetopo_core::HistoryInput {
+        source: "local git history (git log --no-merges)".to_string(),
+        window: match since {
+            Some(s) => format!("commits since {s}"),
+            None => "entire recorded history".to_string(),
+        },
+        transactions,
     })
 }
 

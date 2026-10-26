@@ -19,6 +19,7 @@
 
 pub mod coupling;
 pub mod diag;
+pub mod history;
 pub mod emit;
 pub mod graph;
 pub mod measure;
@@ -27,6 +28,9 @@ pub mod schema;
 pub mod snapshot;
 
 pub use coupling::{GraphMetrics, PackageMetrics, TypeMetrics, METRIC_METHODS};
+pub use history::{
+    graph_history, CoupledFiles, FileHotspot, HistoryInput, HistoryReport, HISTORY_METHODS,
+};
 pub use diag::Diagnostic;
 pub use emit::{FileSymbols, RawCall, RawHeritage, RawImport, RawSymbol};
 pub use graph::{Graph, GraphBuilder, PathStep, Subgraph};

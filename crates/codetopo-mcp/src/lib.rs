@@ -342,6 +342,22 @@ pub fn tool_catalog() -> Vec<Value> {
             },
         }),
         json!({
+            "name": "codetopo_history",
+            "title": "Change-history measurements (hotspots, change coupling)",
+            "description": "Hotspots (change frequency x complexity, both factors stated) and change coupling (support/confidence as pair counts) over a local working tree's git history. History is local-only: without repo_path the answer is the unmeasured report (measured: false with the reason), never invented numbers.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "db_path": {"type": "string", "description": "Path to the index database."},
+                    "repo_path": {"type": "string", "description": "Local working tree whose git history is read. Omit for the unmeasured report."},
+                    "since": {"type": "string", "description": "Only commits since this date (passed to git log --since)."},
+                    "min_support": {"type": "integer", "description": "Minimum support for a coupled pair to be reported. Default 2."},
+                },
+                "required": ["db_path"],
+            },
+        }),
+        json!({
             "name": "codetopo_neighborhood",
             "title": "Get a node's neighborhood",
             "description": "The subgraph within a few hops of a node, in both directions (contains/defines excluded).",
@@ -417,6 +433,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, ToolError> {
         "codetopo_rank" => tool_rank(args),
         "codetopo_diff" => tool_diff(args),
         "codetopo_metrics" => tool_metrics(args),
+        "codetopo_history" => tool_history(args),
         "codetopo_neighborhood" => tool_neighborhood(args),
         "codetopo_get_symbol" => tool_get_symbol(args),
         "codetopo_search_symbols" => tool_search_symbols(args),
@@ -695,6 +712,39 @@ fn tool_metrics(args: &Value) -> Result<Value, ToolError> {
     Ok(codetopo_cli::metrics_value(&graph))
 }
 
+/// `codetopo_history` — change-history measurements, in the shared
+/// shape the CLI's `history --json` and the HTTP history route also
+/// return. With a `repo_path`, the history is read from that local
+/// working tree's git log; without one (or when the tree has no usable
+/// history) the answer is the unmeasured report with the reason.
+fn tool_history(args: &Value) -> Result<Value, ToolError> {
+    let graph = open_graph(args)?;
+    let min_support = args
+        .get("min_support")
+        .and_then(Value::as_u64)
+        .unwrap_or(2) as usize;
+    let (input, reason) = match optional_str(args, "repo_path")? {
+        Some(repo) => {
+            let path = PathBuf::from(repo);
+            match codetopo_cli::repo_history_input(
+                &graph,
+                &path,
+                optional_str(args, "since")?,
+            ) {
+                Ok(input) => (Some(input), String::new()),
+                Err(reason) => (None, reason),
+            }
+        }
+        None => (
+            None,
+            "no working tree supplied: history is measured from a local \
+             repository (pass repo_path); an index alone carries no history"
+                .to_string(),
+        ),
+    };
+    Ok(codetopo_cli::history_value(&graph, input, min_support, &reason))
+}
+
 /// `codetopo_diagnostics` — the diagnostics recorded when the index was
 /// built, in the shared `{total, diagnostics}` shape the CLI's
 /// `diagnostics --json` and the HTTP diagnostics route also return.
@@ -853,9 +903,9 @@ mod tests {
     // -- catalogue ---------------------------------------------------------
 
     #[test]
-    fn catalogue_lists_sixteen_tools() {
+    fn catalogue_lists_seventeen_tools() {
         let catalog = tool_catalog();
-        assert_eq!(catalog.len(), 16, "expected 16 tools: {catalog:?}");
+        assert_eq!(catalog.len(), 17, "expected 17 tools: {catalog:?}");
 
         let names: Vec<&str> = catalog
             .iter()
@@ -876,6 +926,7 @@ mod tests {
                 "codetopo_rank",
                 "codetopo_diff",
                 "codetopo_metrics",
+                "codetopo_history",
                 "codetopo_neighborhood",
                 "codetopo_get_symbol",
                 "codetopo_search_symbols",
@@ -1232,7 +1283,7 @@ mod tests {
         assert_eq!(response["id"], 7);
         assert_eq!(
             response["result"]["tools"].as_array().expect("tools").len(),
-            16
+            17
         );
     }
 
@@ -1418,6 +1469,26 @@ mod tests {
         let via_tool = result_of("codetopo_rank", &args(&db_path, json!({})));
         assert_eq!(via_tool["metric"], "blast_radius");
         assert!(call_tool("codetopo_rank", &args(&db_path, json!({"by": "nope"}))).is_err());
+    }
+
+    #[test]
+    fn history_tool_without_a_working_tree_is_not_measured() {
+        let (_dir, db_path) = fixture_index();
+        let via_tool = result_of("codetopo_history", &args(&db_path, json!({})));
+        assert_eq!(via_tool["measured"], false);
+        assert!(
+            via_tool["reason"]
+                .as_str()
+                .expect("reason")
+                .contains("repo_path"),
+            "the reason names the missing input: {via_tool}"
+        );
+        assert_eq!(via_tool["hotspots"].as_array().expect("hotspots").len(), 0);
+        assert_eq!(via_tool["coupling"].as_array().expect("coupling").len(), 0);
+        assert!(
+            via_tool["methods"]["hotspot"].as_str().expect("method").contains("Tornhill"),
+            "the methods travel with the answer"
+        );
     }
 
     #[test]

@@ -180,6 +180,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/graphs/:id/rank", get(rank))
         .route("/v1/graphs/:id/diff", get(diff))
         .route("/v1/graphs/:id/metrics", get(metrics))
+        .route("/v1/graphs/:id/history", get(history))
         .route("/v1/schema", get(schema))
         .route_layer(axum::middleware::from_fn_with_state(
             envelope,
@@ -1116,6 +1117,30 @@ async fn metrics(
     let db = state.db_path(&index_id);
     let graph = load_graph_blocking(&db, &index_id)?;
     let mut value = codetopo_cli::metrics_value(&graph);
+    value["index_id"] = json!(index_id);
+    Ok(Json(value))
+}
+
+/// The reason hosted history is always unmeasured (ruling B0.1:
+/// history is a local-surface input; an index carries none).
+const HOSTED_HISTORY_REASON: &str = "hosted indexes carry no repository history; \
+     history is measured on local surfaces only (the CLI's history command, \
+     or the MCP tool with a local working tree)";
+
+/// `GET /v1/graphs/{id}/history` — the change-history measurements of
+/// the index. Hosted indexes carry no repository history, so this
+/// route always answers the unmeasured report (`measured: false` with
+/// the reason) — absence stated, never zeros invented. The shared
+/// [`codetopo_cli::history_value`] shape plus `index_id`.
+async fn history(
+    State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
+    UrlPath(index_id): UrlPath<String>,
+) -> Result<Json<Value>, ApiError> {
+    enforce_tenancy(&state, &index_id, &key)?;
+    let db = state.db_path(&index_id);
+    let graph = load_graph_blocking(&db, &index_id)?;
+    let mut value = codetopo_cli::history_value(&graph, None, 2, HOSTED_HISTORY_REASON);
     value["index_id"] = json!(index_id);
     Ok(Json(value))
 }
