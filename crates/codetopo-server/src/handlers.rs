@@ -1075,7 +1075,7 @@ async fn rank(
     let metric = codetopo_core::RankMetric::parse(by).ok_or_else(|| {
         ApiError::invalid_param(
             "by",
-            &format!("expected fan_in, fan_out, or blast_radius, got '{by}'"),
+            &format!("expected fan_in, fan_out, blast_radius, or complexity, got '{by}'"),
         )
     })?;
     let limit: usize = match query.limit.as_deref().map(str::trim) {

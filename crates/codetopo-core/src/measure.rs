@@ -20,6 +20,56 @@ use serde::{Deserialize, Serialize};
 use crate::graph::Graph;
 use crate::schema::{Edge, EdgeKind, Node, NodeKind};
 
+impl Node {
+    /// Cyclomatic complexity of this symbol (CODE_SCHEMA §9):
+    /// **v = decision points + 1** (McCabe 1976), the decision points
+    /// counted per §3.2's enumeration. `None` when the symbol's
+    /// decisions were not measured — absence, never a default of 1.
+    pub fn complexity(&self) -> Option<u32> {
+        self.decisions.map(|d| d + 1)
+    }
+
+    /// Size of the declaration in lines (CODE_SCHEMA §9):
+    /// `end_line − line + 1`. `None` when no end line was measured (or
+    /// the recorded span is malformed, which the extractors never
+    /// emit — the guard keeps a corrupt record absent, not negative).
+    pub fn size_lines(&self) -> Option<u32> {
+        self.end_line
+            .filter(|e| *e >= self.loc.line)
+            .map(|e| e - self.loc.line + 1)
+    }
+}
+
+/// The derived measurements of one symbol (CODE_SCHEMA §9), computed
+/// from the measured fields of its record. Each field is independently
+/// optional: a symbol can carry a span without a decision count (a
+/// struct) or, in a hand-built graph, the reverse.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymbolMeasurements {
+    /// Cyclomatic complexity, where decisions were measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub complexity: Option<u32>,
+    /// Declaration span in lines, where an end line was measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_lines: Option<u32>,
+}
+
+impl SymbolMeasurements {
+    /// The measurements of one node; `None` when neither was measured,
+    /// so an unmeasured node's dossier carries no block at all.
+    pub fn of(node: &Node) -> Option<Self> {
+        let m = SymbolMeasurements {
+            complexity: node.complexity(),
+            size_lines: node.size_lines(),
+        };
+        if m.complexity.is_none() && m.size_lines.is_none() {
+            None
+        } else {
+            Some(m)
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Symbol dossier (DESIGN §3: get_symbol = node + incident edges + counts)
 // ---------------------------------------------------------------------------
@@ -46,6 +96,10 @@ pub struct SymbolDossier {
     pub outgoing_count: usize,
     /// Total incoming edges across all kinds.
     pub incoming_count: usize,
+    /// The node's own derived measurements (CODE_SCHEMA §9), present
+    /// only when at least one was measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurements: Option<SymbolMeasurements>,
 }
 
 impl Graph {
@@ -87,12 +141,14 @@ impl Graph {
         for group in incoming.values_mut() {
             group.sort_by(|a, b| a.from.cmp(&b.from).then_with(|| a.line.cmp(&b.line)));
         }
+        let measurements = SymbolMeasurements::of(&node);
         Some(SymbolDossier {
             node,
             outgoing,
             incoming,
             outgoing_count,
             incoming_count,
+            measurements,
         })
     }
 }
@@ -120,6 +176,11 @@ pub enum RankMetric {
     /// node over calls / inherits / implements / reads / writes
     /// (CODE_SCHEMA §6's blast radius, counted).
     BlastRadius,
+    /// Cyclomatic complexity: v = decision points + 1 (McCabe 1976;
+    /// CODE_SCHEMA §9). Only symbols whose decision points were
+    /// measured are ranked — an unmeasured symbol is absent, never
+    /// ranked as 1.
+    Complexity,
 }
 
 impl RankMetric {
@@ -133,6 +194,7 @@ impl RankMetric {
             "fan_in" | "fan-in" => Some(Self::FanIn),
             "fan_out" | "fan-out" => Some(Self::FanOut),
             "blast_radius" | "blast-radius" => Some(Self::BlastRadius),
+            "complexity" => Some(Self::Complexity),
             _ => None,
         }
     }
@@ -143,6 +205,7 @@ impl RankMetric {
             Self::FanIn => "fan_in",
             Self::FanOut => "fan_out",
             Self::BlastRadius => "blast_radius",
+            Self::Complexity => "complexity",
         }
     }
 
@@ -161,6 +224,10 @@ impl RankMetric {
                                   transitive dependents over calls, inherits, \
                                   implements, reads, and writes edges; \
                                   external stub nodes are not ranked",
+            Self::Complexity => "cyclomatic complexity (McCabe 1976; CODE_SCHEMA \
+                                 §9): v = decision points + 1, decision points \
+                                 counted per CODE_SCHEMA §3.2; only symbols whose \
+                                 decisions were measured are ranked",
         }
     }
 }
@@ -207,6 +274,10 @@ impl Graph {
             RankMetric::BlastRadius => self
                 .nodes()
                 .map(|n| (n.id.clone(), self.blast_radius(&n.id).len()))
+                .collect(),
+            RankMetric::Complexity => self
+                .nodes()
+                .filter_map(|n| n.complexity().map(|v| (n.id.clone(), v as usize)))
                 .collect(),
         };
         counts.retain(|(_, c)| *c > 0);
@@ -633,7 +704,12 @@ mod tests {
         // raw edge list / the closure itself — the ranking may not invent
         // numbers the graph does not contain.
         let (g, _diags) = planted_builder().build();
-        for metric in [RankMetric::FanIn, RankMetric::FanOut, RankMetric::BlastRadius] {
+        for metric in [
+            RankMetric::FanIn,
+            RankMetric::FanOut,
+            RankMetric::BlastRadius,
+            RankMetric::Complexity,
+        ] {
             let ranked: std::collections::HashMap<String, usize> = g
                 .rank(metric, usize::MAX)
                 .into_iter()
@@ -650,6 +726,14 @@ mod tests {
                         .filter(|e| e.kind != EdgeKind::Contains && e.from == node.id)
                         .count(),
                     RankMetric::BlastRadius => g.blast_radius(&node.id).len(),
+                    // The planted fixture carries no measured symbols, so
+                    // the recount is "absent" (0) for every node — the
+                    // positive cross-check lives in
+                    // complexity_ranking_and_dossier_measurements, whose
+                    // expected order is the hand count.
+                    RankMetric::Complexity => {
+                        node.complexity().map(|v| v as usize).unwrap_or(0)
+                    }
                 };
                 // External stubs are boundary markers, not ranked symbols:
                 // their expected ranked count is "absent" whatever the raw
@@ -820,4 +904,81 @@ mod tests {
         assert_eq!(d.incoming_count, 0);
         assert!(d.outgoing.is_empty() && d.incoming.is_empty());
     }
+
+    fn sym_measured(
+        id: &str,
+        kind: NodeKind,
+        line: u32,
+        end_line: u32,
+        decisions: Option<u32>,
+    ) -> RawSymbol {
+        let mut s = sym(id, kind, line);
+        s.end_line = Some(end_line);
+        s.decisions = decisions;
+        s
+    }
+
+    /// B2 exit proof at the core layer: complexity is decisions + 1,
+    /// ranked count-descending with the id tie-break; unmeasured
+    /// symbols are absent from the ranking (never ranked as 1), and
+    /// the dossier carries a measurements block exactly when a
+    /// measurement exists.
+    #[test]
+    fn complexity_ranking_and_dossier_measurements() {
+        let mut b = GraphBuilder::new();
+        b.add_file(file(
+            "t",
+            "m.rs",
+            "t::m",
+            vec![
+                sym_measured("t::m::branchy", NodeKind::Function, 1, 21, Some(6)),
+                sym_measured("t::m::plain", NodeKind::Function, 23, 25, Some(0)),
+                sym_measured("t::m::mid", NodeKind::Function, 27, 30, Some(2)),
+                sym("t::m::unmeasured", NodeKind::Function, 32),
+                sym_measured("t::m::Widget", NodeKind::Class, 34, 40, None),
+            ],
+            vec![],
+        ));
+        let (graph, _diags) = b.build();
+
+        let ranked = graph.rank(RankMetric::Complexity, 20);
+        let got: Vec<(&str, usize)> =
+            ranked.iter().map(|r| (r.id.as_str(), r.count)).collect();
+        assert_eq!(
+            got,
+            vec![("t::m::branchy", 7), ("t::m::mid", 3), ("t::m::plain", 1)],
+            "v = decisions + 1, count-descending"
+        );
+        assert_eq!(
+            graph.rank_total(RankMetric::Complexity),
+            3,
+            "the unmeasured function and the decision-less class are not ranked"
+        );
+        assert_eq!(
+            RankMetric::parse("complexity"),
+            Some(RankMetric::Complexity),
+            "the wire name parses"
+        );
+        assert!(
+            RankMetric::Complexity.method().contains("McCabe"),
+            "the method travels with the metric"
+        );
+
+        let d = graph.dossier("t::m::branchy").expect("dossier");
+        let m = d.measurements.expect("measured node carries the block");
+        assert_eq!(m.complexity, Some(7));
+        assert_eq!(m.size_lines, Some(21), "end_line - line + 1");
+
+        let d = graph.dossier("t::m::unmeasured").expect("dossier");
+        assert!(
+            d.measurements.is_none(),
+            "unmeasured node: no block at all, not zeros"
+        );
+
+        let d = graph.dossier("t::m::Widget").expect("dossier");
+        let m = d.measurements.expect("a span alone still measures");
+        assert_eq!(m.complexity, None);
+        assert_eq!(m.size_lines, Some(7));
+    }
+
 }
