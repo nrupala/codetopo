@@ -842,3 +842,86 @@ export class Counter {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// B3 end-to-end: a real two-crate tree indexed for real. Package
+/// discovery assigns the files to `alpha` and `beta`; the type metrics
+/// are hand-verified against the fixture — `Car::drive` calls
+/// `Engine::rev` by qualified path (the §3.1 suffix resolution), so the
+/// two types are coupled exactly once, in both directions.
+#[test]
+fn metrics_end_to_end_two_packages() {
+    let dir = workdir("metrics-two-packages");
+    let repo = dir.join("repo");
+    let alpha = repo.join("alpha/src");
+    let beta = repo.join("beta/src");
+    std::fs::create_dir_all(&alpha).expect("alpha dir");
+    std::fs::create_dir_all(&beta).expect("beta dir");
+    std::fs::write(repo.join("alpha/Cargo.toml"), "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\n").expect("alpha manifest");
+    std::fs::write(repo.join("beta/Cargo.toml"), "[package]\nname = \"beta\"\nversion = \"0.1.0\"\n").expect("beta manifest");
+    std::fs::write(
+        alpha.join("lib.rs"),
+        "pub struct Engine;\n\
+         \n\
+         impl Engine {\n\
+         \x20   pub fn start(&mut self) {}\n\
+         \x20   pub fn stop(&mut self) {}\n\
+         \x20   pub fn rev(&mut self) {}\n\
+         }\n\
+         \n\
+         pub struct Car;\n\
+         \n\
+         impl Car {\n\
+         \x20   pub fn drive(&mut self) {\n\
+         \x20       Engine::rev();\n\
+         \x20   }\n\
+         \x20   pub fn park(&mut self) {}\n\
+         }\n",
+    )
+    .expect("alpha lib");
+    std::fs::write(beta.join("lib.rs"), "pub fn spin() {}\n").expect("beta lib");
+    let db = dir.join("index.db");
+    index_repo(&repo, &db, "fixture", None, None).expect("index two-crate repo");
+    let graph = load_graph_from_db(&db).expect("load graph");
+    let value = codetopo_cli::metrics_value(&graph);
+
+    let types = value["types"].as_array().expect("types");
+    let car = types
+        .iter()
+        .find(|t| t["id"] == "alpha::Car")
+        .expect("Car measured");
+    assert_eq!(car["method_count"], 2);
+    assert_eq!(car["cbo"], 1, "Car couples to Engine via drive -> Engine::rev");
+    assert_eq!(car["rfc"], 3, "2 own methods + rev");
+    assert_eq!(car["wmc"], 2, "both methods branch-free: v = 1 + 1");
+    let engine = types
+        .iter()
+        .find(|t| t["id"] == "alpha::Engine")
+        .expect("Engine measured");
+    assert_eq!(engine["method_count"], 3);
+    assert_eq!(engine["cbo"], 1, "coupling is symmetric");
+    assert_eq!(engine["wmc"], 3);
+
+    let packages = value["packages"].as_array().expect("packages");
+    let ids: Vec<&str> = packages
+        .iter()
+        .map(|p| p["id"].as_str().expect("package id"))
+        .collect();
+    assert!(ids.contains(&"alpha") && ids.contains(&"beta"), "both crates: {ids:?}");
+    let beta_m = packages
+        .iter()
+        .find(|p| p["id"] == "beta")
+        .expect("beta measured");
+    assert_eq!(beta_m["ca"], 0);
+    assert_eq!(beta_m["ce"], 0);
+    assert_eq!(beta_m["external_ce"], 0);
+    assert!(
+        beta_m.get("instability").is_none() || beta_m["instability"].is_null(),
+        "no coupling measured for beta: instability absent, not zero"
+    );
+    assert_eq!(
+        value["methods"].as_object().expect("methods").len(),
+        10,
+        "every metric's method is stated"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -535,8 +535,10 @@ paths:
       description: |
         Nodes ordered by one measurement: `fan_in` or `fan_out` (Henry &
         Kafura 1981 — incoming / outgoing dependency edges, `contains`
-        excluded) or `blast_radius` (CODE_SCHEMA §6 — the number of
-        transitive dependents). Count descending, node id ascending as
+        excluded), `blast_radius` (CODE_SCHEMA §6 — the number of
+        transitive dependents), or `complexity` (McCabe 1976 —
+        cyclomatic complexity, CODE_SCHEMA §9; only symbols whose
+        decision points were measured are ranked). Count descending, node id ascending as
         the tie-break; nodes with a zero count are excluded, and so are
         `external` stub nodes (the dependency boundary, not symbols of
         the indexed system). The response
@@ -553,7 +555,7 @@ paths:
           description: The metric to rank by (default `blast_radius`).
           schema:
             type: string
-            enum: [fan_in, fan_out, blast_radius]
+            enum: [fan_in, fan_out, blast_radius, complexity]
         - $ref: '#/components/parameters/LimitParam'
       responses:
         '200':
@@ -607,6 +609,41 @@ paths:
                 $ref: '#/components/schemas/DiffResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
+  /v1/graphs/{id}/metrics:
+    get:
+      tags: [query]
+      operationId: metrics
+      summary: Coupling and cohesion measurements for every type and package.
+      description: |
+        Per type (CODE_SCHEMA §9): coupling between objects, response
+        for a class, access to foreign data, weighted methods per class,
+        and cohesion as LCOM sharing/non-sharing pair counts with TCC —
+        all measurements with their methods stated in the response, no
+        thresholds and no verdicts. Per package: afferent and efferent
+        coupling as distinct node-to-node dependency pairs, instability,
+        and links to external libraries counted separately as
+        `external_ce`, never merged into `ce`. A metric whose inputs
+        were not measured is absent, never zero. The same object serves
+        the CLI's `metrics` command and the MCP `codetopo_metrics` tool.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+      responses:
+        '200':
+          description: The metrics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -1190,7 +1227,7 @@ components:
           type: string
         metric:
           type: string
-          enum: [fan_in, fan_out, blast_radius]
+          enum: [fan_in, fan_out, blast_radius, complexity]
         method:
           type: string
           description: The published definition of the count being ranked.
@@ -1254,6 +1291,65 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ImpactEntry'
+    MetricsResponse:
+      type: object
+      description: |
+        Coupling and cohesion measurements (CODE_SCHEMA §9): one entry
+        per type and per package, with every metric's published method
+        stated in `methods`. Unmeasured metrics are absent from an
+        entry, never zero.
+      required: [index_id, types, packages, methods]
+      properties:
+        index_id:
+          type: string
+        types:
+          type: array
+          items:
+            type: object
+            required: [id, kind, label, method_count, cbo, rfc, atfd]
+            properties:
+              id:
+                type: string
+              kind:
+                type: string
+              label:
+                type: string
+              method_count:
+                type: integer
+              cbo:
+                type: integer
+              rfc:
+                type: integer
+              atfd:
+                type: integer
+              wmc:
+                type: integer
+              lcom_sharing_pairs:
+                type: integer
+              lcom_non_sharing_pairs:
+                type: integer
+              tcc:
+                type: number
+        packages:
+          type: array
+          items:
+            type: object
+            required: [id, ca, ce, external_ce]
+            properties:
+              id:
+                type: string
+              ca:
+                type: integer
+              ce:
+                type: integer
+              external_ce:
+                type: integer
+              instability:
+                type: number
+        methods:
+          type: object
+          additionalProperties:
+            type: string
     NodeChange:
       type: object
       required: [id, before, after]

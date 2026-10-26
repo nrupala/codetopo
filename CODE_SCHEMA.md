@@ -206,3 +206,49 @@ never zero, never estimated.
   was measured.
 - **Size** of a symbol, in lines: `end_line − loc.line + 1`. Reported
   only where `end_line` was measured.
+
+**Types.** A *type* is a `class` or `interface` node; a method belongs
+to the type whose id prefixes it by one segment (`{type}::{method}`).
+*Dependency edges* — the set every coupling metric ranges over — are
+all edge kinds except `contains`: `imports`, `calls`, `inherits`,
+`implements`, `defines`, `reads`, `writes`, `references`.
+
+- **CBO** (coupling between objects; Chidamber & Kemerer 1994): the
+  number of distinct types coupled to this type — a dependency edge
+  between this type or one of its methods and another type or one of
+  its methods, in either direction.
+- **RFC** (response for a class; Chidamber & Kemerer 1994): the
+  type's method count plus the distinct methods of other types they
+  call (`external` stubs excluded).
+- **WMC** (weighted methods per class; Chidamber & Kemerer 1994): the
+  sum of the methods' cyclomatic complexities. Absent unless *every*
+  method's complexity was measured.
+- **ATFD** (access to foreign data; Lanza & Marinescu 2006),
+  operationalized: the distinct symbols outside this type — variables
+  and methods — targeted by `calls`/`reads`/`writes` edges from this
+  type's methods (`external` stubs excluded).
+- **LCOM / TCC** (Lanza & Marinescu 2006; Bieman & Kang 1995), over
+  **recorded accesses**: a method's accessed set is the targets of its
+  `reads`/`writes` edges plus its recorded `refs`, intersected with
+  the type's member names (its methods' labels, plus the labels of
+  everything any of its methods writes). A method pair *shares* when
+  their accessed sets intersect. LCOM is reported as the raw counts —
+  sharing pairs and non-sharing pairs — and TCC as sharing / total
+  pairs. Absent when the type has fewer than two methods or no
+  recorded accesses. Stated limit of the record: field reads and
+  compound assignments (`+=`) are not recorded by the current
+  extractors, and a write survives only when its target resolved to a
+  symbol — cohesion measures what the record holds.
+
+**Packages.** A node's package is the first `::` segment of its id;
+`external::` stubs are nobody's package. Coupling between the
+repository's **own packages** is counted as distinct node-to-node
+dependency pairs (the B0.3 rule):
+
+- **Ca** (afferent coupling; Martin 1994): pairs from other packages
+  into this package. **Ce** (efferent): pairs out of this package to
+  other packages of the same repository.
+- **Instability**: `Ce / (Ca + Ce)`; absent when Ca + Ce = 0.
+- **External coupling** (`external_ce`): pairs from this package to
+  `external::` stubs — counted and named separately, **never merged
+  into Ce**.

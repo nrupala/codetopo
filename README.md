@@ -125,21 +125,22 @@ curl -H "Authorization: Bearer $KEY" \
   "localhost:8080/v1/graphs/<uuid>/descendants?node=<node-id>&expand=true"
 ```
 
-Fifteen endpoints under `/v1`, one index operation plus fourteen read-only
+Sixteen endpoints under `/v1`, one index operation plus fifteen read-only
 queries: `POST /v1/index`, `GET /v1/graphs/{id}/{descendants, ancestors,
 blast-radius, path, stats, verify, snapshot, neighborhood, symbol,
-search, diagnostics, rank, diff}`, `GET /v1/schema`. Full contract in
+search, diagnostics, rank, diff, metrics}`, `GET /v1/schema`. Full contract in
 [`schemas/openapi.yaml`](schemas/openapi.yaml) (OpenAPI 3.1.0), env knobs
 (`CODETOPO_BIND`, `CODETOPO_DATA_DIR`, `CODETOPO_KEYS_FILE`,
 `CODETOPO_METERING_LOG`) documented in [`schemas/README.md`](schemas/README.md).
 
 ### MCP (`codetopo-mcp`)
 
-A stdio JSON-RPC server exposing the same handler layer as fifteen tools —
-the eleven query/integrity tools (`codetopo_index`, `codetopo_descendants`,
+A stdio JSON-RPC server exposing the same handler layer as sixteen tools —
+the twelve query/integrity tools (`codetopo_index`, `codetopo_descendants`,
 `codetopo_ancestors`, `codetopo_blast_radius`, `codetopo_path`,
 `codetopo_stats`, `codetopo_verify`, `codetopo_snapshot`,
-`codetopo_diagnostics`, `codetopo_rank`, `codetopo_diff`) plus discovery
+`codetopo_diagnostics`, `codetopo_rank`, `codetopo_diff`,
+`codetopo_metrics`) plus discovery
 (`codetopo_search_symbols`, `codetopo_get_symbol`,
 `codetopo_neighborhood`, `codetopo_describe_schema`) — so an in-process
 agent learns one surface and gets both. MCP answers are identical to the HTTP answers by

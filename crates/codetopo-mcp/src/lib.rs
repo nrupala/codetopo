@@ -329,6 +329,19 @@ pub fn tool_catalog() -> Vec<Value> {
             },
         }),
         json!({
+            "name": "codetopo_metrics",
+            "title": "Coupling and cohesion metrics",
+            "description": "Coupling and cohesion measurements for every type and package (CODE_SCHEMA section 9): CBO, RFC, LCOM pair counts, TCC, ATFD, WMC per type; Ca, Ce, instability, and separately-named external coupling per package. Every metric's method is stated in the result. Measurements only - no thresholds, no verdicts.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "db_path": {"type": "string", "description": "Path to the index database."},
+                },
+                "required": ["db_path"],
+            },
+        }),
+        json!({
             "name": "codetopo_neighborhood",
             "title": "Get a node's neighborhood",
             "description": "The subgraph within a few hops of a node, in both directions (contains/defines excluded).",
@@ -403,6 +416,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, ToolError> {
         "codetopo_diagnostics" => tool_diagnostics(args),
         "codetopo_rank" => tool_rank(args),
         "codetopo_diff" => tool_diff(args),
+        "codetopo_metrics" => tool_metrics(args),
         "codetopo_neighborhood" => tool_neighborhood(args),
         "codetopo_get_symbol" => tool_get_symbol(args),
         "codetopo_search_symbols" => tool_search_symbols(args),
@@ -673,6 +687,14 @@ fn tool_get_symbol(args: &Value) -> Result<Value, ToolError> {
     serde_json::to_value(dossier).map_err(|e| ToolError::Cli(CliError::Json(e)))
 }
 
+/// `codetopo_metrics` — coupling and cohesion measurements for every
+/// type and package, in the shared shape the CLI's `metrics --json`
+/// and the HTTP metrics route also return.
+fn tool_metrics(args: &Value) -> Result<Value, ToolError> {
+    let graph = open_graph(args)?;
+    Ok(codetopo_cli::metrics_value(&graph))
+}
+
 /// `codetopo_diagnostics` — the diagnostics recorded when the index was
 /// built, in the shared `{total, diagnostics}` shape the CLI's
 /// `diagnostics --json` and the HTTP diagnostics route also return.
@@ -831,9 +853,9 @@ mod tests {
     // -- catalogue ---------------------------------------------------------
 
     #[test]
-    fn catalogue_lists_fifteen_tools() {
+    fn catalogue_lists_sixteen_tools() {
         let catalog = tool_catalog();
-        assert_eq!(catalog.len(), 15, "expected 15 tools: {catalog:?}");
+        assert_eq!(catalog.len(), 16, "expected 16 tools: {catalog:?}");
 
         let names: Vec<&str> = catalog
             .iter()
@@ -853,6 +875,7 @@ mod tests {
                 "codetopo_diagnostics",
                 "codetopo_rank",
                 "codetopo_diff",
+                "codetopo_metrics",
                 "codetopo_neighborhood",
                 "codetopo_get_symbol",
                 "codetopo_search_symbols",
@@ -1209,7 +1232,7 @@ mod tests {
         assert_eq!(response["id"], 7);
         assert_eq!(
             response["result"]["tools"].as_array().expect("tools").len(),
-            15
+            16
         );
     }
 
@@ -1395,6 +1418,22 @@ mod tests {
         let via_tool = result_of("codetopo_rank", &args(&db_path, json!({})));
         assert_eq!(via_tool["metric"], "blast_radius");
         assert!(call_tool("codetopo_rank", &args(&db_path, json!({"by": "nope"}))).is_err());
+    }
+
+    #[test]
+    fn metrics_tool_matches_the_cli_value() {
+        let (_dir, db_path) = fixture_index();
+        let graph = load_graph_from_db(&db_path).expect("graph loads");
+        let via_tool = result_of("codetopo_metrics", &args(&db_path, json!({})));
+        assert_eq!(
+            via_tool,
+            codetopo_cli::metrics_value(&graph),
+            "MCP metrics == CLI metrics for the same database"
+        );
+        assert!(
+            via_tool["methods"]["cbo"].as_str().expect("method").contains("Chidamber"),
+            "the methods travel with the numbers"
+        );
     }
 
     #[test]

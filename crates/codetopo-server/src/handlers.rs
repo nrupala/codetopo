@@ -4,7 +4,7 @@
 
 //! The request handlers of the HTTP API (Phase 2 design §3, extended by
 //! the analytics-depth program: the symbol dossier, the diagnostics read,
-//! the ranking, and the diff).
+//! the ranking, the diff, and the coupling/cohesion metrics).
 //!
 //! This module owns no graph logic. Every route is a transport rename of a
 //! command the CLI already runs: the same `codetopo_core` query answers it, and
@@ -179,6 +179,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/graphs/:id/diagnostics", get(diagnostics))
         .route("/v1/graphs/:id/rank", get(rank))
         .route("/v1/graphs/:id/diff", get(diff))
+        .route("/v1/graphs/:id/metrics", get(metrics))
         .route("/v1/schema", get(schema))
         .route_layer(axum::middleware::from_fn_with_state(
             envelope,
@@ -1096,6 +1097,25 @@ async fn rank(
     let db = state.db_path(&index_id);
     let graph = load_graph_blocking(&db, &index_id)?;
     let mut value = codetopo_cli::rank_value(&graph, metric, limit);
+    value["index_id"] = json!(index_id);
+    Ok(Json(value))
+}
+
+/// `GET /v1/graphs/{id}/metrics` — coupling and cohesion measurements
+/// for every type and package of the index (CODE_SCHEMA §9): CBO, RFC,
+/// LCOM pair counts, TCC, ATFD, WMC per type; Ca, Ce, instability, and
+/// separately-named external coupling per package — each metric's
+/// method stated in the response. The shared
+/// [`codetopo_cli::metrics_value`] shape plus `index_id`.
+async fn metrics(
+    State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
+    UrlPath(index_id): UrlPath<String>,
+) -> Result<Json<Value>, ApiError> {
+    enforce_tenancy(&state, &index_id, &key)?;
+    let db = state.db_path(&index_id);
+    let graph = load_graph_blocking(&db, &index_id)?;
+    let mut value = codetopo_cli::metrics_value(&graph);
     value["index_id"] = json!(index_id);
     Ok(Json(value))
 }

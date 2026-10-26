@@ -115,6 +115,18 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Coupling and cohesion measurements for every type and package:
+    /// CBO, RFC, LCOM pair counts, TCC, ATFD, WMC, and package
+    /// Ca/Ce/instability with external coupling named separately
+    /// (CODE_SCHEMA §9). Measurements with stated methods — no
+    /// thresholds, no verdicts.
+    Metrics {
+        #[arg(long)]
+        db: PathBuf,
+        /// Emit the shared JSON shape ({types, packages, methods}).
+        #[arg(long)]
+        json: bool,
+    },
     /// Compare two indexes (or two snapshot files): added, removed,
     /// and changed nodes and edges, plus the blast-radius movement of
     /// every touched symbol — change-impact analysis (Bohner & Arnold)
@@ -334,6 +346,49 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 println!("method: {}", metric.method());
                 for r in graph.rank(metric, limit) {
                     println!("{}  {}", r.count, r.id);
+                }
+            }
+        }
+        Commands::Metrics { db, json } => {
+            let graph = load_graph_from_db(&db)?;
+            let metrics = graph.metrics();
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&codetopo_cli::metrics_value(&graph))
+                        .expect("metrics serialize")
+                );
+            } else {
+                println!("types: {}", metrics.types.len());
+                for t in &metrics.types {
+                    println!(
+                        "{}: methods {} · cbo {} · rfc {} · atfd {}",
+                        t.id, t.method_count, t.cbo, t.rfc, t.atfd
+                    );
+                    match (t.wmc, t.lcom_sharing_pairs, t.lcom_non_sharing_pairs, t.tcc) {
+                        (wmc, Some(sh), Some(nsh), Some(tcc)) => println!(
+                            "  wmc {} · lcom {sh} sharing / {nsh} non-sharing · tcc {tcc:.2}",
+                            wmc.map(|w| w.to_string()).unwrap_or_else(|| "—".to_string())
+                        ),
+                        (Some(w), None, None, None) => println!("  wmc {w} · cohesion not measured"),
+                        (None, Some(sh), Some(nsh), Some(tcc)) => println!(
+                            "  wmc not measured · lcom {sh} sharing / {nsh} non-sharing · tcc {tcc:.2}"
+                        ),
+                        _ => println!("  wmc not measured · cohesion not measured"),
+                    }
+                }
+                println!("packages: {}", metrics.packages.len());
+                for p in &metrics.packages {
+                    match p.instability {
+                        Some(i) => println!(
+                            "{}: ca {} · ce {} · external-ce {} · instability {i:.2}",
+                            p.id, p.ca, p.ce, p.external_ce
+                        ),
+                        None => println!(
+                            "{}: ca {} · ce {} · external-ce {} · instability not measured",
+                            p.id, p.ca, p.ce, p.external_ce
+                        ),
+                    }
                 }
             }
         }
