@@ -366,11 +366,12 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                         t.id, t.method_count, t.cbo, t.rfc, t.atfd
                     );
                     match (t.wmc, t.lcom_sharing_pairs, t.lcom_non_sharing_pairs, t.tcc) {
-                        (wmc, Some(sh), Some(nsh), Some(tcc)) => println!(
-                            "  wmc {} · lcom {sh} sharing / {nsh} non-sharing · tcc {tcc:.2}",
-                            wmc.map(|w| w.to_string()).unwrap_or_else(|| "—".to_string())
+                        (Some(w), Some(sh), Some(nsh), Some(tcc)) => println!(
+                            "  wmc {w} · lcom {sh} sharing / {nsh} non-sharing · tcc {tcc:.2}"
                         ),
-                        (Some(w), None, None, None) => println!("  wmc {w} · cohesion not measured"),
+                        (Some(w), None, None, None) => {
+                            println!("  wmc {w} · cohesion not measured")
+                        }
                         (None, Some(sh), Some(nsh), Some(tcc)) => println!(
                             "  wmc not measured · lcom {sh} sharing / {nsh} non-sharing · tcc {tcc:.2}"
                         ),
