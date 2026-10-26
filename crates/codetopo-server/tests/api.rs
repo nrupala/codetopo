@@ -1034,6 +1034,35 @@ async fn metrics_route_matches_the_cli_value() {
     );
 }
 
+/// The history route always answers the unmeasured report on the
+/// hosted surface (B0.1: history is a local-surface input; an index
+/// carries none) — measured false, the reason stated, no numbers.
+#[tokio::test]
+async fn history_route_answers_not_measured_on_the_hosted_surface() {
+    let harness = Harness::new();
+    let report = harness.index_fixture().await;
+    let index_id = report["index_id"].as_str().expect("index_id").to_string();
+    let (status, body) = harness.get(&format!("/v1/graphs/{index_id}/history")).await;
+    assert_eq!(status, StatusCode::OK, "history: {body}");
+    assert_eq!(body["measured"], false);
+    assert!(
+        body["reason"]
+            .as_str()
+            .expect("reason")
+            .contains("local surfaces"),
+        "the reason is stated: {body}"
+    );
+    assert_eq!(body["hotspots"].as_array().expect("hotspots").len(), 0);
+    assert_eq!(body["coupling"].as_array().expect("coupling").len(), 0);
+    assert!(
+        body["methods"]["change_coupling"]
+            .as_str()
+            .expect("method")
+            .contains("Zimmermann"),
+        "the methods travel with the answer: {body}"
+    );
+}
+
 /// The diff route over two real indexes created through the API: the
 /// pair differs by one known edit (append `d`, call it from `c`), and
 /// the route's answer is exactly the shared diff object for the two

@@ -357,6 +357,40 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
+      "description": "Hotspots (change frequency x complexity, both factors stated) and change coupling (support/confidence as pair counts) over a local working tree's git history. History is local-only: without repo_path the answer is the unmeasured report (measured: false with the reason), never invented numbers.",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          },
+          "min_support": {
+            "description": "Minimum support for a coupled pair to be reported. Default 2.",
+            "type": "integer"
+          },
+          "repo_path": {
+            "description": "Local working tree whose git history is read. Omit for the unmeasured report.",
+            "type": "string"
+          },
+          "since": {
+            "description": "Only commits since this date (passed to git log --since).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "db_path"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_history",
+      "title": "Change-history measurements (hotspots, change coupling)"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "The subgraph within a few hops of a node, in both directions (contains/defines excluded).",
       "inputSchema": {
         "properties": {

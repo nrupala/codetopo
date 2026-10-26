@@ -925,3 +925,96 @@ fn metrics_end_to_end_two_packages() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// B4 exit proof: a synthetic git history with planted co-changes,
+/// built with real git in a temp tree. a.rs and b.rs change together
+/// in two commits; a.rs changes alone in a third. The pair must come
+/// back with exactly the planted support (2) and confidence (2/3),
+/// the hotspots with the planted factors — and a history-less tree
+/// must answer "not measured".
+#[test]
+fn history_end_to_end_synthetic_git_history() {
+    fn git(repo: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    let dir = workdir("history-e2e");
+    let repo = dir.join("repo");
+    std::fs::create_dir_all(&repo).expect("repo dir");
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["config", "user.email", "fixture@example.com"]);
+    git(&repo, &["config", "user.name", "Fixture"]);
+
+    let a_v1 = "pub fn alpha(x: u32) -> u32 {\n    if x > 0 && x < 10 {\n        return x;\n    }\n    0\n}\n";
+    let b_v1 = "pub fn beta() -> u32 { 7 }\n";
+    std::fs::write(repo.join("a.rs"), a_v1).expect("a v1");
+    std::fs::write(repo.join("b.rs"), b_v1).expect("b v1");
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "c1: a and b"]);
+
+    std::fs::write(repo.join("a.rs"), format!("{a_v1}// c2\n")).expect("a v2");
+    std::fs::write(repo.join("b.rs"), format!("{b_v1}// c2\n")).expect("b v2");
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "c2: a and b again"]);
+
+    std::fs::write(repo.join("a.rs"), format!("{a_v1}// c2\n// c3\n")).expect("a v3");
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "c3: a alone"]);
+
+    let db = dir.join("index.db");
+    index_repo(&repo, &db, "fixture", None, None).expect("index");
+    let graph = load_graph_from_db(&db).expect("load");
+
+    let input = codetopo_cli::repo_history_input(&graph, &repo, None)
+        .expect("the planted history reads");
+    assert_eq!(input.source, "local git history (git log --no-merges)");
+    let value = codetopo_cli::history_value(&graph, Some(input), 2, "");
+    assert_eq!(value["measured"], true);
+    assert_eq!(value["transactions"], 3);
+    assert_eq!(value["window"], "entire recorded history");
+
+    let coupling = value["coupling"].as_array().expect("coupling");
+    assert_eq!(coupling.len(), 1, "exactly the planted pair: {coupling:?}");
+    assert_eq!(coupling[0]["a"], "a.rs");
+    assert_eq!(coupling[0]["b"], "b.rs");
+    assert_eq!(coupling[0]["support"], 2, "planted support");
+    assert_eq!(coupling[0]["either"], 3, "every commit touches a or b");
+    let confidence = coupling[0]["confidence"].as_f64().expect("confidence");
+    assert!((confidence - 2.0 / 3.0).abs() < 1e-9, "planted confidence 2/3, got {confidence}");
+
+    // alpha: if + && = 2 decisions, v = 3. beta: branch-free, v = 1.
+    let hotspots = value["hotspots"].as_array().expect("hotspots");
+    assert_eq!(hotspots.len(), 2);
+    assert_eq!(hotspots[0]["file"], "a.rs");
+    assert_eq!(hotspots[0]["changes"], 3);
+    assert_eq!(hotspots[0]["complexity"], 3);
+    assert_eq!(hotspots[0]["score"], 9, "3 changes x complexity 3");
+    assert_eq!(hotspots[1]["file"], "b.rs");
+    assert_eq!(hotspots[1]["changes"], 2);
+    assert_eq!(hotspots[1]["score"], 2);
+
+    // A tree with no git history answers not measured, with the reason.
+    let plain = dir.join("plain");
+    std::fs::create_dir_all(&plain).expect("plain dir");
+    std::fs::write(plain.join("a.rs"), a_v1).expect("plain a");
+    let err = codetopo_cli::repo_history_input(&graph, &plain, None)
+        .expect_err("no git history in a plain tree");
+    let value = codetopo_cli::history_value(&graph, None, 2, &err);
+    assert_eq!(value["measured"], false);
+    assert!(
+        value["reason"].as_str().expect("reason").contains("no git history"),
+        "the reason is stated: {value}"
+    );
+    assert_eq!(value["hotspots"].as_array().expect("hotspots").len(), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -654,6 +654,38 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '504':
           $ref: '#/components/responses/RequestTimeout'
+  /v1/graphs/{id}/history:
+    get:
+      tags: [query]
+      operationId: history
+      summary: Change-history measurements (hotspots, change coupling).
+      description: |
+        Hotspots and change coupling over the repository's change
+        history (CODE_SCHEMA §9). History is a local-surface input:
+        hosted indexes carry no repository history, so this route
+        always answers the unmeasured report — `measured: false` with
+        the reason stated — never invented numbers. Measure it with the
+        CLI's `history` command or the MCP `codetopo_history` tool
+        against a local working tree.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+      responses:
+        '200':
+          description: The history report (unmeasured on this surface).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/schema:
     get:
       tags: [query]
@@ -1345,6 +1377,64 @@ components:
               external_ce:
                 type: integer
               instability:
+                type: number
+        methods:
+          type: object
+          additionalProperties:
+            type: string
+    HistoryResponse:
+      type: object
+      description: |
+        The change-history report (CODE_SCHEMA §9). On this hosted
+        surface it is always unmeasured (`measured: false`, with
+        `reason`); on local surfaces it carries the window, the source,
+        the transaction count, the hotspot factors and products, and
+        the coupled pairs as support/either counts with confidence.
+      required: [measured, transactions, min_support, hotspots, coupling, methods]
+      properties:
+        index_id:
+          type: string
+        measured:
+          type: boolean
+        reason:
+          type: string
+        source:
+          type: string
+        window:
+          type: string
+        transactions:
+          type: integer
+        min_support:
+          type: integer
+        hotspots:
+          type: array
+          items:
+            type: object
+            required: [file, changes]
+            properties:
+              file:
+                type: string
+              changes:
+                type: integer
+              complexity:
+                type: integer
+              score:
+                type: integer
+        coupling:
+          type: array
+          items:
+            type: object
+            required: [a, b, support, either, confidence]
+            properties:
+              a:
+                type: string
+              b:
+                type: string
+              support:
+                type: integer
+              either:
+                type: integer
+              confidence:
                 type: number
         methods:
           type: object

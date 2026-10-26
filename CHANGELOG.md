@@ -4,6 +4,33 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Analytics depth, Phase B part 4 — change history (local only).**
+  New query: `codetopo history --db … --repo …`, `GET
+  /v1/graphs/{id}/history`, and `codetopo_history` report hotspots
+  (Tornhill 2015: change frequency over a stated window × per-file
+  complexity, both factors and their product always shown) and change
+  coupling (Zimmermann et al. 2005: support and confidence as pair
+  counts, never a bare score; pairs below the stated minimum support
+  are not reported). History is a local-surface input (ruling B0.1):
+  the CLI and the MCP tool read it from a named working tree's git
+  log; hosted indexes carry none, so the HTTP route — and any surface
+  without a history to measure — answers the unmeasured report
+  (`measured: false`, reason stated), never invented numbers. The
+  core computation is a pure function over supplied transactions;
+  repository paths are mapped to the graph's file identity by exact
+  match, else longest known suffix (a packaged file's graph path is
+  package-relative). Proofs: a synthetic git history with planted
+  co-changes returns exactly the planted pair (support 2, confidence
+  2/3) and hotspot factors end-to-end; a planted support-1 pair is
+  correctly not reported in the core fixture; a history-less tree
+  answers "not measured" on the CLI path, and the HTTP and MCP
+  surfaces answer it too. Seventeen HTTP endpoints, seventeen MCP
+  tools; schemas updated with the code. **This completes Phase B** —
+  the native analytics engine: measured fields (schema 1.1),
+  complexity and size, coupling and cohesion, and change history,
+  every metric a measurement with a stated method, on all three
+  surfaces alike.
+
 - **Analytics depth, Phase B part 3 — coupling and cohesion.**
   New query on every surface: `codetopo metrics`, `GET
   /v1/graphs/{id}/metrics`, and `codetopo_metrics` report, per type,
