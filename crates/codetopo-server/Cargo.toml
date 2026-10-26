@@ -1,6 +1,6 @@
 [package]
 name = "codetopo-server"
-version = "0.6.0"
+version = "0.7.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -15,9 +15,9 @@ name = "codetopo-server"
 path = "src/main.rs"
 
 [dependencies]
-codetopo-cli = { version = "0.6.0", path = "../codetopo-cli" }
-codetopo-core = { version = "0.6.0", path = "../codetopo-core" }
-codetopo-store = { version = "0.6.0", path = "../codetopo-store" }
+codetopo-cli = { version = "0.7.0", path = "../codetopo-cli" }
+codetopo-core = { version = "0.7.0", path = "../codetopo-core" }
+codetopo-store = { version = "0.7.0", path = "../codetopo-store" }
 axum = "0.7"
 flate2 = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
