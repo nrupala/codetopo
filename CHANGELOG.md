@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Dependency security update (0.7.0 release-gate fix loop).**
+  `tokio` 1.53.1 → 1.53.3 (RUSTSEC-2026-0386, INFO/unsound:
+  `AsyncFd`'s safe constructors violate I/O safety). No codetopo code
+  calls `AsyncFd`; the bump is Cargo.lock-only, one version line, taken
+  because the gate ships no known-vulnerable dependency. Deliberately
+  pinned to the 1.53 line's patched release rather than 1.54.0, which
+  carries its own advisory (RUSTSEC-2026-0384). Found by the 0.7.0
+  release gate's machine pass; the fixed tree is the gated 0.7.0 tree
+  (tag moved, recorded in the gate pack).
+
 ## [0.7.0] — 2026-10-25
 
 - **Analytics depth, Phase B part 4 — change history (local only).**
