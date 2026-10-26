@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Part of codetopo — Owned by Nrupal Akolkar (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
 
-//! Typed code-entity ontology (CODE_SCHEMA.md §2–§4, spec version 1.0-draft).
+//! Typed code-entity ontology (CODE_SCHEMA.md §2–§4, spec version 1.1).
 //!
 //! This module is the Rust rendering of the binding ontology: every extractor
 //! emits these types, every query reads them, every renderer consumes them.
@@ -165,6 +165,20 @@ pub struct Node {
     /// Symbols referenced here (the marimo contract, verbatim from the extractor).
     #[serde(default)]
     pub refs: Vec<String>,
+    /// Last source line of the declaration (1-based, inclusive) —
+    /// CODE_SCHEMA §3, schema 1.1. An extractor-emitted measurement:
+    /// `None` is *not measured*, never a span of zero. Snapshots written
+    /// before schema 1.1 carry no value here and read as absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
+    /// The declaration text — body and initializer excluded, whitespace
+    /// collapsed (CODE_SCHEMA §3). `None` when not measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Decision points in the symbol's body (CODE_SCHEMA §3.2's
+    /// per-language enumeration). `None` is *not measured*, never zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decisions: Option<u32>,
 }
 
 /// Typed edge — CODE_SCHEMA §4.

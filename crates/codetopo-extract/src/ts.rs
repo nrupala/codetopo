@@ -23,7 +23,7 @@ use tree_sitter::{Node, Parser};
 use codetopo_core::emit::{FileSymbols, RawCall, RawHeritage, RawImport, RawSymbol};
 use codetopo_core::schema::{EdgeKind, NodeKind};
 
-use crate::{children, display_path, line_of, text_of, ExtractError};
+use crate::{children, display_path, line_of, measured_fields, text_of, ExtractError};
 
 /// Extensions the TypeScript grammar strips when computing module ids.
 const STRIP_EXTS: &[&str] = &["d.ts", "ts", "tsx", "js", "jsx", "mts", "cts"];
@@ -281,6 +281,13 @@ impl<'a> Walker<'a> {
     ) {
         self.path.push(name.to_string());
         let id = format!("{}::{}", self.module_id, self.path.join("::"));
+        let (end_line, signature) = measured_fields(node, self.src);
+        let decisions = if matches!(kind, NodeKind::Function | NodeKind::Method) {
+            node.child_by_field_name("body")
+                .map(|b| self.count_decisions(b))
+        } else {
+            None
+        };
         self.symbols.push(RawSymbol {
             id: id.clone(),
             kind,
@@ -290,6 +297,9 @@ impl<'a> Walker<'a> {
             defines,
             refs,
             writes,
+            end_line,
+            signature,
+            decisions,
         });
         self.enclosing.push(id);
         let saved = self.in_assoc;
@@ -302,6 +312,51 @@ impl<'a> Walker<'a> {
         self.in_assoc = saved;
         self.enclosing.pop();
         self.path.pop();
+    }
+
+    /// Count decision points in a body subtree — the TypeScript /
+    /// JavaScript half of the normative enumeration in CODE_SCHEMA
+    /// §3.2 (cyclomatic complexity is decision points + 1; McCabe
+    /// 1976). Nested declarations are pruned: their decisions belong
+    /// to their own symbols. Arrow functions and function expressions
+    /// are *not* declarations — they are descended into, their
+    /// branches counting toward the enclosing symbol.
+    fn count_decisions(&self, node: Node) -> u32 {
+        match node.kind() {
+            "function_declaration" | "generator_function_declaration" | "class_declaration"
+            | "abstract_class_declaration" | "interface_declaration" | "method_definition"
+            | "method_signature" | "enum_declaration" | "type_alias_declaration" => return 0,
+            _ => {}
+        }
+        let mut n = match node.kind() {
+            "if_statement" | "for_statement" | "for_in_statement" | "while_statement"
+            | "do_statement" | "ternary_expression" | "catch_clause" => 1,
+            "switch_statement" => {
+                // Each `case` is one decision against the implicit
+                // fall-through path; `default` is that path and is
+                // not counted. Cases are the switch_body's children.
+                children(node)
+                    .into_iter()
+                    .filter(|c| c.kind() == "switch_body")
+                    .flat_map(children)
+                    .filter(|c| c.kind() == "switch_case")
+                    .count() as u32
+            }
+            "binary_expression" => {
+                match node
+                    .child_by_field_name("operator")
+                    .and_then(|op| text_of(op, self.src))
+                {
+                    Some("&&") | Some("||") | Some("??") => 1,
+                    _ => 0,
+                }
+            }
+            _ => 0,
+        };
+        for child in children(node) {
+            n += self.count_decisions(child);
+        }
+        n
     }
 
     fn handle_declarator(&mut self, node: Node) {
@@ -828,4 +883,126 @@ function bump() { counter = 2; }
             vec![("mypkg::src::card::Card", NodeKind::Function),]
         );
     }
+
+    /// Phase B / B1 conformance fixture: every line number below is
+    /// counted by hand from this literal (line 1 is the `plain` fn).
+    const MEASURED_TS: &str = r#"export function plain(x: number): number {
+  return x + 1;
+}
+
+export function branchy(x: number): number {
+  let total = 0;
+  if (x > 10 && x < 20) {
+    total = 1;
+  } else if (x >= 20) {
+    total = 2;
+  }
+  for (let i = 0; i < x; i++) {
+    total += i;
+  }
+  switch (x) {
+    case 0:
+      return 0;
+    case 1:
+      return 1;
+    default:
+      return total;
+  }
+}
+
+export class Counter {
+  n = 0;
+
+  bump(by: number): number {
+    this.n += by;
+    return this.n;
+  }
+
+  ready(): boolean {
+    return this.n > 0 ? this.n : 0;
+  }
+}
+
+export interface Resettable {
+  reset(): void;
+}
+
+export const LIMIT = 100;
+"#;
+
+    fn measured<'a>(fs: &'a FileSymbols, label: &str) -> &'a RawSymbol {
+        fs.symbols
+            .iter()
+            .find(|s| s.label == label)
+            .unwrap_or_else(|| panic!("symbol {label} extracted"))
+    }
+
+    #[test]
+    fn ts_measured_fields_functions() {
+        let fs = extract_file("mypkg", Path::new("src/measured.ts"), MEASURED_TS).unwrap();
+
+        let plain = measured(&fs, "plain");
+        assert_eq!((plain.line, plain.end_line), (1, Some(3)), "plain span");
+        assert_eq!(
+            plain.signature.as_deref(),
+            Some("function plain(x: number): number")
+        );
+        assert_eq!(plain.decisions, Some(0), "branch-free body counts zero decisions");
+
+        // if(1) + &&(1) + else-if(1) + for(1) + switch 2 cases(2) = 6.
+        let branchy = measured(&fs, "branchy");
+        assert_eq!((branchy.line, branchy.end_line), (5, Some(23)), "branchy span");
+        assert_eq!(branchy.decisions, Some(6), "hand-counted decision points");
+    }
+
+    #[test]
+    fn ts_measured_fields_types_and_declarations() {
+        let fs = extract_file("mypkg", Path::new("src/measured.ts"), MEASURED_TS).unwrap();
+
+        let counter = measured(&fs, "Counter");
+        assert_eq!(counter.kind, NodeKind::Class);
+        assert_eq!((counter.line, counter.end_line), (25, Some(36)), "class span");
+        assert_eq!(counter.signature.as_deref(), Some("class Counter"));
+        assert_eq!(counter.decisions, None, "types carry no decision count");
+
+        let bump = measured(&fs, "bump");
+        assert_eq!(bump.kind, NodeKind::Method);
+        assert_eq!((bump.line, bump.end_line), (28, Some(31)), "method span");
+        assert_eq!(bump.signature.as_deref(), Some("bump(by: number): number"));
+        assert_eq!(bump.decisions, Some(0));
+
+        let ready = measured(&fs, "ready");
+        assert_eq!(ready.decisions, Some(1), "one ternary");
+        assert_eq!(ready.signature.as_deref(), Some("ready(): boolean"));
+
+        let iface = measured(&fs, "Resettable");
+        assert_eq!(iface.kind, NodeKind::Interface);
+        assert_eq!(iface.signature.as_deref(), Some("interface Resettable"));
+        assert_eq!(iface.decisions, None);
+
+        let reset = measured(&fs, "reset");
+        assert_eq!(reset.kind, NodeKind::Method);
+        assert_eq!(reset.signature.as_deref(), Some("reset(): void"));
+        assert_eq!(
+            reset.decisions, None,
+            "a body-less declaration is not measured, never zero"
+        );
+
+        let limit = measured(&fs, "LIMIT");
+        assert_eq!(limit.kind, NodeKind::Variable);
+        assert_eq!((limit.line, limit.end_line), (42, Some(42)), "const span");
+        assert_eq!(limit.signature.as_deref(), Some("LIMIT"));
+        assert_eq!(limit.decisions, None);
+    }
+
+    #[test]
+    fn js_decisions_nullish_and_catch() {
+        let src = "function safeParse(text) {\n  try {\n    return JSON.parse(text) ?? {};\n  } catch (e) {\n    return {};\n  }\n}\n";
+        let fs = extract_file("mypkg", Path::new("src/parse.js"), src).unwrap();
+        let f = measured(&fs, "safeParse");
+        assert_eq!(f.decisions, Some(2), "?? and catch, one each");
+        assert_eq!(f.signature.as_deref(), Some("function safeParse(text)"));
+        assert_eq!((f.line, f.end_line), (1, Some(7)), "span");
+    }
+
 }

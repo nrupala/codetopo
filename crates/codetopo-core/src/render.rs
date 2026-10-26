@@ -433,6 +433,9 @@ mod tests {
                 defines: vec![],
                 refs: vec![],
                 writes: vec![],
+                end_line: None,
+                signature: None,
+                decisions: None,
             })
             .collect();
         let raw_calls = calls

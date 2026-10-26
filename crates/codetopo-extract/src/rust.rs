@@ -19,7 +19,7 @@ use tree_sitter::{Node, Parser};
 use codetopo_core::emit::{FileSymbols, RawCall, RawHeritage, RawImport, RawSymbol};
 use codetopo_core::schema::{EdgeKind, NodeKind};
 
-use crate::{children, display_path, line_of, text_of, ExtractError};
+use crate::{children, display_path, line_of, measured_fields, text_of, ExtractError};
 
 pub(crate) fn extract(
     package: &str,
@@ -277,6 +277,13 @@ impl<'a> Walker<'a> {
     ) {
         self.path.push(name.to_string());
         let id = format!("{}::{}", self.module_id, self.path.join("::"));
+        let (end_line, signature) = measured_fields(node, self.src);
+        let decisions = if matches!(kind, NodeKind::Function | NodeKind::Method) {
+            node.child_by_field_name("body")
+                .map(|b| self.count_decisions(b))
+        } else {
+            None
+        };
         self.symbols.push(RawSymbol {
             id: id.clone(),
             kind,
@@ -286,6 +293,9 @@ impl<'a> Walker<'a> {
             defines,
             refs,
             writes,
+            end_line,
+            signature,
+            decisions,
         });
         self.enclosing.push(id);
         let saved = self.in_assoc;
@@ -334,6 +344,51 @@ impl<'a> Walker<'a> {
         }
         finalize(&mut defines, &mut refs);
         refs
+    }
+
+    /// Count decision points in a body subtree — the Rust half of the
+    /// normative enumeration in CODE_SCHEMA §3.2 (cyclomatic complexity
+    /// is decision points + 1; McCabe 1976). Nested items are pruned:
+    /// their decisions belong to their own symbols. Closures are *not*
+    /// items — they are descended into, their branches counting toward
+    /// the enclosing symbol.
+    fn count_decisions(&self, node: Node) -> u32 {
+        match node.kind() {
+            "function_item" | "function_signature_item" | "struct_item" | "enum_item"
+            | "union_item" | "trait_item" | "impl_item" | "mod_item" | "const_item"
+            | "static_item" | "type_item" => return 0,
+            _ => {}
+        }
+        let mut n = match node.kind() {
+            "if_expression" | "while_expression" | "for_expression" | "loop_expression"
+            | "try_expression" => 1,
+            "match_expression" => {
+                // A k-way match contributes k−1 decisions: every arm
+                // past the first adds one binary branch. Arms are the
+                // match_block's named children.
+                let arms = children(node)
+                    .into_iter()
+                    .filter(|c| c.kind() == "match_block")
+                    .flat_map(children)
+                    .filter(|c| c.kind() == "match_arm")
+                    .count();
+                arms.saturating_sub(1) as u32
+            }
+            "binary_expression" => {
+                match node
+                    .child_by_field_name("operator")
+                    .and_then(|op| text_of(op, self.src))
+                {
+                    Some("&&") | Some("||") => 1,
+                    _ => 0,
+                }
+            }
+            _ => 0,
+        };
+        for child in children(node) {
+            n += self.count_decisions(child);
+        }
+        n
     }
 
     /// Collect identifiers bound by a pattern (`let` patterns, fn params).
@@ -916,4 +971,141 @@ pub const LIMIT: usize = 10;
             vec![("mycrate::m::inner::f", NodeKind::Function),]
         );
     }
+
+    /// Phase B / B1 conformance fixture: every line number below is
+    /// counted by hand from this literal (line 1 is the `plain` fn).
+    const MEASURED_RS: &str = r#"pub fn plain(x: u32) -> u32 {
+    x + 1
+}
+
+pub fn branchy(x: u32) -> u32 {
+    if x > 10 && x < 20 {
+        return 1;
+    }
+    let mut total = 0;
+    for i in 0..x {
+        total += i;
+    }
+    while total > 100 {
+        total -= 10;
+    }
+    match x {
+        0 => 0,
+        1 => 1,
+        _ => total,
+    }
+}
+
+pub fn fallible(x: Option<u32>) -> Option<u32> {
+    let v = x?;
+    if v == 0 { None } else { Some(v) }
+}
+
+pub struct Counter {
+    n: u32,
+}
+
+impl Counter {
+    pub fn bump(&mut self, by: u32) -> u32 {
+        self.n += by;
+        self.n
+    }
+}
+
+pub trait Reset {
+    fn reset(&mut self);
+}
+
+pub const LIMIT: u32 = 100;
+"#;
+
+    fn measured<'a>(fs: &'a FileSymbols, label: &str) -> &'a RawSymbol {
+        fs.symbols
+            .iter()
+            .find(|s| s.label == label)
+            .unwrap_or_else(|| panic!("symbol {label} extracted"))
+    }
+
+    #[test]
+    fn rust_measured_fields_functions() {
+        let fs = extract_file("mycrate", Path::new("src/measured.rs"), MEASURED_RS).unwrap();
+
+        let plain = measured(&fs, "plain");
+        assert_eq!((plain.line, plain.end_line), (1, Some(3)), "plain span");
+        assert_eq!(plain.signature.as_deref(), Some("pub fn plain(x: u32) -> u32"));
+        assert_eq!(plain.decisions, Some(0), "branch-free body counts zero decisions");
+
+        // if(1) + &&(1) + for(1) + while(1) + match 3 arms -> 2 = 6.
+        let branchy = measured(&fs, "branchy");
+        assert_eq!((branchy.line, branchy.end_line), (5, Some(21)), "branchy span");
+        assert_eq!(branchy.signature.as_deref(), Some("pub fn branchy(x: u32) -> u32"));
+        assert_eq!(branchy.decisions, Some(6), "hand-counted decision points");
+
+        // ?(1) + if(1) = 2.
+        let fallible = measured(&fs, "fallible");
+        assert_eq!((fallible.line, fallible.end_line), (23, Some(26)), "fallible span");
+        assert_eq!(fallible.decisions, Some(2), "? and if");
+    }
+
+    #[test]
+    fn rust_measured_fields_types_and_declarations() {
+        let fs = extract_file("mycrate", Path::new("src/measured.rs"), MEASURED_RS).unwrap();
+
+        let counter = measured(&fs, "Counter");
+        assert_eq!(counter.kind, NodeKind::Class);
+        assert_eq!((counter.line, counter.end_line), (28, Some(30)), "struct span");
+        assert_eq!(counter.signature.as_deref(), Some("pub struct Counter"));
+        assert_eq!(counter.decisions, None, "types carry no decision count");
+
+        let bump = measured(&fs, "bump");
+        assert_eq!(bump.kind, NodeKind::Method);
+        assert_eq!((bump.line, bump.end_line), (33, Some(36)), "method span");
+        assert_eq!(
+            bump.signature.as_deref(),
+            Some("pub fn bump(&mut self, by: u32) -> u32")
+        );
+        assert_eq!(bump.decisions, Some(0));
+
+        let reset_trait = measured(&fs, "Reset");
+        assert_eq!(reset_trait.kind, NodeKind::Interface);
+        assert_eq!(reset_trait.signature.as_deref(), Some("pub trait Reset"));
+        assert_eq!(reset_trait.decisions, None);
+
+        let reset = measured(&fs, "reset");
+        assert_eq!(reset.kind, NodeKind::Method);
+        assert_eq!(reset.signature.as_deref(), Some("fn reset(&mut self)"));
+        assert_eq!(
+            reset.decisions, None,
+            "a body-less declaration is not measured, never zero"
+        );
+
+        let limit = measured(&fs, "LIMIT");
+        assert_eq!(limit.kind, NodeKind::Variable);
+        assert_eq!((limit.line, limit.end_line), (43, Some(43)), "const span");
+        assert_eq!(limit.signature.as_deref(), Some("pub const LIMIT: u32"));
+        assert_eq!(limit.decisions, None);
+    }
+
+    #[test]
+    fn rust_decisions_closures_count_nested_items_do_not() {
+        let src = r#"pub fn outer(xs: &[u32]) -> u32 {
+    let f = |v: u32| if v > 0 { v } else { 0 };
+    fn inner() -> u32 {
+        if true { 1 } else { 2 }
+    }
+    f(xs.len() as u32) + inner()
+}
+"#;
+        let fs = extract_file("mycrate", Path::new("src/m.rs"), src).unwrap();
+        let outer = measured(&fs, "outer");
+        assert_eq!(
+            outer.decisions,
+            Some(1),
+            "the closure's if counts toward outer; the nested fn's if does not"
+        );
+        let inner = measured(&fs, "inner");
+        assert_eq!(inner.id, "mycrate::m::outer::inner");
+        assert_eq!(inner.decisions, Some(1), "nested item measured on its own symbol");
+    }
+
 }

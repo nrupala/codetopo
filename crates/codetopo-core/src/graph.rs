@@ -161,6 +161,9 @@ impl GraphBuilder {
             tier: tier_for(NodeKind::Package),
             defines: Vec::new(),
             refs: Vec::new(),
+            end_line: None,
+            signature: None,
+            decisions: None,
         });
         self.module_package.entry(module_id.clone()).or_insert_with(|| package.clone());
         self.ensure_node(Node {
@@ -171,6 +174,9 @@ impl GraphBuilder {
             tier: tier_for(NodeKind::Module),
             defines: Vec::new(),
             refs: Vec::new(),
+            end_line: None,
+            signature: None,
+            decisions: None,
         });
         self.ensure_node(Node {
             id: file_id.clone(),
@@ -180,6 +186,9 @@ impl GraphBuilder {
             tier: tier_for(NodeKind::File),
             defines: Vec::new(),
             refs: Vec::new(),
+            end_line: None,
+            signature: None,
+            decisions: None,
         });
 
         // A package's root module shares the package's id (extractors
@@ -229,6 +238,9 @@ impl GraphBuilder {
                 tier: tier_for(s.kind),
                 defines: s.defines.clone(),
                 refs: s.refs.clone(),
+                end_line: s.end_line,
+                signature: s.signature.clone(),
+                decisions: s.decisions,
             });
             self.push_edge(Edge {
                 from: file_id.clone(),
@@ -793,6 +805,9 @@ impl GraphBuilder {
                     tier: Tier::Optional,
                     defines: Vec::new(),
                     refs: Vec::new(),
+                    end_line: None,
+                    signature: None,
+                    decisions: None,
                 },
             );
         }
@@ -1122,6 +1137,9 @@ mod tests {
             defines: Vec::new(),
             refs: Vec::new(),
             writes: Vec::new(),
+            end_line: None,
+            signature: None,
+            decisions: None,
         }
     }
 
@@ -1720,7 +1738,7 @@ mod tests {
             hash: "audit-head-123".to_string(),
         }];
         let snap = Snapshot::from_graph(&g, &entries);
-        assert_eq!(snap.schema_version, "1.0-draft");
+        assert_eq!(snap.schema_version, "1.1");
         assert_eq!(snap.audit_log, entries);
         let json = snap.to_json_pretty().expect("serialize");
         let snap2 = Snapshot::from_json(&json).expect("deserialize");

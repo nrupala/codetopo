@@ -69,7 +69,10 @@ CREATE TABLE IF NOT EXISTS nodes(
     col INTEGER,
     tier TEXT NOT NULL,
     defines_json TEXT NOT NULL,
-    refs_json TEXT NOT NULL
+    refs_json TEXT NOT NULL,
+    end_line INTEGER,
+    signature TEXT,
+    decisions INTEGER
 );
 CREATE TABLE IF NOT EXISTS edges(
     from_id TEXT NOT NULL,
@@ -138,6 +141,32 @@ fn init_format_version(conn: &rusqlite::Connection) -> Result<(), StoreError> {
     }
     if v < STORE_FORMAT_VERSION {
         conn.execute_batch(&format!("PRAGMA user_version = {STORE_FORMAT_VERSION}"))?;
+    }
+    Ok(())
+}
+
+/// Additive column migration for the measured node fields (CODE_SCHEMA
+/// 1.1: `end_line`, `signature`, `decisions`). Databases written before
+/// 1.1 have a `nodes` table without these columns; the `CREATE TABLE IF
+/// NOT EXISTS` above cannot add columns to an existing table, so they
+/// are added here, once, when missing. The change is backward-compatible
+/// in both directions — older builds name their columns explicitly and
+/// ignore the new ones, newer builds read NULL as *not measured* — so
+/// `STORE_FORMAT_VERSION` does not move.
+fn migrate_nodes_columns(conn: &rusqlite::Connection) -> Result<(), StoreError> {
+    let mut stmt = conn.prepare("PRAGMA table_info(nodes)")?;
+    let existing: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+    for (name, ddl) in [
+        ("end_line", "INTEGER"),
+        ("signature", "TEXT"),
+        ("decisions", "INTEGER"),
+    ] {
+        if !existing.iter().any(|c| c == name) {
+            conn.execute(&format!("ALTER TABLE nodes ADD COLUMN {name} {ddl}"), [])?;
+        }
     }
     Ok(())
 }
@@ -460,6 +489,7 @@ impl Store {
         }
         let conn = rusqlite::Connection::open(path)?;
         conn.execute_batch(SCHEMA_SQL)?;
+        migrate_nodes_columns(&conn)?;
         seed_meta(&conn)?;
         init_format_version(&conn)?;
         Ok(Store { conn })
@@ -470,6 +500,7 @@ impl Store {
     pub fn open_in_memory() -> Result<Self, StoreError> {
         let conn = rusqlite::Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA_SQL)?;
+        migrate_nodes_columns(&conn)?;
         seed_meta(&conn)?;
         init_format_version(&conn)?;
         Ok(Store { conn })
@@ -513,8 +544,8 @@ impl Store {
         let mut stats = InsertStats { nodes: 0, edges: 0 };
         {
             let mut st = tx.prepare(
-                "INSERT INTO nodes(id, kind, label, file, line, col, tier, defines_json, refs_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO nodes(id, kind, label, file, line, col, tier, defines_json, refs_json, end_line, signature, decisions)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             )?;
             for node in graph.nodes() {
                 stats.nodes += st.execute(rusqlite::params![
@@ -527,6 +558,9 @@ impl Store {
                     tier_str(node.tier),
                     serde_json::to_string(&node.defines)?,
                     serde_json::to_string(&node.refs)?,
+                    node.end_line.map(|c| c as i64),
+                    node.signature,
+                    node.decisions.map(|c| c as i64),
                 ])?;
             }
         }
@@ -577,8 +611,8 @@ impl Store {
             let mut n = 0usize;
             {
                 let mut st = tx.prepare(
-                    "INSERT OR IGNORE INTO nodes(id, kind, label, file, line, col, tier, defines_json, refs_json)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    "INSERT OR IGNORE INTO nodes(id, kind, label, file, line, col, tier, defines_json, refs_json, end_line, signature, decisions)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 )?;
                 for node in graph.nodes().skip(done).take(CHUNK_ROWS) {
                     stats.nodes += st.execute(rusqlite::params![
@@ -591,6 +625,9 @@ impl Store {
                         tier_str(node.tier),
                         serde_json::to_string(&node.defines)?,
                         serde_json::to_string(&node.refs)?,
+                        node.end_line.map(|c| c as i64),
+                        node.signature,
+                        node.decisions.map(|c| c as i64),
                     ])?;
                     n += 1;
                 }
@@ -678,7 +715,7 @@ impl Store {
     /// Look up one node by id. `Ok(None)` when the id is not stored.
     pub fn get_node(&self, id: &str) -> Result<Option<Node>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, kind, label, file, line, col, tier, defines_json, refs_json
+            "SELECT id, kind, label, file, line, col, tier, defines_json, refs_json, end_line, signature, decisions
              FROM nodes WHERE id = ?1",
         )?;
         let mut rows = stmt.query([id])?;
@@ -701,7 +738,7 @@ impl Store {
     /// rebuild via `Snapshot::to_graph()`.
     pub fn load_graph(&self) -> Result<Graph, StoreError> {
         let mut ns = self.conn.prepare(
-            "SELECT id, kind, label, file, line, col, tier, defines_json, refs_json
+            "SELECT id, kind, label, file, line, col, tier, defines_json, refs_json, end_line, signature, decisions
              FROM nodes ORDER BY id",
         )?;
         let nodes: Vec<Node> = ns
@@ -819,6 +856,9 @@ fn node_from_row(row: &rusqlite::Row<'_>) -> Result<Node, rusqlite::Error> {
         tier: parse_tier(&tier_s).map_err(|e| conv_err(6, e))?,
         defines: serde_json::from_str(&defines_s).map_err(|e| conv_err(7, e))?,
         refs: serde_json::from_str(&refs_s).map_err(|e| conv_err(8, e))?,
+        end_line: row.get::<_, Option<i64>>(9)?.map(|c| c as u32),
+        signature: row.get(10)?,
+        decisions: row.get::<_, Option<i64>>(11)?.map(|c| c as u32),
     })
 }
 
@@ -856,6 +896,9 @@ mod tests {
             defines: Vec::new(),
             refs: Vec::new(),
             writes: Vec::new(),
+            end_line: None,
+            signature: None,
+            decisions: None,
         }
     }
 
@@ -1164,4 +1207,72 @@ mod tests {
         }
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    /// B1 migration proof: a database written with the pre-1.1 nodes
+    /// layout (no measured-field columns) opens, keeps its rows —
+    /// measurements absent, never zero — and then stores and reloads
+    /// measured nodes through the migrated schema. The store format
+    /// version does not move.
+    #[test]
+    fn pre_1_1_database_migrates_and_keeps_measurements() {
+        let dir = std::env::temp_dir().join(format!(
+            "codetopo-store-migrate-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("old.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE nodes(
+                     id TEXT PRIMARY KEY, kind TEXT NOT NULL, label TEXT NOT NULL,
+                     file TEXT NOT NULL, line INTEGER NOT NULL, col INTEGER,
+                     tier TEXT NOT NULL, defines_json TEXT NOT NULL,
+                     refs_json TEXT NOT NULL);
+                 INSERT INTO nodes VALUES(
+                     'pkg::m::old', 'function', 'old', 'src/m.rs', 1, NULL,
+                     'optional', '[]', '[]');",
+            )
+            .unwrap();
+        }
+
+        let mut store = Store::open(&path).unwrap();
+        let old = store
+            .get_node("pkg::m::old")
+            .unwrap()
+            .expect("pre-1.1 row survives the migration");
+        assert_eq!(old.end_line, None);
+        assert_eq!(old.signature, None);
+        assert_eq!(old.decisions, None);
+
+        // A measured symbol round-trips through the migrated database.
+        let mut measured_sym = sym("pkg::m::f", NodeKind::Function, 3);
+        measured_sym.end_line = Some(9);
+        measured_sym.signature = Some("pub fn f(x: u32) -> u32".to_string());
+        measured_sym.decisions = Some(4);
+        let mut builder = GraphBuilder::new();
+        builder.add_file(FileSymbols {
+            package: "pkg".to_string(),
+            file: "src/m.rs".to_string(),
+            module_id: "pkg::m".to_string(),
+            symbols: vec![measured_sym],
+            imports: vec![],
+            calls: vec![],
+            heritage: vec![],
+        });
+        let (graph, _diags) = builder.build();
+        store.replace_graph(&graph).unwrap();
+        let loaded = store.load_graph().unwrap();
+        let f = loaded
+            .nodes()
+            .find(|n| n.id == "pkg::m::f")
+            .expect("measured node reloads");
+        assert_eq!(f.end_line, Some(9));
+        assert_eq!(f.signature.as_deref(), Some("pub fn f(x: u32) -> u32"));
+        assert_eq!(f.decisions, Some(4));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
 }

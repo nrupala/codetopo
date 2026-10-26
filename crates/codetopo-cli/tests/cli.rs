@@ -320,7 +320,7 @@ fn restore_schema_major_rule() {
     let text = std::fs::read_to_string(&snap).expect("read snapshot");
 
     let snap2 = workdir.join("snap-v2.json");
-    std::fs::write(&snap2, text.replace("1.0-draft", "2.0")).expect("write v2 snapshot");
+    std::fs::write(&snap2, text.replace("1.1", "2.0")).expect("write v2 snapshot");
     let db2 = workdir.join("v2.db");
     let err = restore_snapshot(&snap2, &db2, None, true)
         .expect_err("schema major 2 must be rejected");
@@ -330,7 +330,7 @@ fn restore_schema_major_rule() {
     );
 
     let snap19 = workdir.join("snap-v19.json");
-    std::fs::write(&snap19, text.replace("1.0-draft", "1.9")).expect("write v1.9 snapshot");
+    std::fs::write(&snap19, text.replace("1.1", "1.9")).expect("write v1.9 snapshot");
     let db19 = workdir.join("v19.db");
     restore_snapshot(&snap19, &db19, None, true)
         .expect("same-major snapshot restores on the explicit unverified path");
@@ -454,7 +454,7 @@ fn discovery_commands_and_json_output() {
     assert!(out.status.success());
     let value: serde_json::Value =
         serde_json::from_slice(&out.stdout).expect("schema --json is JSON");
-    assert_eq!(value["schema_version"], "1.0-draft");
+    assert_eq!(value["schema_version"], "1.1");
     assert!(value["node_kinds"].as_array().expect("kinds").iter().any(|k| k == "function"));
 
     let out = run(&["stats", "--json"]);
