@@ -1,6 +1,6 @@
-// Copyright (C) 2026 Nrupal Akolkar
+// Copyright (C) 2026 2351485 ALBERTA INC.
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Part of codetopo — Owned by Nrupal Akolkar (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
+// Part of codetopo — Owned by 2351485 ALBERTA INC. (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
 
 //! JSON snapshot pathway (CODE_SCHEMA §7: JSON is the universal export
 //! pathway). A snapshot is the frozen, portable form of a [`Graph`]: nodes,

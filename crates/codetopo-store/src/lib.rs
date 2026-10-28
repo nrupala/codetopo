@@ -1,6 +1,6 @@
-// Copyright (C) 2026 Nrupal Akolkar
+// Copyright (C) 2026 2351485 ALBERTA INC.
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Part of codetopo — Owned by Nrupal Akolkar (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
+// Part of codetopo — Owned by 2351485 ALBERTA INC. (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
 
 //! codetopo-store — SQLite persistence for codetopo (Phase 1, worker W4).
 //!
@@ -15,7 +15,7 @@
 //!   the graph can be bound to the log head, and the log's integrity is
 //!   independently verifiable.
 //!
-//! Owned by Nrupal Akolkar (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
+//! Owned by 2351485 ALBERTA INC. (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
 
 use std::path::Path;
 
