@@ -10,7 +10,7 @@ Domain-blind code graphs for AI agents: symbols, calls, blast radius, proof-chec
 
 See your codebase the way an agent sees it. codetopo turns a source repository into a queryable code graph — symbols, calls, references, and structure — with JSON answers an AI coding agent can act on directly.
 
-codetopo is a local stdio MCP server written in Rust. It exposes 12 tools: `codetopo_index`, `codetopo_descendants`, `codetopo_ancestors`, `codetopo_blast_radius`, `codetopo_path`, `codetopo_stats`, `codetopo_verify`, `codetopo_snapshot`, `codetopo_search_symbols`, `codetopo_get_symbol`, `codetopo_neighborhood`, and `codetopo_describe_schema`. Indexes stay on your machine; there are no accounts and no telemetry.
+codetopo is a local stdio MCP server written in Rust. It exposes 17 tools: `codetopo_index`, `codetopo_descendants`, `codetopo_ancestors`, `codetopo_blast_radius`, `codetopo_path`, `codetopo_stats`, `codetopo_verify`, `codetopo_snapshot`, `codetopo_search_symbols`, `codetopo_get_symbol`, `codetopo_neighborhood`, `codetopo_diagnostics`, `codetopo_rank`, `codetopo_diff`, `codetopo_metrics`, `codetopo_history`, and `codetopo_describe_schema`. Indexes stay on your machine; there are no accounts and no telemetry.
 
 ## Setup Requirements
 
