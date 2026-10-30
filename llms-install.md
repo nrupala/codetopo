@@ -10,7 +10,7 @@ codetopo turns a source repository into a queryable code graph — symbols,
 calls, imports, and structure — and answers structural questions as JSON:
 what calls this function, what breaks if it changes, how two modules
 connect. The MCP server (`codetopo-mcp`) is a stdio JSON-RPC server
-exposing 12 tools over the same engine as the codetopo CLI and HTTP API.
+exposing 17 tools over the same engine as the codetopo CLI and HTTP API.
 Indexes are local SQLite databases; nothing leaves the machine.
 
 ## Prerequisites
@@ -70,7 +70,7 @@ JSON-RPC calls.
 3. Call `codetopo_stats` against that index — totals should match the
    index report.
 
-## The 12 tools
+## The 17 tools
 
 | Tool | What it answers |
 |---|---|
@@ -85,6 +85,11 @@ JSON-RPC calls.
 | `codetopo_stats` | Node and edge totals for an index, with per-kind breakdowns |
 | `codetopo_verify` | Verify the index's tamper-evident (hash-chained) audit log |
 | `codetopo_snapshot` | Export the whole graph as a portable snapshot bound to the audit head |
+| `codetopo_diagnostics` | The diagnostics recorded at index time — dependency cycles, multi-definitions, unresolved calls — as data |
+| `codetopo_rank` | Top symbols by fan-in, fan-out, blast-radius size, or cyclomatic complexity — counts with the method stated |
+| `codetopo_diff` | Compare two indexes or snapshots: added, removed, and changed nodes and edges, plus blast-radius movement |
+| `codetopo_metrics` | Coupling and cohesion per type and package: CBO, RFC, LCOM, TCC, ATFD, WMC; Ca, Ce, instability |
+| `codetopo_history` | Hotspots (change frequency × complexity) and change coupling from a local tree's git history; answers "not measured" without one |
 | `codetopo_describe_schema` | The schema this server speaks; needs no database |
 
 ## Notes

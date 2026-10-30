@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Listing copy corrected to seventeen tools.** The launch guide, the
+  Gemini extension manifest, and the agent install guide still described
+  the twelve tools of an older release; they now name all seventeen MCP
+  tools, including `codetopo_diagnostics`, `codetopo_rank`,
+  `codetopo_diff`, `codetopo_metrics`, and `codetopo_history`. Docs
+  only — no code changed.
+
 - **Dependency security update (0.7.0 release-gate fix loop).**
   `tokio` 1.53.1 → 1.53.3 (RUSTSEC-2026-0386, INFO/unsound:
   `AsyncFd`'s safe constructors violate I/O safety). No codetopo code
