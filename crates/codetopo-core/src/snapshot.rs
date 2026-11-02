@@ -19,7 +19,7 @@ use crate::schema::{Edge, EdgeKind, Node};
 /// measured fields of CODE_SCHEMA §3 (end line, signature, decision
 /// counts) — additive, so 1.0 snapshots still read, their nodes simply
 /// carry no measurements.
-pub const SCHEMA_VERSION: &str = "1.1";
+pub const SCHEMA_VERSION: &str = "1.2";
 
 /// Portable frozen graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

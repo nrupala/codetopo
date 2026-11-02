@@ -35,7 +35,10 @@ use std::path::Path;
 use codetopo_core::emit::{FileSymbols, RawCall, RawHeritage, RawImport, RawSymbol};
 use codetopo_core::schema::{EdgeKind, NodeKind};
 
-use crate::{display_path, line_of, text_of, ExtractError};
+use crate::{
+    children, display_path, end_line_of, line_of, measured_fields, signature_of, text_of,
+    ExtractError,
+};
 
 type Node<'a> = tree_sitter::Node<'a>;
 
@@ -237,7 +240,10 @@ impl<'a> Walker<'a> {
     }
 
     /// Push a symbol record; the caller walks the body for nested
-    /// symbols between `push_symbol` and `pop_symbol`.
+    /// symbols between `push_symbol` and `pop_symbol`. The measured
+    /// fields are computed by the caller (they differ per symbol
+    /// kind — §3.7) and passed in.
+    #[allow(clippy::too_many_arguments)]
     fn push_symbol(
         &mut self,
         kind: NodeKind,
@@ -246,6 +252,9 @@ impl<'a> Walker<'a> {
         defines: Vec<String>,
         refs: Vec<String>,
         writes: Vec<String>,
+        end_line: Option<u32>,
+        signature: Option<String>,
+        decisions: Option<u32>,
     ) {
         self.path.push(name.to_string());
         let id = format!("{}::{}", self.module_id, self.path.join("::"));
@@ -255,9 +264,9 @@ impl<'a> Walker<'a> {
             label: name.to_string(),
             line: line_of(node),
             column: None,
-            end_line: None,
-            signature: None,
-            decisions: None,
+            end_line,
+            signature,
+            decisions,
             defines,
             refs,
             writes,
@@ -298,7 +307,19 @@ impl<'a> Walker<'a> {
         if let Some(p) = node.child_by_field_name("parameters") {
             self.walk_children(p);
         }
-        self.push_symbol(kind, &name, node, defines, refs, writes);
+        let (end_line, signature) = py_measured(node, self.src);
+        let decisions = node.child_by_field_name("body").map(count_decisions);
+        self.push_symbol(
+            kind,
+            &name,
+            node,
+            defines,
+            refs,
+            writes,
+            end_line,
+            signature,
+            decisions,
+        );
         let prev_class = self.in_class;
         self.in_class = false;
         if let Some(body) = node.child_by_field_name("body") {
@@ -344,7 +365,18 @@ impl<'a> Walker<'a> {
         let body = node.child_by_field_name("body");
         let mut refs = body.map(|b| body_refs(b, self.src)).unwrap_or_default();
         self.take_pending_refs(&mut refs, &[]);
-        self.push_symbol(kind, &name, node, Vec::new(), refs, Vec::new());
+        let (end_line, signature) = py_measured(node, self.src);
+        self.push_symbol(
+            kind,
+            &name,
+            node,
+            Vec::new(),
+            refs,
+            Vec::new(),
+            end_line,
+            signature,
+            None,
+        );
         let prev_class = self.in_class;
         self.in_class = true;
         if let Some(b) = body {
@@ -366,7 +398,18 @@ impl<'a> Walker<'a> {
         }
         let mut refs: Vec<String> = set.into_iter().collect();
         refs.sort();
-        self.push_symbol(NodeKind::Class, &name, node, Vec::new(), refs, Vec::new());
+        let (end_line, signature) = py_measured(node, self.src);
+        self.push_symbol(
+            NodeKind::Class,
+            &name,
+            node,
+            Vec::new(),
+            refs,
+            Vec::new(),
+            end_line,
+            signature,
+            None,
+        );
         self.pop_symbol();
     }
 
@@ -392,6 +435,12 @@ impl<'a> Walker<'a> {
                     }
                     let mut refs: Vec<String> = set.into_iter().collect();
                     refs.sort();
+                    // The variable's signature cut is the assignment's
+                    // `right` field — Python's field name, which the
+                    // shared measured_fields does not look for (§3.7):
+                    // the initializer never appears (`X: int`, never
+                    // `X: int = 3`).
+                    let signature = signature_of(node, right, self.src);
                     self.push_symbol(
                         NodeKind::Variable,
                         &name,
@@ -399,6 +448,9 @@ impl<'a> Walker<'a> {
                         Vec::new(),
                         refs,
                         Vec::new(),
+                        Some(end_line_of(node)),
+                        signature,
+                        None,
                     );
                     self.pop_symbol();
                 }
@@ -581,6 +633,65 @@ fn base_name(node: Node, src: &[u8]) -> Option<String> {
             .and_then(|v| base_name(v, src)),
         _ => None,
     }
+}
+
+/// (end_line, signature) for a definition node, via the shared
+/// measured-fields helper — plus one Python adjustment: a def/class
+/// header ends with a colon the shared strip set does not cover, so
+/// a single trailing `:` is removed (`def f(x) -> int`, not
+/// `def f(x) -> int:`).
+fn py_measured(node: Node, src: &[u8]) -> (Option<u32>, Option<String>) {
+    let (end_line, signature) = measured_fields(node, src);
+    let signature = signature.map(|sig| match sig.strip_suffix(':') {
+        Some(stripped) => stripped.trim_end().to_string(),
+        None => sig,
+    });
+    (end_line, signature)
+}
+
+/// Decision points in a body, per the Python enumeration of
+/// CODE_SCHEMA §3.2 (spec §3.7): if +1, each elif +1; for/while +1;
+/// each except clause +1; conditional expression +1; each boolean
+/// operator +1; comprehension for/if clauses +1 each; match
+/// contributes (cases − 1) with guards not counted. Nested
+/// declarations are pruned — their decisions belong to their own
+/// symbols; lambdas and comprehensions are descended into.
+fn count_decisions(node: Node) -> u32 {
+    match node.kind() {
+        "function_definition" | "class_definition" | "decorated_definition" => return 0,
+        _ => {}
+    }
+    let mut n = match node.kind() {
+        "if_statement" | "elif_clause" | "for_statement" | "while_statement" | "except_clause"
+        | "conditional_expression" | "boolean_operator" | "for_in_clause" | "if_clause" => 1,
+        "match_statement" => node
+            .child_by_field_name("body")
+            .map(|b| {
+                children(b)
+                    .iter()
+                    .filter(|c| c.kind() == "case_clause")
+                    .count() as u32
+            })
+            .unwrap_or(0)
+            .saturating_sub(1),
+        _ => 0,
+    };
+    let guard = if node.kind() == "case_clause" {
+        node.child_by_field_name("guard")
+    } else {
+        None
+    };
+    for child in children(node) {
+        // A case guard is an if_clause node but is NOT counted
+        // (spec §3.7 — the switch-cases precedent).
+        if let Some(g) = guard {
+            if g.id() == child.id() {
+                continue;
+            }
+        }
+        n += count_decisions(child);
+    }
+    n
 }
 
 /// Accumulators for the defines/refs/writes scan.
@@ -1189,6 +1300,99 @@ class Wrapped(Base):
         // interfaces (D2); the detection is name-based.
         assert_eq!(m["engine::core::engine::Shape"].kind, NodeKind::Interface);
         assert_eq!(m["engine::core::engine::TypedShape"].kind, NodeKind::Interface);
+    }
+
+    // MEASURED_PY — the hand-counted measured-fields fixture (spec
+    // §3.7, the MEASURED_TS pattern). Line numbers count the fixture
+    // as written: line 1 is blank, `LIMIT` is line 2, `PLAIN` line 3,
+    // `class C` line 5, `def classify` line 8 with its body ending at
+    // line 14, `async def fetch` line 16, `def tally` line 19,
+    // `def pick` line 36, `def stub` line 45.
+    const MEASURED_PY: &str = r#"
+LIMIT: int = 10
+PLAIN = 5
+
+class C(Base, metaclass=M):
+    pass
+
+def classify(n, flag) -> str:
+    if n < 0:
+        return "neg"
+    elif n == 0:
+        return "zero"
+    else:
+        return "pos"
+
+async def fetch(url):
+    return url
+
+def tally(items):
+    s = 0
+    for it in items:
+        s += it
+    while s > 100:
+        s -= 10
+    try:
+        risky(s)
+    except ValueError:
+        s = -1
+    except TypeError:
+        s = -2
+    label = "big" if s > 50 else "small"
+    both = check(s) and other(s) or third(s)
+    squares = [x * x for x in items if x > 0]
+    return label
+
+def pick(kind):
+    match kind:
+        case 1:
+            return "one"
+        case 2 if kind > 0:
+            return "two"
+        case _:
+            return "other"
+
+def stub(x) -> int: ...
+"#;
+
+    #[test]
+    fn py_measured_fields_hand_counted() {
+        let fs = run("measured.py", MEASURED_PY);
+        let m = by_id(&fs);
+        // Variables: the initializer never appears in the signature.
+        let limit = m["engine::measured::LIMIT"];
+        assert_eq!(limit.signature.as_deref(), Some("LIMIT: int"));
+        assert_eq!(limit.end_line, Some(2));
+        assert_eq!(limit.decisions, None);
+        assert_eq!(m["engine::measured::PLAIN"].signature.as_deref(), Some("PLAIN"));
+        // Class header, bases and keyword bases included, colon cut.
+        let c = m["engine::measured::C"];
+        assert_eq!(c.signature.as_deref(), Some("class C(Base, metaclass=M)"));
+        assert_eq!(c.end_line, Some(6));
+        // classify: if +1, elif +1 → 2 decisions; span lines 8–14.
+        let classify = m["engine::measured::classify"];
+        assert_eq!(
+            classify.signature.as_deref(),
+            Some("def classify(n, flag) -> str")
+        );
+        assert_eq!(classify.line, 8);
+        assert_eq!(classify.end_line, Some(14));
+        assert_eq!(classify.decisions, Some(2));
+        // async keeps its prefix verbatim (D4); branch-free → 0.
+        let fetch = m["engine::measured::fetch"];
+        assert_eq!(fetch.signature.as_deref(), Some("async def fetch(url)"));
+        assert_eq!(fetch.decisions, Some(0));
+        // tally: for 1 + while 1 + except 2 + conditional 1
+        //        + boolean operators 2 (and, or)
+        //        + comprehension for 1 + comprehension if 1 = 9.
+        assert_eq!(m["engine::measured::tally"].decisions, Some(9));
+        // pick: match with 3 cases → 3 − 1 = 2; the case guard
+        // (`if kind > 0`, an if_clause node) is NOT counted.
+        assert_eq!(m["engine::measured::pick"].decisions, Some(2));
+        // A stub body counts 0 — measured, not absent.
+        let stub = m["engine::measured::stub"];
+        assert_eq!(stub.signature.as_deref(), Some("def stub(x) -> int"));
+        assert_eq!(stub.decisions, Some(0));
     }
 }
 
