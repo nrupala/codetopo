@@ -1,0 +1,123 @@
+{
+  "schema_version": "1.2",
+  "nodes": [
+    {
+      "id": "app",
+      "kind": "function",
+      "label": "app",
+      "loc": {
+        "file": "cycle-trap.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "lib",
+      "kind": "function",
+      "label": "lib",
+      "loc": {
+        "file": "cycle-trap.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "mid",
+      "kind": "function",
+      "label": "mid",
+      "loc": {
+        "file": "cycle-trap.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "x",
+      "kind": "function",
+      "label": "x",
+      "loc": {
+        "file": "cycle-trap.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "y",
+      "kind": "function",
+      "label": "y",
+      "loc": {
+        "file": "cycle-trap.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "z",
+      "kind": "function",
+      "label": "z",
+      "loc": {
+        "file": "cycle-trap.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    }
+  ],
+  "edges": [
+    {
+      "from": "app",
+      "to": "mid",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "mid",
+      "to": "lib",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "mid",
+      "to": "x",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "x",
+      "to": "y",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "y",
+      "to": "z",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "z",
+      "to": "x",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "z",
+      "to": "lib",
+      "kind": "calls",
+      "attrs": {}
+    }
+  ],
+  "audit_head": "",
+  "audit_log": []
+}

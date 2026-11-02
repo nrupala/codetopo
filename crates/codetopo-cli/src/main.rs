@@ -145,6 +145,18 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// The safe change order of the graph: topological order of the
+    /// SCC-condensed dependency DAG (CODE_SCHEMA §9) — groups in
+    /// dependency order, cycles returned as flagged groups, never
+    /// disguised as an order.
+    TopoSort {
+        #[arg(long)]
+        db: PathBuf,
+        /// Emit the shared JSON shape ({method, total_groups,
+        /// total_nodes, cyclic_groups, groups}).
+        #[arg(long)]
+        json: bool,
+    },
     /// Change-history measurements — hotspots and change coupling —
     /// from a local working tree's git history (CODE_SCHEMA §9).
     /// Local only: an index carries no history, so the working tree is
@@ -476,6 +488,30 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                         "… {} more assignments (truncated)",
                         part.assignments.len() - limit
                     );
+                }
+            }
+        }
+        Commands::TopoSort { db, json } => {
+            let graph = load_graph_from_db(&db)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&codetopo_cli::topo_sort_value(&graph))
+                        .expect("topo sort serializes")
+                );
+            } else {
+                let order = graph.topo_sort();
+                println!(
+                    "{} groups · {} nodes · {} cyclic",
+                    order.total_groups, order.total_nodes, order.cyclic_groups
+                );
+                println!("method: {}", codetopo_core::TOPO_SORT_METHOD);
+                for (i, g) in order.groups.iter().enumerate() {
+                    if g.cyclic {
+                        println!("{i}: [cycle] {}", g.members.join(", "));
+                    } else {
+                        println!("{i}: {}", g.members.join(", "));
+                    }
                 }
             }
         }

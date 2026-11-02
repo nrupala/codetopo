@@ -181,6 +181,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/graphs/:id/diff", get(diff))
         .route("/v1/graphs/:id/metrics", get(metrics))
         .route("/v1/graphs/:id/communities", get(communities))
+        .route("/v1/graphs/:id/topo-sort", get(topo_sort))
         .route("/v1/graphs/:id/history", get(history))
         .route("/v1/schema", get(schema))
         .route_layer(axum::middleware::from_fn_with_state(
@@ -1164,6 +1165,23 @@ async fn communities(
     let db = state.db_path(&index_id);
     let graph = load_graph_blocking(&db, &index_id)?;
     let mut value = codetopo_cli::communities_value(&graph, limit);
+    value["index_id"] = json!(index_id);
+    Ok(Json(value))
+}
+
+/// `GET /v1/graphs/{id}/topo-sort` — the safe change order of the
+/// index: topological order of the SCC-condensed §9 dependency DAG,
+/// groups in dependency order, cycles as flagged groups. The shared
+/// [`codetopo_cli::topo_sort_value`] shape plus `index_id`.
+async fn topo_sort(
+    State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
+    UrlPath(index_id): UrlPath<String>,
+) -> Result<Json<Value>, ApiError> {
+    enforce_tenancy(&state, &index_id, &key)?;
+    let db = state.db_path(&index_id);
+    let graph = load_graph_blocking(&db, &index_id)?;
+    let mut value = codetopo_cli::topo_sort_value(&graph);
     value["index_id"] = json!(index_id);
     Ok(Json(value))
 }

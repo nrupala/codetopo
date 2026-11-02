@@ -810,7 +810,7 @@ pub fn describe_schema() -> serde_json::Value {
         "queries": ["descendants", "ancestors", "blast_radius", "path",
                     "neighborhood", "search", "symbol", "stats", "verify",
                     "diagnostics", "rank", "diff", "metrics", "history",
-                    "communities"],
+                    "communities", "topo_sort"],
     })
 }
 
@@ -974,6 +974,23 @@ pub fn communities_value(graph: &Graph, limit: usize) -> serde_json::Value {
         "communities": part.communities,
         "assignments": part.assignments.iter().take(limit).collect::<Vec<_>>(),
         "truncated": truncated,
+    })
+}
+
+/// JSON form of a topo-sort answer — the shared shape behind the
+/// CLI's `topo-sort --json`, the HTTP topo-sort route (which adds
+/// `index_id`), and the MCP `codetopo_topo_sort` tool: the method,
+/// the group/node/cycle counts, and the groups in dependency order
+/// (a multi-node group is a cycle, flagged — never disguised as an
+/// order).
+pub fn topo_sort_value(graph: &Graph) -> serde_json::Value {
+    let order = graph.topo_sort();
+    json!({
+        "method": codetopo_core::TOPO_SORT_METHOD,
+        "total_groups": order.total_groups,
+        "total_nodes": order.total_nodes,
+        "cyclic_groups": order.cyclic_groups,
+        "groups": order.groups,
     })
 }
 

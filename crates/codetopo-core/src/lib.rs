@@ -29,6 +29,7 @@ pub mod projection;
 pub mod render;
 pub mod schema;
 pub mod snapshot;
+pub mod topology;
 
 pub use communities::{
     CommunityPartition, CommunitySummary, LeidenDetector, NodeCommunity, COMMUNITIES_METHOD,
@@ -47,6 +48,7 @@ pub use measure::{
 };
 pub use projection::{AnalyticsProjection, CommunityDetector};
 pub use render::{layout, render_svg, LayoutEdge, LayoutNode, LayoutSpec};
+pub use topology::{TopoGroup, TopoOrder, TOPO_SORT_METHOD};
 pub use schema::{Edge, EdgeKind, Loc, Node, NodeKind, Tier};
 pub use snapshot::Snapshot;
 

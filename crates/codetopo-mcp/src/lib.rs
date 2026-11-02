@@ -356,6 +356,19 @@ pub fn tool_catalog() -> Vec<Value> {
             },
         }),
         json!({
+            "name": "codetopo_topo_sort",
+            "title": "Topological order (safe change order)",
+            "description": "The safe change order of the graph: topological order of the SCC-condensed CODE_SCHEMA section 9 dependency DAG (Kahn's algorithm over Tarjan components). Groups are emitted in dependency order - every dependency of a group appears in an earlier group - members sorted by id. A multi-node group is a dependency cycle and is flagged cyclic, never disguised as an order.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "db_path": {"type": "string", "description": "Path to the index database."},
+                },
+                "required": ["db_path"],
+            },
+        }),
+        json!({
             "name": "codetopo_history",
             "title": "Change-history measurements (hotspots, change coupling)",
             "description": "Hotspots (change frequency x complexity, both factors stated) and change coupling (support/confidence as pair counts) over a local working tree's git history. History is local-only: without repo_path the answer is the unmeasured report (measured: false with the reason), never invented numbers.",
@@ -448,6 +461,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, ToolError> {
         "codetopo_diff" => tool_diff(args),
         "codetopo_metrics" => tool_metrics(args),
         "codetopo_communities" => tool_communities(args),
+        "codetopo_topo_sort" => tool_topo_sort(args),
         "codetopo_history" => tool_history(args),
         "codetopo_neighborhood" => tool_neighborhood(args),
         "codetopo_get_symbol" => tool_get_symbol(args),
@@ -736,6 +750,14 @@ fn tool_communities(args: &Value) -> Result<Value, ToolError> {
     Ok(codetopo_cli::communities_value(&graph, limit))
 }
 
+/// `codetopo_topo_sort` — the safe change order, in the shared
+/// shape the CLI's `topo-sort --json` and the HTTP topo-sort route
+/// also return.
+fn tool_topo_sort(args: &Value) -> Result<Value, ToolError> {
+    let graph = open_graph(args)?;
+    Ok(codetopo_cli::topo_sort_value(&graph))
+}
+
 /// `codetopo_history` — change-history measurements, in the shared
 /// shape the CLI's `history --json` and the HTTP history route also
 /// return. With a `repo_path`, the history is read from that local
@@ -927,9 +949,9 @@ mod tests {
     // -- catalogue ---------------------------------------------------------
 
     #[test]
-    fn catalogue_lists_eighteen_tools() {
+    fn catalogue_lists_nineteen_tools() {
         let catalog = tool_catalog();
-        assert_eq!(catalog.len(), 18, "expected 18 tools: {catalog:?}");
+        assert_eq!(catalog.len(), 19, "expected 19 tools: {catalog:?}");
 
         let names: Vec<&str> = catalog
             .iter()
@@ -951,6 +973,7 @@ mod tests {
                 "codetopo_diff",
                 "codetopo_metrics",
                 "codetopo_communities",
+                "codetopo_topo_sort",
                 "codetopo_history",
                 "codetopo_neighborhood",
                 "codetopo_get_symbol",
@@ -1308,7 +1331,7 @@ mod tests {
         assert_eq!(response["id"], 7);
         assert_eq!(
             response["result"]["tools"].as_array().expect("tools").len(),
-            18
+            19
         );
     }
 
@@ -1518,6 +1541,22 @@ mod tests {
         assert!(
             via_tool["methods"]["hotspot"].as_str().expect("method").contains("Tornhill"),
             "the methods travel with the answer"
+        );
+    }
+
+    #[test]
+    fn topo_sort_tool_matches_the_cli_value() {
+        let (_dir, db_path) = fixture_index();
+        let graph = load_graph_from_db(&db_path).expect("graph loads");
+        let via_tool = result_of("codetopo_topo_sort", &args(&db_path, json!({})));
+        assert_eq!(
+            via_tool,
+            codetopo_cli::topo_sort_value(&graph),
+            "MCP topo_sort == CLI topo_sort for the same database"
+        );
+        assert!(
+            via_tool["method"].as_str().expect("method").contains("Kahn"),
+            "the method travels with the answer"
         );
     }
 

@@ -204,7 +204,7 @@ pub fn layout(graph: &Graph) -> LayoutSpec {
 
 /// Iterative Tarjan SCC. Returns components with members in
 /// discovery order; callers sort as needed.
-fn tarjan_scc(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
+pub(crate) fn tarjan_scc(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
     #[derive(Clone, Copy)]
     struct Frame {
         v: usize,

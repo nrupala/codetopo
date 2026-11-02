@@ -21,6 +21,7 @@ const EXPECTED_ROUTES: &[&str] = &[
     "/v1/graphs/{id}/history",
     "/v1/graphs/{id}/metrics",
     "/v1/graphs/{id}/communities",
+    "/v1/graphs/{id}/topo-sort",
     "/v1/graphs/{id}/neighborhood",
     "/v1/graphs/{id}/path",
     "/v1/graphs/{id}/rank",

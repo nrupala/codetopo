@@ -708,6 +708,41 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '504':
           $ref: '#/components/responses/RequestTimeout'
+  /v1/graphs/{id}/topo-sort:
+    get:
+      tags: [query]
+      operationId: topoSort
+      summary: Topological order of the dependency graph (safe change order).
+      description: |
+        Groups of the graph in dependency order: the topological
+        order of the SCC-condensed CODE_SCHEMA §9 dependency DAG
+        (Kahn's algorithm; strongly connected components by Tarjan,
+        the condensation the layered layout uses). Every dependency
+        of a group appears in an earlier group; members are sorted
+        by id and ready groups are taken by smallest member id. A
+        multi-node group is a dependency cycle, flagged
+        `cyclic: true` — a cycle is reported as a group, never
+        disguised as an order. The same object serves the CLI's
+        `topo-sort` command and the MCP `codetopo_topo_sort` tool.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+      responses:
+        '200':
+          description: The order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopoSortResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/graphs/{id}/history:
     get:
       tags: [query]
@@ -1512,6 +1547,44 @@ components:
         community:
           type: integer
           minimum: 0
+    TopoSortResponse:
+      type: object
+      description: |
+        The safe change order: the method, the group/node/cycle
+        counts, and the groups in dependency order.
+      required: [index_id, method, total_groups, total_nodes, cyclic_groups, groups]
+      properties:
+        index_id:
+          type: string
+        method:
+          type: string
+          description: The published definition of the ordering.
+        total_groups:
+          type: integer
+          minimum: 0
+        total_nodes:
+          type: integer
+          minimum: 0
+        cyclic_groups:
+          type: integer
+          minimum: 0
+          description: How many groups are dependency cycles.
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopoGroup'
+    TopoGroup:
+      type: object
+      required: [members, cyclic]
+      properties:
+        members:
+          type: array
+          items:
+            type: string
+          description: Member node ids, sorted.
+        cyclic:
+          type: boolean
+          description: True when the group has more than one member — it is a cycle, reported as a group, not an order.
     HistoryResponse:
       type: object
       description: |

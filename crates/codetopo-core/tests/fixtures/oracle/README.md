@@ -105,6 +105,18 @@ Zachary's karate club: 34 nodes, 78 edges, as shipped by networkx's
 ≥ 0.9, where the golden records igraph's Leiden partition and its
 networkx modularity (Q ≈ 0.4198 at generation time).
 
+## cycle-trap — the topo-sort fixture (RA3)
+
+A planted 3-cycle (`x -> y -> z -> x`) inside a DAG: `app -> mid`,
+`mid -> lib`, `mid -> x`, `z -> lib`. The expected answer
+(asserted exactly by `tests/topo_sort_fixture.rs`, after the order
+property is verified mechanically over every edge):
+
+1. `lib` — everything downstream needs it first
+2. `x, y, z` — one group, `cyclic: true`
+3. `mid`
+4. `app`
+
 ## ring — the eigenvector/katz fixture (RA1)
 
 Four nodes, five edges: `w -> x, x -> y, y -> z, z -> w, x -> z` —
