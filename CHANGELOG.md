@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Gate fix (0.8.0 candidate): `zip` 9.0.3 → 9.2.2.** The
+  release gate's OSV pass flagged GHSA-m665-v7pm-7grj ("zip
+  cloaking": a dual-header parser differential in the `zip` crate
+  leading to arbitrary file overwrite on extraction) against
+  9.0.3, fixed upstream in 9.0.5. `zip` is `codetopo-server`'s
+  archive library and `ingest.rs` extracts uploaded archives with
+  it — the advisory's exact target shape. Lockfile-only bump to
+  9.2.2 (with its `typed-path` companion); ingest's own second
+  guard (enclosed-name component check, symlink rejection, entry
+  and byte caps) is unchanged. Full suite green and the gate
+  re-scan reports zero known-vulnerable dependencies.
+
 - **Python extractor (P6): docs & copy.** The extract README gains
   the full Python mapping — module-id table (`__init__.py`
   collapses to its package), kind rows (Protocol classes →
