@@ -936,12 +936,23 @@ pub fn read_snapshot_graph(path: &Path) -> Result<Graph, CliError> {
 /// method), the total number of ranked nodes, then the top-`limit`
 /// entries, each a full [`codetopo_core::RankedSymbol`].
 pub fn rank_value(graph: &Graph, metric: RankMetric, limit: usize) -> serde_json::Value {
-    json!({
-        "metric": metric.as_str(),
-        "method": metric.method(),
-        "total": graph.rank_total(metric),
-        "results": graph.rank(metric, limit),
-    })
+    match graph.rank_answer(metric, limit) {
+        codetopo_core::RankAnswer::Ranked(r) => json!({
+            "metric": metric.as_str(),
+            "method": metric.method(),
+            "total": r.total,
+            "results": r.entries,
+        }),
+        // Absence is reported as absence (SPEC §4a): no total, no
+        // results, the reason stated — the history report's
+        // `measured: false` shape, for the same reason.
+        codetopo_core::RankAnswer::Absent { reason } => json!({
+            "metric": metric.as_str(),
+            "method": metric.method(),
+            "measured": false,
+            "reason": reason,
+        }),
+    }
 }
 
 /// The shared shape of the coupling/cohesion answer (CLI `metrics`,

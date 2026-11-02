@@ -1,0 +1,52 @@
+{
+  "betweenness": {
+    "w": 0.5,
+    "x": 0.5,
+    "y": 0.0,
+    "z": 0.5
+  },
+  "closeness": {
+    "w": 0.6,
+    "x": 0.5,
+    "y": 0.5,
+    "z": 0.75
+  },
+  "eigenvector": {
+    "w": 0.5262015076917937,
+    "x": 0.43104970112724544,
+    "y": 0.3531051686825981,
+    "z": 0.6423588314257299
+  },
+  "fixture": "ring",
+  "katz": {
+    "w": 0.4909351618601384,
+    "x": 0.48655572748762066,
+    "y": 0.486117784050369,
+    "z": 0.5347295493315389
+  },
+  "nodes": [
+    "w",
+    "x",
+    "y",
+    "z"
+  ],
+  "oracle": {
+    "generator": "tests/oracle/generate_goldens.py",
+    "networkx": "3.5",
+    "numpy": "2.5.4",
+    "python": "3.12.3"
+  },
+  "pagerank": {
+    "w": 0.2813632148631319,
+    "x": 0.276658031180747,
+    "y": 0.15508018934150383,
+    "z": 0.28689856461461727
+  },
+  "parameters": {
+    "betweenness": "normalized=True, endpoints=False, exact",
+    "closeness": "wf_improved=True (networkx default)",
+    "eigenvector": "max_iter=100, tol=1e-6",
+    "katz": "alpha=0.1, beta=1.0, max_iter=100, tol=1e-6, normalized=True",
+    "pagerank": "alpha=0.85, tol=1e-6, max_iter=100"
+  }
+}

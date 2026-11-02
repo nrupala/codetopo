@@ -181,6 +181,22 @@ pub enum RankMetric {
     /// measured are ranked — an unmeasured symbol is absent, never
     /// ranked as 1.
     Complexity,
+    /// PageRank (Brin & Page 1998): the stationary distribution of a
+    /// random walk with teleportation over the §9 projection's simple
+    /// graph. A float metric — entries carry `value`, not `count`.
+    PageRank,
+    /// Betweenness centrality (Freeman 1977; Brandes 2001), exact and
+    /// normalized, over the projection. A float metric.
+    Betweenness,
+    /// Closeness centrality, Wasserman–Faust form (Wasserman & Faust
+    /// 1994), over the projection. A float metric.
+    Closeness,
+    /// Eigenvector centrality (Bonacich 1972), over the projection.
+    /// A float metric; non-convergence is an absence answer.
+    Eigenvector,
+    /// Katz centrality (Katz 1953), over the projection. A float
+    /// metric; non-convergence is an absence answer.
+    Katz,
 }
 
 impl RankMetric {
@@ -195,6 +211,11 @@ impl RankMetric {
             "fan_out" | "fan-out" => Some(Self::FanOut),
             "blast_radius" | "blast-radius" => Some(Self::BlastRadius),
             "complexity" => Some(Self::Complexity),
+            "pagerank" | "page-rank" | "page_rank" => Some(Self::PageRank),
+            "betweenness" => Some(Self::Betweenness),
+            "closeness" => Some(Self::Closeness),
+            "eigenvector" => Some(Self::Eigenvector),
+            "katz" => Some(Self::Katz),
             _ => None,
         }
     }
@@ -206,39 +227,136 @@ impl RankMetric {
             Self::FanOut => "fan_out",
             Self::BlastRadius => "blast_radius",
             Self::Complexity => "complexity",
+            Self::PageRank => "pagerank",
+            Self::Betweenness => "betweenness",
+            Self::Closeness => "closeness",
+            Self::Eigenvector => "eigenvector",
+            Self::Katz => "katz",
         }
     }
 
-    /// The published definition of the count, stated wherever the
-    /// ranking is reported (the provenance rule: no number without
-    /// its method).
-    pub fn method(self) -> &'static str {
+    /// Whether this metric's entries carry a float `value` (the §4a
+    /// centrality family) rather than an integer `count`.
+    pub fn is_float(self) -> bool {
+        matches!(
+            self,
+            Self::PageRank
+                | Self::Betweenness
+                | Self::Closeness
+                | Self::Eigenvector
+                | Self::Katz
+        )
+    }
+
+    /// The published definition of the measurement, stated wherever
+    /// the ranking is reported (the provenance rule: no number
+    /// without its method). Parameters are fixed here, in the method
+    /// text — they are not tunable per query (owner decision 2).
+    pub fn method(self) -> std::borrow::Cow<'static, str> {
+        use std::borrow::Cow;
         match self {
-            Self::FanIn => "fan-in (Henry & Kafura 1981): the number of incoming \
-                            dependency edges — every edge kind except contains; \
-                            external stub nodes are not ranked",
-            Self::FanOut => "fan-out (Henry & Kafura 1981): the number of outgoing \
-                             dependency edges — every edge kind except contains; \
-                             external stub nodes are not ranked",
-            Self::BlastRadius => "blast radius (CODE_SCHEMA §6): the number of \
-                                  transitive dependents over calls, inherits, \
-                                  implements, reads, and writes edges; \
-                                  external stub nodes are not ranked",
-            Self::Complexity => "cyclomatic complexity (McCabe 1976; CODE_SCHEMA \
-                                 §9): v = decision points + 1, decision points \
-                                 counted per CODE_SCHEMA §3.2; only symbols whose \
-                                 decisions were measured are ranked",
+            Self::FanIn => Cow::Borrowed(
+                "fan-in (Henry & Kafura 1981): the number of incoming \
+                 dependency edges — every edge kind except contains; \
+                 external stub nodes are not ranked",
+            ),
+            Self::FanOut => Cow::Borrowed(
+                "fan-out (Henry & Kafura 1981): the number of outgoing \
+                 dependency edges — every edge kind except contains; \
+                 external stub nodes are not ranked",
+            ),
+            Self::BlastRadius => Cow::Borrowed(
+                "blast radius (CODE_SCHEMA §6): the number of \
+                 transitive dependents over calls, inherits, \
+                 implements, reads, and writes edges; \
+                 external stub nodes are not ranked",
+            ),
+            Self::Complexity => Cow::Borrowed(
+                "cyclomatic complexity (McCabe 1976; CODE_SCHEMA \
+                 §9): v = decision points + 1, decision points \
+                 counted per CODE_SCHEMA §3.2; only symbols whose \
+                 decisions were measured are ranked",
+            ),
+            Self::PageRank => Cow::Borrowed(
+                "PageRank (Brin & Page 1998): the stationary distribution of a \
+                 random walk with teleportation (damping 0.85, power iteration \
+                 from the uniform vector, tolerance 1e-6, max 100 iterations) \
+                 over the CODE_SCHEMA §9 dependency projection as a simple \
+                 graph (parallel edges collapse, self-loops dropped, external \
+                 stubs excluded); every node in the projection is ranked",
+            ),
+            Self::Betweenness => Cow::Owned(format!(
+                "betweenness centrality (Freeman 1977; Brandes 2001): the \
+                 fraction of all-pairs shortest paths through the node, \
+                 endpoints excluded, normalized, exact (no sampling), over \
+                 the CODE_SCHEMA §9 dependency projection as a simple graph; \
+                 every node in the projection is ranked and 0.0 is a measured \
+                 value; graphs over {} nodes are declined, with the ceiling \
+                 as the stated reason",
+                crate::centrality::BETWEENNESS_NODE_CEILING
+            )),
+            Self::Closeness => Cow::Borrowed(
+                "closeness centrality, Wasserman-Faust form (Wasserman & Faust \
+                 1994): (reachable-1)/(n-1) x (reachable-1)/(sum of distances), \
+                 unweighted BFS distances over the CODE_SCHEMA §9 dependency \
+                 projection as a simple graph; every node in the projection is \
+                 ranked and a node that nothing reaches measures 0.0",
+            ),
+            Self::Eigenvector => Cow::Borrowed(
+                "eigenvector centrality (Bonacich 1972): the dominant \
+                 eigenvector of the adjacency matrix of the CODE_SCHEMA §9 \
+                 dependency projection, L2-normalized, sign fixed by positive \
+                 sum, power iteration tolerance 1e-6, max 100 iterations; \
+                 nodes outside the dominant strongly connected region can \
+                 measure 0 (the method's result — Katz does not collapse); \
+                 non-convergence is reported as an absence, never a partial \
+                 vector",
+            ),
+            Self::Katz => Cow::Borrowed(
+                "Katz centrality (Katz 1953): all walks counted, attenuated by \
+                 alpha = 0.1 per step plus beta = 1.0 bias, over the \
+                 CODE_SCHEMA §9 dependency projection as a simple graph, \
+                 power iteration tolerance 1e-6, max 100 iterations, \
+                 L2-normalized; non-convergence is reported as an absence, \
+                 never a partial vector",
+            ),
         }
     }
 }
 
-/// One ranked node: its identity and its count under the metric.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// One ranked node: its identity and its measurement under the
+/// metric. Exactly one of `count` / `value` is present (SPEC §4a):
+/// `count` for the integer metrics, `value` for the float centrality
+/// family — the absent field is not serialized, so a reader can tell
+/// which shape it holds without consulting the method text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RankedSymbol {
     pub id: String,
     pub kind: NodeKind,
     pub label: String,
-    pub count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+}
+
+/// A completed ranking: the total number of ranked nodes and the
+/// top-`limit` entries, in the metric's order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ranking {
+    pub total: usize,
+    pub entries: Vec<RankedSymbol>,
+}
+
+/// The ranking answer (SPEC §4a absence semantics): either the
+/// ranking, or the stated reason the metric is *absent* on this
+/// graph — an iterative measure that did not converge, or exact
+/// betweenness over its node ceiling. Absence is an answer, never a
+/// zero, an empty list, or a partial result.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RankAnswer {
+    Ranked(Ranking),
+    Absent { reason: String },
 }
 
 impl Graph {
@@ -252,6 +370,33 @@ impl Graph {
     /// (`Ok`, `Some`, `std`) would bury every actual hub under boundary
     /// noise. `limit == 0` returns an empty list.
     pub fn rank(&self, metric: RankMetric, limit: usize) -> Vec<RankedSymbol> {
+        match self.rank_answer(metric, limit) {
+            RankAnswer::Ranked(r) => r.entries,
+            RankAnswer::Absent { .. } => Vec::new(),
+        }
+    }
+
+    /// How many nodes have a non-zero count under `metric` — the `total`
+    /// the surfaces state before the (possibly truncated) ranking.
+    /// For the float centrality metrics, the total is the number of
+    /// eligible nodes in the projection (every one is ranked); an
+    /// absent metric totals 0 here — surfaces that must state the
+    /// absence use [`Graph::rank_answer`], which carries the reason.
+    pub fn rank_total(&self, metric: RankMetric) -> usize {
+        // The full ranking without a limit is the count's definition;
+        // graphs here are index-sized, so clarity wins over a second
+        // counting path that could drift from `rank`.
+        self.rank(metric, usize::MAX).len()
+    }
+
+    /// The full ranking answer for `metric`: the ranking, or the
+    /// stated reason the metric is absent on this graph (SPEC §4a).
+    /// This is the entry point the surfaces use; [`Graph::rank`] is
+    /// the integer-metric convenience over it.
+    pub fn rank_answer(&self, metric: RankMetric, limit: usize) -> RankAnswer {
+        if metric.is_float() {
+            return self.rank_float(metric, limit);
+        }
         let mut counts: Vec<(String, usize)> = match metric {
             RankMetric::FanIn | RankMetric::FanOut => {
                 let mut tally: std::collections::HashMap<&str, usize> =
@@ -279,6 +424,7 @@ impl Graph {
                 .nodes()
                 .filter_map(|n| n.complexity().map(|v| (n.id.clone(), v as usize)))
                 .collect(),
+            _ => unreachable!("float metrics returned above"),
         };
         counts.retain(|(_, c)| *c > 0);
         counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -290,22 +436,86 @@ impl Graph {
                     id,
                     kind: node.kind,
                     label: node.label.clone(),
-                    count,
+                    count: Some(count),
+                    value: None,
                 }
             })
             .filter(|r| r.kind != NodeKind::External)
             .collect();
+        let total = ranked.len();
         ranked.truncate(limit);
-        ranked
+        RankAnswer::Ranked(Ranking {
+            total,
+            entries: ranked,
+        })
     }
 
-    /// How many nodes have a non-zero count under `metric` — the `total`
-    /// the surfaces state before the (possibly truncated) ranking.
-    pub fn rank_total(&self, metric: RankMetric) -> usize {
-        // The full ranking without a limit is the count's definition;
-        // graphs here are index-sized, so clarity wins over a second
-        // counting path that could drift from `rank`.
-        self.rank(metric, usize::MAX).len()
+    /// The float centrality family (SPEC §4a), computed once over the
+    /// §3 projection: value descending, node id ascending. Every node
+    /// in the projection is ranked — for these measures 0.0 is a
+    /// measured value (a betweenness leaf, a node nothing reaches),
+    /// not an absence.
+    fn rank_float(&self, metric: RankMetric, limit: usize) -> RankAnswer {
+        use crate::centrality as cen;
+        let proj = crate::projection::AnalyticsProjection::build(self);
+        if metric == RankMetric::Betweenness
+            && proj.node_count() > cen::BETWEENNESS_NODE_CEILING
+        {
+            return RankAnswer::Absent {
+                reason: format!(
+                    "betweenness not measured: the graph has {} nodes, over the \
+                     exact-betweenness ceiling of {} nodes (Brandes is O(V*E); \
+                     codetopo states the ceiling instead of approximating)",
+                    proj.node_count(),
+                    cen::BETWEENNESS_NODE_CEILING
+                ),
+            };
+        }
+        let values: Option<Vec<f64>> = match metric {
+            RankMetric::PageRank => Some(cen::pagerank(&proj)),
+            RankMetric::Betweenness => Some(cen::betweenness(&proj)),
+            RankMetric::Closeness => Some(cen::closeness(&proj)),
+            RankMetric::Eigenvector => cen::eigenvector(&proj),
+            RankMetric::Katz => cen::katz(&proj),
+            _ => unreachable!("rank_float called with an integer metric"),
+        };
+        let Some(values) = values else {
+            return RankAnswer::Absent {
+                reason: format!(
+                    "{} did not converge (power iteration, tolerance 1e-6, \
+                     max 100 iterations) — reported as an absence, never a \
+                     partial vector",
+                    metric.as_str()
+                ),
+            };
+        };
+        let mut scored: Vec<(String, f64)> = proj
+            .node_ids()
+            .iter()
+            .cloned()
+            .zip(values)
+            .collect();
+        scored.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        let total = scored.len();
+        let mut entries: Vec<RankedSymbol> = scored
+            .into_iter()
+            .map(|(id, value)| {
+                let node = self.get(&id).expect("projected id is a node id");
+                RankedSymbol {
+                    id,
+                    kind: node.kind,
+                    label: node.label.clone(),
+                    count: None,
+                    value: Some(value),
+                }
+            })
+            .collect();
+        entries.truncate(limit);
+        RankAnswer::Ranked(Ranking { total, entries })
     }
 }
 
@@ -651,7 +861,7 @@ mod tests {
     fn ranked_pairs(g: &Graph, metric: RankMetric, limit: usize) -> Vec<(String, usize)> {
         g.rank(metric, limit)
             .iter()
-            .map(|r| (r.id.clone(), r.count))
+            .map(|r| (r.id.clone(), r.count.expect("integer metric carries a count")))
             .collect()
     }
 
@@ -713,7 +923,7 @@ mod tests {
             let ranked: std::collections::HashMap<String, usize> = g
                 .rank(metric, usize::MAX)
                 .into_iter()
-                .map(|r| (r.id, r.count))
+                .map(|r| (r.id, r.count.expect("integer metric carries a count")))
                 .collect();
             for node in g.nodes() {
                 let raw = match metric {
@@ -734,6 +944,10 @@ mod tests {
                     RankMetric::Complexity => {
                         node.complexity().map(|v| v as usize).unwrap_or(0)
                     }
+                    // This cross-check iterates the integer metrics
+                    // only; the float family is oracle-checked in
+                    // tests/oracle_goldens.rs.
+                    _ => unreachable!("float metric in the integer cross-check"),
                 };
                 // External stubs are boundary markers, not ranked symbols:
                 // their expected ranked count is "absent" whatever the raw
@@ -943,7 +1157,7 @@ mod tests {
 
         let ranked = graph.rank(RankMetric::Complexity, 20);
         let got: Vec<(&str, usize)> =
-            ranked.iter().map(|r| (r.id.as_str(), r.count)).collect();
+            ranked.iter().map(|r| (r.id.as_str(), r.count.expect("integer metric carries a count"))).collect();
         assert_eq!(
             got,
             vec![("t::m::branchy", 7), ("t::m::mid", 3), ("t::m::plain", 1)],

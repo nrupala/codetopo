@@ -1,0 +1,153 @@
+{
+  "schema_version": "1.2",
+  "nodes": [
+    {
+      "id": "a",
+      "kind": "function",
+      "label": "a",
+      "loc": {
+        "file": "compass.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "b",
+      "kind": "function",
+      "label": "b",
+      "loc": {
+        "file": "compass.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "c",
+      "kind": "function",
+      "label": "c",
+      "loc": {
+        "file": "compass.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "d",
+      "kind": "function",
+      "label": "d",
+      "loc": {
+        "file": "compass.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "e",
+      "kind": "function",
+      "label": "e",
+      "loc": {
+        "file": "compass.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "f",
+      "kind": "function",
+      "label": "f",
+      "loc": {
+        "file": "compass.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "g",
+      "kind": "function",
+      "label": "g",
+      "loc": {
+        "file": "compass.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "h",
+      "kind": "function",
+      "label": "h",
+      "loc": {
+        "file": "compass.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    }
+  ],
+  "edges": [
+    {
+      "from": "a",
+      "to": "b",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "a",
+      "to": "c",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "b",
+      "to": "d",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "c",
+      "to": "d",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "d",
+      "to": "e",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "e",
+      "to": "f",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "f",
+      "to": "g",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "b",
+      "to": "h",
+      "kind": "calls",
+      "attrs": {}
+    }
+  ],
+  "audit_head": "",
+  "audit_log": []
+}

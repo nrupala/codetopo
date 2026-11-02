@@ -1055,7 +1055,7 @@ struct RankQuery {
 }
 
 /// `GET /v1/graphs/{id}/rank?by=&limit=` — the top symbols by a
-/// measured count (fan-in, fan-out, or blast-radius size), with the
+/// measurement (a count, or a §4a centrality value), with the
 /// metric's published definition stated in the response. The shared
 /// [`codetopo_cli::rank_value`] shape plus `index_id`: the CLI's
 /// `rank` command and the MCP `codetopo_rank` tool return the same
@@ -1077,7 +1077,7 @@ async fn rank(
     let metric = codetopo_core::RankMetric::parse(by).ok_or_else(|| {
         ApiError::invalid_param(
             "by",
-            &format!("expected fan_in, fan_out, blast_radius, or complexity, got '{by}'"),
+            &format!("expected fan_in, fan_out, blast_radius, complexity, pagerank, betweenness, closeness, eigenvector, or katz, got '{by}'"),
         )
     })?;
     let limit: usize = match query.limit.as_deref().map(str::trim) {

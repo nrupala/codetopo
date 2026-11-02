@@ -299,14 +299,14 @@ pub fn tool_catalog() -> Vec<Value> {
         }),
         json!({
             "name": "codetopo_rank",
-            "title": "Rank symbols by a measured count",
-            "description": "The top symbols by fan-in, fan-out, blast-radius size, or cyclomatic complexity - counts over the graph, with the count's method stated in the result. A ranking of measurements, never a score of code quality.",
+            "title": "Rank symbols by a measurement",
+            "description": "The top symbols by fan-in, fan-out, blast-radius size, cyclomatic complexity, or a centrality measure (pagerank, betweenness, closeness, eigenvector, katz) - measurements over the graph, with the measurement's method stated in the result. A measure that does not converge on the graph is reported as an absence with its reason, never a partial result. A ranking of measurements, never a score of code quality.",
             "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "db_path": {"type": "string", "description": "Path to the index database."},
-                    "by": {"type": "string", "description": "Metric to rank by: fan_in, fan_out, blast_radius (default), or complexity."},
+                    "by": {"type": "string", "description": "Metric to rank by: fan_in, fan_out, blast_radius (default), complexity, pagerank, betweenness, closeness, eigenvector, or katz."},
                     "limit": {"type": "integer", "description": "Maximum entries to return. Default 20."},
                 },
                 "required": ["db_path"],
@@ -1457,6 +1457,11 @@ mod tests {
             ("fan_out", codetopo_core::RankMetric::FanOut),
             ("blast_radius", codetopo_core::RankMetric::BlastRadius),
             ("complexity", codetopo_core::RankMetric::Complexity),
+            ("pagerank", codetopo_core::RankMetric::PageRank),
+            ("betweenness", codetopo_core::RankMetric::Betweenness),
+            ("closeness", codetopo_core::RankMetric::Closeness),
+            ("eigenvector", codetopo_core::RankMetric::Eigenvector),
+            ("katz", codetopo_core::RankMetric::Katz),
         ] {
             let via_tool = result_of("codetopo_rank", &args(&db_path, json!({"by": by})));
             assert_eq!(

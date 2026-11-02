@@ -1,0 +1,87 @@
+{
+  "schema_version": "1.2",
+  "nodes": [
+    {
+      "id": "w",
+      "kind": "function",
+      "label": "w",
+      "loc": {
+        "file": "ring.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "x",
+      "kind": "function",
+      "label": "x",
+      "loc": {
+        "file": "ring.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "y",
+      "kind": "function",
+      "label": "y",
+      "loc": {
+        "file": "ring.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "z",
+      "kind": "function",
+      "label": "z",
+      "loc": {
+        "file": "ring.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    }
+  ],
+  "edges": [
+    {
+      "from": "w",
+      "to": "x",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "x",
+      "to": "y",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "y",
+      "to": "z",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "z",
+      "to": "w",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "x",
+      "to": "z",
+      "kind": "calls",
+      "attrs": {}
+    }
+  ],
+  "audit_head": "",
+  "audit_log": []
+}

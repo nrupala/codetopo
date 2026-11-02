@@ -288,3 +288,40 @@ zeros.
   support / transactions containing either file. Reported as the pair
   counts themselves, never a bare score; pairs below the query's
   stated minimum support are not reported.
+
+**Graph analytics (amendment, 0.9.0).** The centrality family ranges
+over one **analytics projection** of the §3 record: every
+non-`external` node; the dependency edges above as a *simple* directed
+graph (parallel edges between the same ordered pair collapse to one,
+self-loops dropped). This is deliberately different from the count
+metrics above, which count recorded edges — each method text says
+which it ranges over. Every node in the projection is ranked by these
+measures; 0.0 is a measured value where the definition gives one. A
+measure whose iteration does not converge is **absent** from the
+answer (`measured: false`, with the reason) — never a partial result
+and never zeros. Ranked entries carry `count` (the integer metrics
+above) or `value` (this family) — exactly one, named by the method
+text. Parameters are fixed in the definitions, not tunable per query.
+
+- **PageRank** (Brin & Page 1998): the stationary distribution of a
+  random walk with teleportation; damping 0.85; power iteration from
+  the uniform vector, tolerance 1e-6, max 100 iterations; dangling
+  nodes redistribute uniformly.
+- **Betweenness** (Freeman 1977; Brandes 2001): the fraction of
+  all-pairs shortest paths through the node, endpoints excluded,
+  normalized, exact. Above a stated node ceiling the measure is
+  absent with the ceiling as the reason — it is never approximated
+  silently.
+- **Closeness** (Wasserman & Faust 1994), the Wasserman–Faust form:
+  (reachable−1)/(n−1) × (reachable−1)/(Σ distances), unweighted BFS
+  distances on the projection. A node that nothing reaches measures
+  0.0.
+- **Eigenvector** (Bonacich 1972): the dominant eigenvector of the
+  projection's adjacency matrix, L2-normalized, sign fixed by
+  positive sum; power iteration, tolerance 1e-6, max 100 iterations.
+  Nodes outside the dominant strongly connected region can measure
+  0 — the method's result. Non-convergence is an absence.
+- **Katz** (Katz 1953): all walks counted, attenuated by α = 0.1 per
+  step plus β = 1.0 bias; power iteration, tolerance 1e-6, max 100
+  iterations, L2-normalized. Non-convergence (α ≥ 1/λmax) is an
+  absence with that reason.

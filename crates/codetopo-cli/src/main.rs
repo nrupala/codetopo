@@ -99,14 +99,16 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Rank symbols by a measured count — fan-in, fan-out,
-    /// blast-radius size, or cyclomatic complexity. A ranking of
-    /// measurements (method stated in the output), never a score of
-    /// code quality.
+    /// Rank symbols by a measurement — fan-in, fan-out, blast-radius
+    /// size, cyclomatic complexity, or a centrality measure
+    /// (pagerank, betweenness, closeness, eigenvector, katz). A
+    /// ranking of measurements (method stated in the output), never
+    /// a score of code quality.
     Rank {
         #[arg(long)]
         db: PathBuf,
-        /// Metric: fan-in | fan-out | blast-radius | complexity.
+        /// Metric: fan-in | fan-out | blast-radius | complexity |
+        /// pagerank | betweenness | closeness | eigenvector | katz.
         #[arg(long, default_value = "blast-radius")]
         by: String,
         #[arg(long, default_value_t = 20)]
@@ -348,7 +350,7 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
         Commands::Rank { db, by, limit, json } => {
             let metric = codetopo_core::RankMetric::parse(&by).ok_or_else(|| {
                 codetopo_cli::CliError::Usage(format!(
-                    "unknown rank metric '{by}' (expected fan-in, fan-out, blast-radius, or complexity)"
+                    "unknown rank metric '{by}' (expected fan-in, fan-out, blast-radius, complexity, pagerank, betweenness, closeness, eigenvector, or katz)"
                 ))
             })?;
             let graph = load_graph_from_db(&db)?;
@@ -359,14 +361,23 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                         .expect("rank serializes")
                 );
             } else {
-                println!(
-                    "{} symbols ranked by {}",
-                    graph.rank_total(metric),
-                    metric.as_str()
-                );
-                println!("method: {}", metric.method());
-                for r in graph.rank(metric, limit) {
-                    println!("{}  {}", r.count, r.id);
+                match graph.rank_answer(metric, limit) {
+                    codetopo_core::RankAnswer::Ranked(r) => {
+                        println!("{} symbols ranked by {}", r.total, metric.as_str());
+                        println!("method: {}", metric.method());
+                        for e in &r.entries {
+                            match (e.count, e.value) {
+                                (Some(c), _) => println!("{}  {}", c, e.id),
+                                (None, Some(v)) => println!("{:.6}  {}", v, e.id),
+                                (None, None) => println!("-  {}", e.id),
+                            }
+                        }
+                    }
+                    codetopo_core::RankAnswer::Absent { reason } => {
+                        println!("{} not measured", metric.as_str());
+                        println!("method: {}", metric.method());
+                        println!("reason: {reason}");
+                    }
                 }
             }
         }

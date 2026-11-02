@@ -1,0 +1,14 @@
+# Pinned oracle environment (SPEC §6). Python is the validation
+# oracle only — it never ships and is not needed in CI; the Rust
+# suite compares against the committed goldens. Exact versions are
+# also recorded in each golden file's header.
+networkx==3.5
+numpy==2.5.4
+scipy==1.18.1
+# ^ networkx 3.5's pagerank() routes through scipy when present and
+# requires it in this build; the stationary distribution it returns
+# is the same one the power method converges to (checked against our
+# in-house power iteration by the golden tolerances).
+# python-igraph is the RA2 oracle (Leiden cross-check); the package
+# was renamed upstream — `igraph` 1.0.0 is the same library.
+igraph==1.0.0
