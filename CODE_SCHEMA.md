@@ -326,6 +326,16 @@ text. Parameters are fixed in the definitions, not tunable per query.
   iterations, L2-normalized. Non-convergence (α ≥ 1/λmax) is an
   absence with that reason.
 
+**Topological order (amendment, 0.9.0).** The `topo_sort` surface
+reports the safe change order of the §9 dependency DAG: strongly
+connected components (Tarjan; the condensation the layered layout
+uses) ordered by Kahn's algorithm so every dependency of a group
+appears in an earlier group, members sorted by id, ready groups
+taken by smallest member id. A multi-node group is a cycle and is
+flagged `cyclic: true` — a cycle is reported as a group, never
+disguised as an order. (Self-loops are dropped by the projection
+above, so a self-referencing node appears as a singleton group.)
+
 **Communities (amendment, 0.9.0).** The `communities` surface reports
 the **Leiden** partition (Traag, Waltman & van Eck 2019) of the
 projection's undirected form — the same dependency set, directions

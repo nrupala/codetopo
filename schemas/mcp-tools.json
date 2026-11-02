@@ -383,6 +383,28 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
+      "description": "The safe change order of the graph: topological order of the SCC-condensed CODE_SCHEMA section 9 dependency DAG (Kahn's algorithm over Tarjan components). Groups are emitted in dependency order - every dependency of a group appears in an earlier group - members sorted by id. A multi-node group is a dependency cycle and is flagged cyclic, never disguised as an order.",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "db_path"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_topo_sort",
+      "title": "Topological order (safe change order)"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "Hotspots (change frequency x complexity, both factors stated) and change coupling (support/confidence as pair counts) over a local working tree's git history. History is local-only: without repo_path the answer is the unmeasured report (measured: false with the reason), never invented numbers.",
       "inputSchema": {
         "properties": {

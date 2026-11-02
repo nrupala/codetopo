@@ -1010,6 +1010,23 @@ async fn rank_route_matches_the_cli_value_and_finds_the_hub() {
         "the method is stated beside the numbers: {body}"
     );
 
+    // The topo-sort route returns the shared topo-sort object.
+    let (status, body) = harness
+        .get(&format!("/v1/graphs/{index_id}/topo-sort"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "topo-sort: {body}");
+    let mut via_http = body.clone();
+    via_http
+        .as_object_mut()
+        .expect("object")
+        .remove("index_id")
+        .expect("index_id present");
+    assert_eq!(
+        via_http,
+        codetopo_cli::topo_sort_value(&graph),
+        "HTTP topo-sort == CLI topo-sort"
+    );
+
     // Default metric, known hub.
     let (status, body) = harness.get(&format!("/v1/graphs/{index_id}/rank")).await;
     assert_eq!(status, StatusCode::OK, "rank default: {body}");
