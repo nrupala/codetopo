@@ -129,6 +129,22 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Community measurements: the Leiden partition of the
+    /// dependency graph (CODE_SCHEMA §9) — community count, the
+    /// partition's modularity Q, per-community sizes and edge
+    /// counts, and every node's community. Measurements with a
+    /// stated method — no thresholds, no verdicts.
+    Communities {
+        #[arg(long)]
+        db: PathBuf,
+        /// Maximum assignments to print (summaries are always full).
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Emit the shared JSON shape ({method, total, modularity,
+        /// communities, assignments, truncated}).
+        #[arg(long)]
+        json: bool,
+    },
     /// Change-history measurements — hotspots and change coupling —
     /// from a local working tree's git history (CODE_SCHEMA §9).
     /// Local only: an index carries no history, so the working tree is
@@ -423,6 +439,43 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                             p.id, p.ca, p.ce, p.external_ce
                         ),
                     }
+                }
+            }
+        }
+        Commands::Communities { db, limit, json } => {
+            let graph = load_graph_from_db(&db)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&codetopo_cli::communities_value(
+                        &graph, limit
+                    ))
+                    .expect("communities serialize")
+                );
+            } else {
+                let part = graph.communities();
+                println!("{} communities", part.total);
+                println!("method: {}", codetopo_core::COMMUNITIES_METHOD);
+                match part.modularity {
+                    Some(q) => println!("modularity Q: {q:.6}"),
+                    None => {
+                        println!("modularity Q: not measured (the graph has no edges)")
+                    }
+                }
+                for c in &part.communities {
+                    println!(
+                        "community {}: {} nodes · {} internal edges · {} cut edges",
+                        c.id, c.size, c.internal_edges, c.cut_edges
+                    );
+                }
+                for a in part.assignments.iter().take(limit) {
+                    println!("{}  {}", a.community, a.id);
+                }
+                if part.assignments.len() > limit {
+                    println!(
+                        "… {} more assignments (truncated)",
+                        part.assignments.len() - limit
+                    );
                 }
             }
         }

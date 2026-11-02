@@ -989,6 +989,27 @@ async fn rank_route_matches_the_cli_value_and_finds_the_hub() {
         );
     }
 
+    // The communities route returns the shared communities object.
+    let (status, body) = harness
+        .get(&format!("/v1/graphs/{index_id}/communities"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "communities: {body}");
+    let mut via_http = body.clone();
+    via_http
+        .as_object_mut()
+        .expect("object")
+        .remove("index_id")
+        .expect("index_id present");
+    assert_eq!(
+        via_http,
+        codetopo_cli::communities_value(&graph, 20),
+        "HTTP communities == CLI communities"
+    );
+    assert!(
+        body["method"].as_str().expect("method").contains("Leiden"),
+        "the method is stated beside the numbers: {body}"
+    );
+
     // Default metric, known hub.
     let (status, body) = harness.get(&format!("/v1/graphs/{index_id}/rank")).await;
     assert_eq!(status, StatusCode::OK, "rank default: {body}");

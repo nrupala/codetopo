@@ -1,0 +1,267 @@
+{
+  "schema_version": "1.2",
+  "nodes": [
+    {
+      "id": "a1",
+      "kind": "function",
+      "label": "a1",
+      "loc": {
+        "file": "two-villages.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "a2",
+      "kind": "function",
+      "label": "a2",
+      "loc": {
+        "file": "two-villages.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "a3",
+      "kind": "function",
+      "label": "a3",
+      "loc": {
+        "file": "two-villages.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "a4",
+      "kind": "function",
+      "label": "a4",
+      "loc": {
+        "file": "two-villages.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "a5",
+      "kind": "function",
+      "label": "a5",
+      "loc": {
+        "file": "two-villages.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "b1",
+      "kind": "function",
+      "label": "b1",
+      "loc": {
+        "file": "two-villages.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "b2",
+      "kind": "function",
+      "label": "b2",
+      "loc": {
+        "file": "two-villages.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "b3",
+      "kind": "function",
+      "label": "b3",
+      "loc": {
+        "file": "two-villages.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "b4",
+      "kind": "function",
+      "label": "b4",
+      "loc": {
+        "file": "two-villages.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "b5",
+      "kind": "function",
+      "label": "b5",
+      "loc": {
+        "file": "two-villages.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    },
+    {
+      "id": "z9",
+      "kind": "function",
+      "label": "z9",
+      "loc": {
+        "file": "two-villages.rs",
+        "line": 1
+      },
+      "tier": "optional",
+      "defines": [],
+      "refs": []
+    }
+  ],
+  "edges": [
+    {
+      "from": "a1",
+      "to": "a2",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "a1",
+      "to": "a3",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "a1",
+      "to": "a4",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "a1",
+      "to": "a5",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "a2",
+      "to": "a3",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "a2",
+      "to": "a4",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "a2",
+      "to": "a5",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "a3",
+      "to": "a4",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "a3",
+      "to": "a5",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "a4",
+      "to": "a5",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "b1",
+      "to": "b2",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "b1",
+      "to": "b3",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "b1",
+      "to": "b4",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "b1",
+      "to": "b5",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "b2",
+      "to": "b3",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "b2",
+      "to": "b4",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "b2",
+      "to": "b5",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "b3",
+      "to": "b4",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "b3",
+      "to": "b5",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "b4",
+      "to": "b5",
+      "kind": "calls",
+      "attrs": {}
+    },
+    {
+      "from": "a1",
+      "to": "b1",
+      "kind": "calls",
+      "attrs": {}
+    }
+  ],
+  "audit_head": "",
+  "audit_log": []
+}

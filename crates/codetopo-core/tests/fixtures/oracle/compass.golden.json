@@ -19,6 +19,20 @@
     "g": 0.2706766917293233,
     "h": 0.19047619047619047
   },
+  "communities": {
+    "igraph_modularity": 0.3046875,
+    "igraph_partition": {
+      "a": 0,
+      "b": 0,
+      "c": 0,
+      "d": 0,
+      "e": 1,
+      "f": 1,
+      "g": 1,
+      "h": 0
+    },
+    "igraph_version": "1.0.0"
+  },
   "eigenvector": {
     "absent": "PowerIterationFailedConvergence: oracle did not converge"
   },

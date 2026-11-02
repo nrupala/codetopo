@@ -809,7 +809,8 @@ pub fn describe_schema() -> serde_json::Value {
         },
         "queries": ["descendants", "ancestors", "blast_radius", "path",
                     "neighborhood", "search", "symbol", "stats", "verify",
-                    "diagnostics", "rank", "diff", "metrics", "history"],
+                    "diagnostics", "rank", "diff", "metrics", "history",
+                    "communities"],
     })
 }
 
@@ -953,6 +954,27 @@ pub fn rank_value(graph: &Graph, metric: RankMetric, limit: usize) -> serde_json
             "reason": reason,
         }),
     }
+}
+
+/// JSON form of a communities answer — the shared shape behind the
+/// CLI's `communities --json`, the HTTP communities route (which adds
+/// `index_id`), and the MCP `codetopo_communities` tool.
+/// Aggregate-first (SPEC §4b): the method, the total number of
+/// communities, the partition's modularity Q (`null` when the graph
+/// has no edges — Q is absent there, never 0 by default), the
+/// per-community summaries in full, then the node assignments capped
+/// at `limit` with `truncated` stated.
+pub fn communities_value(graph: &Graph, limit: usize) -> serde_json::Value {
+    let part = graph.communities();
+    let truncated = part.assignments.len() > limit;
+    json!({
+        "method": codetopo_core::COMMUNITIES_METHOD,
+        "total": part.total,
+        "modularity": part.modularity,
+        "communities": part.communities,
+        "assignments": part.assignments.iter().take(limit).collect::<Vec<_>>(),
+        "truncated": truncated,
+    })
 }
 
 /// The shared shape of the coupling/cohesion answer (CLI `metrics`,

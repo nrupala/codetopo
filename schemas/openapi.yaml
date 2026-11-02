@@ -665,6 +665,49 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '504':
           $ref: '#/components/responses/RequestTimeout'
+  /v1/graphs/{id}/communities:
+    get:
+      tags: [query]
+      operationId: communities
+      summary: Community measurements (the Leiden partition of the dependency graph).
+      description: |
+        The Leiden partition (Traag, Waltman & van Eck 2019) of the
+        dependency graph: quality function modularity (Newman &
+        Girvan 2004), resolution 1.0, a fixed published seed, over
+        the undirected projection of the CODE_SCHEMA §9 dependency
+        set weighted by recorded-edge multiplicity. Community ids
+        are assigned by smallest member id, ascending; an isolated
+        node is a singleton community. The response is
+        aggregate-first: the method, the community count, the
+        partition's modularity Q (computed by codetopo from the same
+        projection; absent — `null` — when the graph has no edges,
+        never 0 by default), per-community summaries in full (size,
+        internal edges, cut edges), then node assignments capped by
+        `limit` with `truncated` stated. The same object serves the
+        CLI's `communities` command and the MCP
+        `codetopo_communities` tool.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: The partition measurements.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunitiesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/graphs/{id}/history:
     get:
       tags: [query]
@@ -1407,6 +1450,68 @@ components:
           type: object
           additionalProperties:
             type: string
+    CommunitiesResponse:
+      type: object
+      description: |
+        The Leiden partition measurements: the method, the community
+        count (`total`), the partition's modularity Q (`modularity`,
+        null when the graph has no edges — absent, never 0 by
+        default), per-community summaries in full, and node
+        assignments capped by `limit` with `truncated` stated.
+      required: [index_id, method, total, modularity, communities, assignments, truncated]
+      properties:
+        index_id:
+          type: string
+        method:
+          type: string
+          description: The published definition of the partition method.
+        total:
+          type: integer
+          minimum: 0
+          description: The number of communities in the partition.
+        modularity:
+          type: number
+          nullable: true
+          description: Modularity Q of the partition, computed by codetopo from the projection; null when the graph has no edges.
+        communities:
+          type: array
+          items:
+            $ref: '#/components/schemas/Community'
+        assignments:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeCommunity'
+        truncated:
+          type: boolean
+          description: Whether the assignment list was capped by `limit`.
+    Community:
+      type: object
+      required: [id, size, internal_edges, cut_edges]
+      properties:
+        id:
+          type: integer
+          minimum: 0
+          description: Canonical community id (numbering by smallest member id, ascending).
+        size:
+          type: integer
+          minimum: 0
+        internal_edges:
+          type: integer
+          minimum: 0
+          description: Projection edges with both ends in this community.
+        cut_edges:
+          type: integer
+          minimum: 0
+          description: Projection edges with exactly one end in this community.
+    NodeCommunity:
+      type: object
+      required: [id, community]
+      properties:
+        id:
+          type: string
+        community:
+          type: integer
+          minimum: 0
     HistoryResponse:
       type: object
       description: |

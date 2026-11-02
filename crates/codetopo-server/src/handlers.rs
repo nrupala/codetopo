@@ -180,6 +180,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/graphs/:id/rank", get(rank))
         .route("/v1/graphs/:id/diff", get(diff))
         .route("/v1/graphs/:id/metrics", get(metrics))
+        .route("/v1/graphs/:id/communities", get(communities))
         .route("/v1/graphs/:id/history", get(history))
         .route("/v1/schema", get(schema))
         .route_layer(axum::middleware::from_fn_with_state(
@@ -1117,6 +1118,52 @@ async fn metrics(
     let db = state.db_path(&index_id);
     let graph = load_graph_blocking(&db, &index_id)?;
     let mut value = codetopo_cli::metrics_value(&graph);
+    value["index_id"] = json!(index_id);
+    Ok(Json(value))
+}
+
+/// Query for `communities`: the assignment cap, read as a string so
+/// a bad value is `invalid_param` naming the parameter (the rank
+/// route's discipline).
+#[derive(Debug, Default, Deserialize)]
+struct CommunitiesQuery {
+    limit: Option<String>,
+}
+
+/// `GET /v1/graphs/{id}/communities?limit=` — the Leiden partition
+/// measurements of the index (CODE_SCHEMA §9): community count, the
+/// partition's modularity Q (absent when the graph has no edges),
+/// per-community summaries, and node assignments. The shared
+/// [`codetopo_cli::communities_value`] shape plus `index_id`: the
+/// CLI's `communities` command and the MCP `codetopo_communities`
+/// tool return the same object. `limit` follows the closure routes'
+/// rule (default 20, 1..=1000) and caps the assignment list only —
+/// summaries are always full, with `truncated` stated.
+async fn communities(
+    State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
+    UrlPath(index_id): UrlPath<String>,
+    Query(query): Query<CommunitiesQuery>,
+) -> Result<Json<Value>, ApiError> {
+    enforce_tenancy(&state, &index_id, &key)?;
+    let limit: usize = match query.limit.as_deref().map(str::trim) {
+        None | Some("") => DEFAULT_LIMIT,
+        Some(raw) => {
+            let parsed: usize = raw.parse().map_err(|_| {
+                ApiError::invalid_param("limit", &format!("expected an integer, got '{raw}'"))
+            })?;
+            if parsed == 0 || parsed > MAX_LIMIT {
+                return Err(ApiError::invalid_param(
+                    "limit",
+                    &format!("must be 1..={MAX_LIMIT}, got {parsed}"),
+                ));
+            }
+            parsed
+        }
+    };
+    let db = state.db_path(&index_id);
+    let graph = load_graph_blocking(&db, &index_id)?;
+    let mut value = codetopo_cli::communities_value(&graph, limit);
     value["index_id"] = json!(index_id);
     Ok(Json(value))
 }

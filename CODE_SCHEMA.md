@@ -325,3 +325,19 @@ text. Parameters are fixed in the definitions, not tunable per query.
   step plus β = 1.0 bias; power iteration, tolerance 1e-6, max 100
   iterations, L2-normalized. Non-convergence (α ≥ 1/λmax) is an
   absence with that reason.
+
+**Communities (amendment, 0.9.0).** The `communities` surface reports
+the **Leiden** partition (Traag, Waltman & van Eck 2019) of the
+projection's undirected form — the same dependency set, directions
+dropped, weighted by recorded-edge multiplicity — with quality
+function **modularity** (Newman & Girvan 2004), resolution γ = 1.0,
+and a fixed seed published in the method text (20261102; the seed is
+part of the method, never varied per query). Community ids are
+assigned by smallest member id, ascending; the algorithm's own
+labels are never reported. An isolated node is a singleton
+community. Per community: size, internal edge count, and cut edge
+count over the projection's edges. The partition's **modularity Q**
+is computed from the same projection — Q = Σ_c [ l_c/m − (d_c/2m)² ]
+— and is absent when the graph has no edges (Q is undefined at
+m = 0), never 0 by default. An empty graph yields an empty partition
+(total 0, Q absent).
