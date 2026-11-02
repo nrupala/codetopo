@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Python extractor (P0): grammar pin and support gate.** The third
+  extractor begins: `tree-sitter-python` 0.25.0 (MIT; pairs with the
+  workspace's tree-sitter 0.25 runtime, verified against the pinned
+  crate's `node-types.json` — every node kind the mapping uses is
+  present; the one delta against the spec pass, `tuple_expression`,
+  is unused) joins `codetopo-extract`'s dependencies, and `.py` /
+  `.pyi` become supported extensions. Python files — already
+  discovered and package-named via `pyproject.toml`, then skipped —
+  now parse and emit their module; the symbol walk lands in the
+  following parts of this series. The `lib.rs` tests that asserted
+  `py` was unsupported are flipped, as the tripwire that the gate
+  moved.
+
 - **Listing copy corrected to seventeen tools.** The launch guide, the
   Gemini extension manifest, and the agent install guide still described
   the twelve tools of an older release; they now name all seventeen MCP
