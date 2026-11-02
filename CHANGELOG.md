@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Python extractor (P4): the known-answer fixture package.**
+  `crates/codetopo-extract/tests/fixture-py/` is `quarry`, a small
+  hand-written package (root module + two submodules; relative,
+  absolute and external imports; a Protocol; a base/derived pair;
+  decorated definitions; module constants) whose extraction and
+  graph answers are derived by hand in its README — 16 symbol rows,
+  7 imports, 1 call, 2 heritage rows in; 26 nodes, 33 edges, 2
+  diagnostics out — and asserted exactly by
+  `tests/known_answer_py.rs`. The fixture carries the property
+  pair on purpose: `@property` and `@size.setter` emit the same
+  symbol id (no renaming invented); the builder keeps the first —
+  the getter — ignores the duplicate wholesale, and reports
+  `MultiDefinition` with both locations. The test pins that whole
+  chain, plus the silent-heritage fact (an unresolvable base name
+  emits no edge; the `interface` kind carries the Protocol fact).
+
 - **Python extractor (P3): measured fields + CODE_SCHEMA 1.2.** The
   Python walker now measures like the others (spec §3.7, full
   parity): `end_line` and `signature` for every symbol — def/class
