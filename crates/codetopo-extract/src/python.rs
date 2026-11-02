@@ -22,17 +22,18 @@
 //! The mapping is specified in
 //! `~/workspace/codetopo-work/python-extractor/SPEC.md` §3: module ids
 //! (§3.1, the `__init__` collapse mirrors the TS `index` rule), symbols
-//! (§3.2), and the defines/refs/writes scan (§3.6, the marimo
-//! discipline shared with the TS/Rust walkers — nested declarations
-//! pruned, reads that are also defines dropped). Imports, calls and
-//! heritage (§3.3–§3.5) and the measured fields (§3.7) land in the
-//! following parts of the series.
+//! (§3.2), the defines/refs/writes scan (§3.6, the marimo discipline
+//! shared with the TS/Rust walkers — nested declarations pruned,
+//! reads that are also defines dropped), imports (§3.3), calls
+//! (§3.4), and heritage (§3.5, Inherits only; `Protocol` bases flip
+//! the class kind to `interface` per decision D2). The measured
+//! fields (§3.7) land in the following part of the series.
 
 use std::collections::HashSet;
 use std::path::Path;
 
 use codetopo_core::emit::{FileSymbols, RawCall, RawHeritage, RawImport, RawSymbol};
-use codetopo_core::schema::NodeKind;
+use codetopo_core::schema::{EdgeKind, NodeKind};
 
 use crate::{display_path, line_of, text_of, ExtractError};
 
@@ -58,10 +59,13 @@ pub(crate) fn extract(package: &str, rel_path: &Path, source: &str) -> Result<Fi
     let module_id = module_id_for(package, rel_path);
     let mut w = Walker {
         src: source.as_bytes(),
+        pkg: package.to_string(),
         module_id: module_id.clone(),
+        is_init: rel_path.file_stem().map(|s| s == "__init__").unwrap_or(false),
         path: Vec::new(),
         enclosing: Vec::new(),
         in_class: false,
+        pending_refs: Vec::new(),
         symbols: Vec::new(),
         imports: Vec::new(),
         calls: Vec::new(),
@@ -100,13 +104,21 @@ fn module_id_for(package: &str, rel_path: &Path) -> String {
 
 struct Walker<'a> {
     src: &'a [u8],
+    pkg: String,
     module_id: String,
+    /// True when the file is `__init__.py`/`__init__.pyi` — its module
+    /// id already IS its package (relative-import resolution, §3.3).
+    is_init: bool,
     /// Symbol-name path segments: class → method → nested fn → …
     path: Vec<String>,
     /// Enclosing symbol ids.
     enclosing: Vec<String>,
     /// True while walking a class body directly (defs become methods).
     in_class: bool,
+    /// Refs from bare decorators (`@cache`, `@x.setter`), collected by
+    /// the decorated-definition arm and merged into the symbol it
+    /// pushes next (spec D3).
+    pending_refs: Vec<String>,
     symbols: Vec<RawSymbol>,
     imports: Vec<RawImport>,
     calls: Vec<RawCall>,
@@ -131,9 +143,18 @@ impl<'a> Walker<'a> {
             "function_definition" => self.handle_function(node),
             "class_definition" => self.handle_class(node),
             "decorated_definition" => {
-                // The symbol is the inner definition (spec D3: line and
-                // span come from it); the decorator's own calls/refs are
-                // recorded by the edges pass against the enclosing scope.
+                // Decorators are evaluated in the ENCLOSING scope
+                // (spec D3): their calls record against it, and a bare
+                // decorator (name or attribute, not a call) becomes a
+                // ref on the decorated symbol. The symbol itself is
+                // the inner definition — line and span come from it.
+                for i in 0..node.named_child_count() {
+                    if let Some(c) = node.named_child(i) {
+                        if c.kind() == "decorator" {
+                            self.handle_decorator(c);
+                        }
+                    }
+                }
                 if let Some(def) = node.child_by_field_name("definition") {
                     match def.kind() {
                         "function_definition" => self.handle_function(def),
@@ -144,8 +165,75 @@ impl<'a> Walker<'a> {
             }
             "type_alias_statement" => self.handle_type_alias(node),
             "assignment" if self.enclosing.is_empty() => self.handle_module_assignment(node),
+            "import_statement" => self.handle_import(node),
+            "future_import_statement" => self.handle_future_import(node),
+            "import_from_statement" => self.handle_from_import(node),
+            "call" => {
+                self.record_call(node);
+                self.walk_children(node);
+            }
             _ => self.walk_children(node),
         }
+    }
+
+    /// The id a call/import is attributed to: the enclosing symbol,
+    /// or the module itself at top level.
+    fn current_scope(&self) -> String {
+        self.enclosing
+            .last()
+            .cloned()
+            .unwrap_or_else(|| self.module_id.clone())
+    }
+
+    /// One `call` node → one RawCall; `to_name` is the callee text as
+    /// written, trimmed (spec §3.4 — the builder suffix-matches it).
+    fn record_call(&mut self, node: Node) {
+        if let Some(f) = node.child_by_field_name("function") {
+            let t = self.text(f).trim().to_string();
+            if !t.is_empty() {
+                self.calls.push(RawCall {
+                    from_id: self.current_scope(),
+                    to_name: t,
+                    line: line_of(node),
+                });
+            }
+        }
+    }
+
+    /// A `decorator` node: a call inside it records against the
+    /// enclosing scope; a bare name/attribute becomes a pending ref
+    /// on the decorated symbol (spec D3).
+    fn handle_decorator(&mut self, node: Node) {
+        for i in 0..node.named_child_count() {
+            if let Some(expr) = node.named_child(i) {
+                match expr.kind() {
+                    "call" => self.walk(expr),
+                    "identifier" => self.pending_refs.push(self.text(expr)),
+                    "attribute" => {
+                        if let Some(attr) = expr.child_by_field_name("attribute") {
+                            self.pending_refs.push(self.text(attr));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Consume the pending decorator refs, merging them into a
+    /// symbol's ref list (deduped, define-filtered, sorted).
+    fn take_pending_refs(&mut self, refs: &mut Vec<String>, defines: &[String]) {
+        if self.pending_refs.is_empty() {
+            return;
+        }
+        let mut set: HashSet<String> = refs.iter().cloned().collect();
+        for r in std::mem::take(&mut self.pending_refs) {
+            if !defines.contains(&r) {
+                set.insert(r);
+            }
+        }
+        *refs = set.into_iter().collect();
+        refs.sort();
     }
 
     /// Push a symbol record; the caller walks the body for nested
@@ -204,6 +292,12 @@ impl<'a> Walker<'a> {
             refs = set.into_iter().filter(|r| !defines.contains(r)).collect();
             refs.sort();
         }
+        self.take_pending_refs(&mut refs, &defines);
+        // Default values are evaluated at definition time, in the
+        // enclosing scope: their calls belong to that scope (§3.4).
+        if let Some(p) = node.child_by_field_name("parameters") {
+            self.walk_children(p);
+        }
         self.push_symbol(kind, &name, node, defines, refs, writes);
         let prev_class = self.in_class;
         self.in_class = false;
@@ -219,9 +313,38 @@ impl<'a> Walker<'a> {
             return;
         };
         let name = self.text(name_node);
+        // Heritage (§3.5): base names off the superclasses list; a
+        // `Protocol` base (plain, `typing.Protocol`, or subscripted)
+        // flips the kind to interface (decision D2).
+        let mut targets: Vec<String> = Vec::new();
+        if let Some(supers) = node.child_by_field_name("superclasses") {
+            // Base expressions are evaluated in the enclosing scope.
+            self.walk_children(supers);
+            for i in 0..supers.named_child_count() {
+                if let Some(c) = supers.named_child(i) {
+                    if let Some(t) = base_name(c, self.src) {
+                        targets.push(t);
+                    }
+                }
+            }
+        }
+        let kind = if targets.iter().any(|t| t == "Protocol") {
+            NodeKind::Interface
+        } else {
+            NodeKind::Class
+        };
+        for t in &targets {
+            self.heritage.push(RawHeritage {
+                type_name: name.clone(),
+                target_name: t.clone(),
+                kind: EdgeKind::Inherits,
+                line: line_of(node),
+            });
+        }
         let body = node.child_by_field_name("body");
-        let refs = body.map(|b| body_refs(b, self.src)).unwrap_or_default();
-        self.push_symbol(NodeKind::Class, &name, node, Vec::new(), refs, Vec::new());
+        let mut refs = body.map(|b| body_refs(b, self.src)).unwrap_or_default();
+        self.take_pending_refs(&mut refs, &[]);
+        self.push_symbol(kind, &name, node, Vec::new(), refs, Vec::new());
         let prev_class = self.in_class;
         self.in_class = true;
         if let Some(b) = body {
@@ -252,7 +375,7 @@ impl<'a> Walker<'a> {
     /// pattern/attribute/subscript targets yield none (the TS
     /// destructuring precedent).
     fn handle_module_assignment(&mut self, mut node: Node) {
-        loop {
+        let final_right: Option<Node> = loop {
             let left = node.child_by_field_name("left");
             let right = node.child_by_field_name("right");
             if let Some(l) = left {
@@ -282,9 +405,181 @@ impl<'a> Walker<'a> {
             }
             match right {
                 Some(r) if r.kind() == "assignment" => node = r,
-                _ => break,
+                _ => break right,
+            }
+        };
+        // Calls in the initializer belong to the module (§3.4); the
+        // assignment arm consumed the statement, so walk the final
+        // right-hand side for them explicitly.
+        if let Some(r) = final_right {
+            self.walk(r);
+        }
+    }
+
+    /// Resolve a dotted module path to a module id (spec §3.3, the
+    /// Rust walker's bare-root rule): the first segment decides — the
+    /// workspace package's own name means internal (the segment IS
+    /// the package segment of the id), anything else is
+    /// `external::{first}`.
+    fn resolve_dotted(&self, dotted: &str) -> String {
+        let segs: Vec<&str> = dotted.split('.').filter(|s| !s.is_empty()).collect();
+        match segs.first() {
+            Some(first) if *first == self.pkg => {
+                if segs.len() == 1 {
+                    self.pkg.clone()
+                } else {
+                    format!("{}::{}", self.pkg, segs[1..].join("::"))
+                }
+            }
+            Some(first) => format!("external::{first}"),
+            None => "external::unresolved".to_string(),
+        }
+    }
+
+    /// `import a.b.c` / `import a.b as d` — one RawImport per dotted
+    /// name (spec §3.3); the plain form binds the first segment, the
+    /// aliased form binds the alias.
+    fn handle_import(&mut self, node: Node) {
+        let line = line_of(node);
+        for i in 0..node.named_child_count() {
+            let Some(c) = node.named_child(i) else { continue };
+            match c.kind() {
+                "dotted_name" => {
+                    let dotted = self.text(c);
+                    let binding = dotted.split('.').next().unwrap_or("").to_string();
+                    self.imports.push(RawImport {
+                        from_module_id: self.module_id.clone(),
+                        to_module_id: self.resolve_dotted(&dotted),
+                        bindings: vec![binding],
+                        line,
+                    });
+                }
+                "aliased_import" => {
+                    if let Some(n) = c.child_by_field_name("name") {
+                        let dotted = self.text(n);
+                        let binding = c
+                            .child_by_field_name("alias")
+                            .map(|a| self.text(a))
+                            .unwrap_or_default();
+                        self.imports.push(RawImport {
+                            from_module_id: self.module_id.clone(),
+                            to_module_id: self.resolve_dotted(&dotted),
+                            bindings: vec![binding],
+                            line,
+                        });
+                    }
+                }
+                _ => {}
             }
         }
+    }
+
+    /// `from __future__ import annotations` parses as its own node
+    /// kind in this grammar; the emitted row is the spec table's —
+    /// `external::__future__`, bindings as written, no special case
+    /// in the output (§3.3).
+    fn handle_future_import(&mut self, node: Node) {
+        let mut bindings: Vec<String> = Vec::new();
+        for i in 0..node.named_child_count() {
+            if let Some(c) = node.named_child(i) {
+                if c.kind() == "dotted_name" {
+                    bindings.push(self.text(c));
+                }
+            }
+        }
+        self.imports.push(RawImport {
+            from_module_id: self.module_id.clone(),
+            to_module_id: "external::__future__".to_string(),
+            bindings,
+            line: line_of(node),
+        });
+    }
+
+    /// `from X import a, b as c` / `from .rel import …` — one
+    /// RawImport for the statement, bindings = the local names
+    /// (alias wins); a glob import binds nothing (spec §3.3).
+    fn handle_from_import(&mut self, node: Node) {
+        let line = line_of(node);
+        let Some(module_node) = node.child_by_field_name("module_name") else {
+            return;
+        };
+        let to = match module_node.kind() {
+            "dotted_name" => self.resolve_dotted(&self.text(module_node)),
+            "relative_import" => self.resolve_relative(module_node),
+            _ => return,
+        };
+        let mut bindings: Vec<String> = Vec::new();
+        let mut glob = false;
+        for i in 0..node.named_child_count() {
+            let Some(c) = node.named_child(i) else { continue };
+            if c.id() == module_node.id() {
+                continue;
+            }
+            match c.kind() {
+                "dotted_name" | "identifier" => bindings.push(self.text(c)),
+                "aliased_import" => {
+                    if let Some(a) = c.child_by_field_name("alias") {
+                        bindings.push(self.text(a));
+                    }
+                }
+                "wildcard_import" => glob = true,
+                _ => {}
+            }
+        }
+        if glob {
+            bindings.clear();
+        }
+        self.imports.push(RawImport {
+            from_module_id: self.module_id.clone(),
+            to_module_id: to,
+            bindings,
+            line,
+        });
+    }
+
+    /// Relative imports resolve on module-id segments (spec §3.3):
+    /// the importing module's package is its id minus the last
+    /// segment — except `__init__.py`, whose id already is its
+    /// package. One dot = that package; each extra dot ascends one
+    /// segment; ascending past the root segment is
+    /// `external::unresolved`. Purely syntactic.
+    fn resolve_relative(&self, node: Node) -> String {
+        let text = self.text(node);
+        let trimmed = text.trim();
+        let dots = trimmed.chars().take_while(|c| *c == '.').count();
+        let rest = trimmed[dots..].trim();
+        let segs: Vec<&str> = self.module_id.split("::").collect();
+        let package_len = if self.is_init {
+            segs.len()
+        } else {
+            segs.len().saturating_sub(1)
+        };
+        let ascend = dots.saturating_sub(1);
+        if ascend >= package_len {
+            return "external::unresolved".to_string();
+        }
+        let mut out: Vec<&str> = segs[..package_len - ascend].to_vec();
+        if !rest.is_empty() {
+            out.extend(rest.split('.').filter(|s| !s.is_empty()));
+        }
+        out.join("::")
+    }
+}
+
+/// The name a class base contributes (spec §3.5): a plain identifier,
+/// the attribute of a dotted name (`pkg.Base` → `Base`), or the value
+/// of a subscript (`Generic[T]` → `Generic`, recursively). Keyword
+/// arguments and call bases yield nothing.
+fn base_name(node: Node, src: &[u8]) -> Option<String> {
+    match node.kind() {
+        "identifier" => Some(txt(node, src)),
+        "attribute" => node
+            .child_by_field_name("attribute")
+            .map(|a| txt(a, src)),
+        "subscript" => node
+            .child_by_field_name("value")
+            .and_then(|v| base_name(v, src)),
+        _ => None,
     }
 }
 
@@ -767,4 +1062,133 @@ def compute(items, factor: int = 2) -> int:
         // of a write target) is not a ref, per the TS precedent.
         assert_eq!(s.refs, sv(&["len", "open", "risky", "ValueError", "report", "int"]));
     }
+
+    const EDGES_PY: &str = r#"
+import os
+import engine.core.graph as graph
+import requests.sessions
+from engine.core import graph as g, util
+from . import sibling
+from .local import thing
+from ..other import deep
+from ...beyond import nope
+from collections import *
+from __future__ import annotations
+
+def run():
+    graph.draw()
+    helper()
+    return Engine()
+
+class Engine(Base, mixins.Mixin, Generic[T], metaclass=ABCMeta):
+    pass
+
+class Shape(Protocol):
+    pass
+
+class TypedShape(typing.Protocol):
+    pass
+
+@app.get("/x")
+def handler():
+    pass
+
+@cache
+def cached():
+    pass
+
+@decorator
+class Wrapped(Base):
+    pass
+"#;
+
+    #[test]
+    fn py_imports_all_rows() {
+        let fs = run("core/engine.py", EDGES_PY);
+        let got: Vec<(&str, Vec<String>)> = fs
+            .imports
+            .iter()
+            .map(|i| (i.to_module_id.as_str(), i.bindings.clone()))
+            .collect();
+        let want: Vec<(&str, Vec<String>)> = vec![
+            ("external::os", sv(&["os"])),
+            ("engine::core::graph", sv(&["graph"])),
+            ("external::requests", sv(&["requests"])),
+            ("engine::core", sv(&["g", "util"])),
+            ("engine::core", sv(&["sibling"])),
+            ("engine::core::local", sv(&["thing"])),
+            ("engine::other", sv(&["deep"])),
+            ("external::unresolved", sv(&["nope"])),
+            ("external::collections", sv(&[])),
+            ("external::__future__", sv(&["annotations"])),
+        ];
+        assert_eq!(got, want);
+        assert!(fs.imports.iter().all(|i| i.from_module_id == "engine::core::engine"));
+    }
+
+    #[test]
+    fn py_relative_imports_from_init() {
+        // In `core/__init__.py` the module id IS the package, so one
+        // dot stays and two dots reach the root package.
+        let src = "from . import sib\nfrom .mod import x\nfrom ..up import y\n";
+        let fs = run("core/__init__.py", src);
+        assert_eq!(fs.module_id, "engine::core");
+        let got: Vec<&str> = fs.imports.iter().map(|i| i.to_module_id.as_str()).collect();
+        assert_eq!(got, vec!["engine::core", "engine::core::mod", "engine::up"]);
+    }
+
+    #[test]
+    fn py_calls_and_decorator_edges() {
+        let fs = run("core/engine.py", EDGES_PY);
+        let got: Vec<(&str, &str)> = fs
+            .calls
+            .iter()
+            .map(|c| (c.from_id.as_str(), c.to_name.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("engine::core::engine::run", "graph.draw"),
+                ("engine::core::engine::run", "helper"),
+                ("engine::core::engine::run", "Engine"),
+                // The decorator call belongs to the enclosing (module)
+                // scope, per D3 — not to `handler`.
+                ("engine::core::engine", "app.get"),
+            ]
+        );
+        let m = by_id(&fs);
+        // Bare decorators land as refs on the decorated symbol (D3).
+        assert_eq!(m["engine::core::engine::cached"].refs, sv(&["cache"]));
+        assert_eq!(m["engine::core::engine::Wrapped"].refs, sv(&["decorator"]));
+        assert!(m["engine::core::engine::handler"].refs.is_empty());
+    }
+
+    #[test]
+    fn py_heritage_and_protocol_kind() {
+        let fs = run("core/engine.py", EDGES_PY);
+        let got: Vec<(&str, &str)> = fs
+            .heritage
+            .iter()
+            .map(|h| (h.type_name.as_str(), h.target_name.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("Engine", "Base"),
+                ("Engine", "Mixin"),
+                ("Engine", "Generic"),
+                ("Shape", "Protocol"),
+                ("TypedShape", "Protocol"),
+                ("Wrapped", "Base"),
+            ]
+        );
+        assert!(fs.heritage.iter().all(|h| h.kind == EdgeKind::Inherits));
+        let m = by_id(&fs);
+        assert_eq!(m["engine::core::engine::Engine"].kind, NodeKind::Class);
+        // Protocol classes — plain, dotted, in either spelling — are
+        // interfaces (D2); the detection is name-based.
+        assert_eq!(m["engine::core::engine::Shape"].kind, NodeKind::Interface);
+        assert_eq!(m["engine::core::engine::TypedShape"].kind, NodeKind::Interface);
+    }
 }
+

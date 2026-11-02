@@ -4,6 +4,25 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Python extractor (P2): imports, calls, heritage.** The Python
+  walker now emits the edge records of spec §3.3–§3.5. Imports are
+  module-granularity with the Rust walker's bare-root rule (the
+  first dotted segment decides internal vs `external::`); aliased
+  imports bind the alias, globs bind nothing, and relative imports
+  resolve syntactically on module-id segments (`__init__.py`'s id
+  already is its package; ascending past the root yields
+  `external::unresolved`). Every call records its callee text as
+  written with the enclosing symbol (or module) as its source —
+  decorator calls belong to the enclosing scope and bare decorators
+  become refs on the decorated symbol (D3). Class bases emit
+  Inherits heritage only (no implements edges for Python), and a
+  `Protocol` base — plain, `typing.Protocol`, or subscripted —
+  makes the class an `interface` (D2, name-based detection, the
+  limit stated in the extract README). One grammar fact the
+  fixtures caught: `from __future__ import …` parses as its own
+  node kind (`future_import_statement`); it emits exactly the
+  table's ordinary row.
+
 - **Python extractor (P1): symbols and the data-flow scan.** The
   Python walker now emits symbols under the spec §3.2 mapping:
   functions and async functions, methods (a `def` directly in a class
