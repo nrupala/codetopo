@@ -4,6 +4,28 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-02
+
+- **Python support.** codetopo now indexes Python (`.py`,
+  `.pyi`) alongside Rust and TypeScript/JavaScript, through the
+  same emit contract, builder, snapshot format and 17 MCP tools:
+  module ids with `__init__.py` collapsing to its package;
+  functions, methods, classes, Protocol classes as interfaces,
+  module variables and PEP 695 type aliases; imports (absolute,
+  relative, future) at module granularity; calls as written;
+  inherits heritage; defines/refs/writes; and the measured
+  fields — signature, end line, decision points — that feed
+  complexity. CODE_SCHEMA rises to 1.2 (additive: the Python
+  enumeration in §3.2 and relative-import resolution in §3.1);
+  SCHEMA_VERSION follows, and 1.0/1.1 snapshots keep reading.
+  Duplicate definitions (overloads, TYPE_CHECKING branches,
+  property/setter pairs) surface as MultiDefinition diagnostics
+  with every location. Proof: hand-counted conformance fixtures,
+  a known-answer fixture package (26 nodes / 33 edges / 2
+  diagnostics, arithmetic published in its README), HTTP + MCP +
+  CLI lifecycle parity, and a pallets/click cross-check
+  reconciled row-for-row against CPython's own AST count.
+
 - **Gate fix (0.8.0 candidate): `zip` 9.0.3 → 9.2.2.** The
   release gate's OSV pass flagged GHSA-m665-v7pm-7grj ("zip
   cloaking": a dual-header parser differential in the `zip` crate

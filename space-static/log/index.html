@@ -31,6 +31,27 @@ itself is on the <a href="../">front page</a>.</p>
 
 <h2>The story so far</h2>
 
+<h3><span class="when">November 2, 2026 —</span> 0.8.0: Python joins</h3>
+<p>codetopo now reads Python. Files ending .py and .pyi are indexed through
+the same contract as Rust and TypeScript/JavaScript: packages and modules
+(an __init__.py stands for its package), classes, functions and methods,
+module-level variables, and imports — absolute, relative, and future —
+resolved at module level. Protocol classes are recognised as interfaces.
+Every Python symbol carries the measured fields the analytics engine feeds
+on — its signature, its line span, and its counted decision points — so
+complexity, coupling, and ranking work on Python code exactly as they do on
+the other languages, on the command line, over HTTP, and through the
+seventeen agent tools alike. The schema that describes all of this rises
+to 1.2, additively: snapshots written by older versions keep reading.
+Where Python defines a name twice — an overload, a property and its
+setter — the index says so, with both locations, instead of silently
+picking one. The proof is pinned in the open: hand-counted fixtures, a
+known-answer package whose expected graph is published arithmetic, and a
+cross-check against a real-world codebase (pallets/click) reconciled
+row-for-row against CPython's own count of its definitions. All eight
+crates move to 0.8.0 together. 0.8.0 is a release candidate since
+November 2, 2026 — it graduates after a clean watched week.</p>
+
 <h3><span class="when">October 30, 2026 —</span> Listing copy brought current</h3>
 <p>A housekeeping pass over the pages that directories and agents read:
 the launch guide, the Gemini extension manifest, and the agent install
@@ -172,7 +193,7 @@ an agent grow and trim a working view of a codebase instead of re-asking from
 scratch every time.</p>
 
 <h3><span class="when">Later —</span> More languages</h3>
-<p>Rust and TypeScript/JavaScript are parsed today. Each language is a front
+<p>Rust, TypeScript/JavaScript, and Python are parsed today. Each language is a front
 end against one shared contract, so new languages slot in without changing
 the questions you can ask.</p>
 
