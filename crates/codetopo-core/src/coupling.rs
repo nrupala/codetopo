@@ -161,8 +161,9 @@ pub struct GraphMetrics {
 
 /// The dependency edge kinds of CODE_SCHEMA §9 — everything except
 /// `contains` (hierarchy, not dependency, §1.4) — over which coupling
-/// is measured.
-fn is_dependency(kind: EdgeKind) -> bool {
+/// is measured. The analytics projection (`crate::projection`) ranges
+/// over the same set: one definition for the whole engine.
+pub(crate) fn is_dependency(kind: EdgeKind) -> bool {
     matches!(
         kind,
         EdgeKind::Imports

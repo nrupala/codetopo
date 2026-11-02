@@ -23,6 +23,7 @@ pub mod history;
 pub mod emit;
 pub mod graph;
 pub mod measure;
+pub mod projection;
 pub mod render;
 pub mod schema;
 pub mod snapshot;
@@ -38,6 +39,23 @@ pub use measure::{
     diff_graphs, GraphDiff, ImpactEntry, NodeChange, RankMetric, RankedSymbol, SymbolDossier,
     SymbolMeasurements,
 };
+pub use projection::{AnalyticsProjection, CommunityDetector};
 pub use render::{layout, render_svg, LayoutEdge, LayoutNode, LayoutSpec};
 pub use schema::{Edge, EdgeKind, Loc, Node, NodeKind, Tier};
 pub use snapshot::Snapshot;
+
+/// Shared test harness (SPEC §7 determinism proofs): a computation run
+/// twice must produce byte-identical serialized output.
+#[cfg(test)]
+pub(crate) mod testkit {
+    /// Serialize `value` to JSON bytes (the byte form determinism is
+    /// judged on).
+    pub fn bytes_of<T: serde::Serialize>(value: &T) -> Vec<u8> {
+        serde_json::to_vec(value).expect("test value serializes")
+    }
+
+    /// Run `f` twice and assert byte-identical serialized results.
+    pub fn assert_deterministic<T: serde::Serialize>(f: impl Fn() -> T) {
+        assert_eq!(bytes_of(&f()), bytes_of(&f()), "run-twice outputs differ");
+    }
+}
