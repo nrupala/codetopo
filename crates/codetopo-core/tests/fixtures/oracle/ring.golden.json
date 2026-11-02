@@ -11,6 +11,16 @@
     "y": 0.5,
     "z": 0.75
   },
+  "communities": {
+    "igraph_modularity": 0.0,
+    "igraph_partition": {
+      "w": 0,
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "igraph_version": "1.0.0"
+  },
   "eigenvector": {
     "w": 0.5262015076917937,
     "x": 0.43104970112724544,

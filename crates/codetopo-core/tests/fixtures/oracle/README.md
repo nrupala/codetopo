@@ -76,6 +76,35 @@ correct answer is the absence (`did not converge`) — asserted
 against both the engine and the oracle, which independently refuse
 (PowerIterationFailedConvergence).
 
+## two-villages — the communities known-answer fixture (RA2)
+
+Two 5-cliques (`a1..a5`, `b1..b5`) joined by one bridge edge
+(`a1-b1`), plus one isolated node (`z9`). 11 nodes, 21 edges.
+Planted partition: the two cliques + the singleton. Leiden must
+recover it exactly at γ = 1.0.
+
+### Modularity of the planted partition, by hand
+
+m = 21. In each clique: internal weight l = 10 (all pairs); degree
+sum d = 21 (the bridge endpoint has degree 5 — 4 clique edges + the
+bridge — the other four have degree 4). The singleton contributes 0
+(l = 0, d = 0).
+
+Q = Σ_c [ l_c/m − (d_c/2m)² ] = 2 × [ 10/21 − (21/42)² ]
+  = 2 × [ 0.476190 − 0.25 ] = **0.452381** (0.452380952…)
+
+The tests assert the engine's Q against this hand value and against
+networkx's modularity of the igraph partition (the §6 formula
+cross-check), both at 1e-9.
+
+## karate — the literature's standard case (RA2)
+
+Zachary's karate club: 34 nodes, 78 edges, as shipped by networkx's
+`karate_club_graph`. No planted partition is asserted. The rules
+(SPEC §6): Q(engine) ≥ Q(igraph) − 0.005 and NMI(engine, igraph)
+≥ 0.9, where the golden records igraph's Leiden partition and its
+networkx modularity (Q ≈ 0.4198 at generation time).
+
 ## ring — the eigenvector/katz fixture (RA1)
 
 Four nodes, five edges: `w -> x, x -> y, y -> z, z -> w, x -> z` —

@@ -342,6 +342,20 @@ pub fn tool_catalog() -> Vec<Value> {
             },
         }),
         json!({
+            "name": "codetopo_communities",
+            "title": "Community measurements (Leiden partition)",
+            "description": "The Leiden partition of the dependency graph (Traag et al. 2019; modularity quality, resolution 1.0, fixed published seed) over the undirected CODE_SCHEMA section 9 projection weighted by edge multiplicity: community count, the partition's modularity Q (absent when the graph has no edges), per-community sizes and internal/cut edge counts, and node assignments (limit caps the assignment list; summaries are always full and truncation is stated). Measurements with a stated method - no thresholds, no verdicts.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "db_path": {"type": "string", "description": "Path to the index database."},
+                    "limit": {"type": "integer", "description": "Maximum assignments to return. Default 20."},
+                },
+                "required": ["db_path"],
+            },
+        }),
+        json!({
             "name": "codetopo_history",
             "title": "Change-history measurements (hotspots, change coupling)",
             "description": "Hotspots (change frequency x complexity, both factors stated) and change coupling (support/confidence as pair counts) over a local working tree's git history. History is local-only: without repo_path the answer is the unmeasured report (measured: false with the reason), never invented numbers.",
@@ -433,6 +447,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, ToolError> {
         "codetopo_rank" => tool_rank(args),
         "codetopo_diff" => tool_diff(args),
         "codetopo_metrics" => tool_metrics(args),
+        "codetopo_communities" => tool_communities(args),
         "codetopo_history" => tool_history(args),
         "codetopo_neighborhood" => tool_neighborhood(args),
         "codetopo_get_symbol" => tool_get_symbol(args),
@@ -712,6 +727,15 @@ fn tool_metrics(args: &Value) -> Result<Value, ToolError> {
     Ok(codetopo_cli::metrics_value(&graph))
 }
 
+/// `codetopo_communities` — the Leiden partition measurements, in
+/// the shared shape the CLI's `communities --json` and the HTTP
+/// communities route also return.
+fn tool_communities(args: &Value) -> Result<Value, ToolError> {
+    let graph = open_graph(args)?;
+    let limit = optional_limit(args)?;
+    Ok(codetopo_cli::communities_value(&graph, limit))
+}
+
 /// `codetopo_history` — change-history measurements, in the shared
 /// shape the CLI's `history --json` and the HTTP history route also
 /// return. With a `repo_path`, the history is read from that local
@@ -903,9 +927,9 @@ mod tests {
     // -- catalogue ---------------------------------------------------------
 
     #[test]
-    fn catalogue_lists_seventeen_tools() {
+    fn catalogue_lists_eighteen_tools() {
         let catalog = tool_catalog();
-        assert_eq!(catalog.len(), 17, "expected 17 tools: {catalog:?}");
+        assert_eq!(catalog.len(), 18, "expected 18 tools: {catalog:?}");
 
         let names: Vec<&str> = catalog
             .iter()
@@ -926,6 +950,7 @@ mod tests {
                 "codetopo_rank",
                 "codetopo_diff",
                 "codetopo_metrics",
+                "codetopo_communities",
                 "codetopo_history",
                 "codetopo_neighborhood",
                 "codetopo_get_symbol",
@@ -1283,7 +1308,7 @@ mod tests {
         assert_eq!(response["id"], 7);
         assert_eq!(
             response["result"]["tools"].as_array().expect("tools").len(),
-            17
+            18
         );
     }
 
@@ -1493,6 +1518,22 @@ mod tests {
         assert!(
             via_tool["methods"]["hotspot"].as_str().expect("method").contains("Tornhill"),
             "the methods travel with the answer"
+        );
+    }
+
+    #[test]
+    fn communities_tool_matches_the_cli_value() {
+        let (_dir, db_path) = fixture_index();
+        let graph = load_graph_from_db(&db_path).expect("graph loads");
+        let via_tool = result_of("codetopo_communities", &args(&db_path, json!({})));
+        assert_eq!(
+            via_tool,
+            codetopo_cli::communities_value(&graph, 20),
+            "MCP communities == CLI communities for the same database"
+        );
+        assert!(
+            via_tool["method"].as_str().expect("method").contains("Leiden"),
+            "the method travels with the numbers"
         );
     }
 

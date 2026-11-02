@@ -18,6 +18,7 @@
 //! Owned by 2351485 ALBERTA INC. (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
 
 pub mod centrality;
+pub mod communities;
 pub mod coupling;
 pub mod diag;
 pub mod history;
@@ -29,6 +30,10 @@ pub mod render;
 pub mod schema;
 pub mod snapshot;
 
+pub use communities::{
+    CommunityPartition, CommunitySummary, LeidenDetector, NodeCommunity, COMMUNITIES_METHOD,
+    LEIDEN_SEED,
+};
 pub use coupling::{GraphMetrics, PackageMetrics, TypeMetrics, METRIC_METHODS};
 pub use history::{
     graph_history, CoupledFiles, FileHotspot, HistoryInput, HistoryReport, HISTORY_METHODS,

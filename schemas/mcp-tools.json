@@ -357,6 +357,32 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
+      "description": "The Leiden partition of the dependency graph (Traag et al. 2019; modularity quality, resolution 1.0, fixed published seed) over the undirected CODE_SCHEMA section 9 projection weighted by edge multiplicity: community count, the partition's modularity Q (absent when the graph has no edges), per-community sizes and internal/cut edge counts, and node assignments (limit caps the assignment list; summaries are always full and truncation is stated). Measurements with a stated method - no thresholds, no verdicts.",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum assignments to return. Default 20.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "db_path"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_communities",
+      "title": "Community measurements (Leiden partition)"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "Hotspots (change frequency x complexity, both factors stated) and change coupling (support/confidence as pair counts) over a local working tree's git history. History is local-only: without repo_path the answer is the unmeasured report (measured: false with the reason), never invented numbers.",
       "inputSchema": {
         "properties": {

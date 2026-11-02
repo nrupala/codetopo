@@ -22,6 +22,7 @@ import platform
 import sys
 from pathlib import Path
 
+import igraph as ig
 import networkx as nx
 import numpy
 
@@ -59,6 +60,57 @@ def measure(fn, g):
         return {"absent": f"{type(exc).__name__}: oracle did not converge"}
 
 
+def communities(fixture):
+    """The communities cross-check (SPEC §6): python-igraph Leiden on
+    the undirected multiplicity-weighted projection, with that
+    partition's modularity computed by networkx. The Rust side is
+    judged by partition quality + agreement (planted recovery on
+    planted fixtures; Q and NMI on karate), never label identity."""
+    nodes = sorted(
+        n["id"] for n in fixture["nodes"]
+        if n["kind"] != "external" and not n["id"].startswith("external::")
+    )
+    keep = set(nodes)
+    idx = {node: i for i, node in enumerate(nodes)}
+    weights = {}
+    for e in fixture["edges"]:
+        if e["kind"] not in DEPENDENCY_KINDS:
+            continue
+        a, b = e["from"], e["to"]
+        if a in keep and b in keep and a != b:
+            key = (min(a, b), max(a, b))
+            weights[key] = weights.get(key, 0) + 1
+    edges = sorted(weights)
+    g = ig.Graph(
+        n=len(nodes),
+        edges=[(idx[a], idx[b]) for a, b in edges],
+        directed=False,
+    )
+    g.es["weight"] = [weights[e] for e in edges]
+    if edges:
+        part = g.community_leiden(
+            objective_function="modularity",
+            weights="weight",
+            resolution=1.0,
+        )
+        membership = {nodes[i]: int(part.membership[i]) for i in range(len(nodes))}
+        und = nx.Graph()
+        und.add_nodes_from(nodes)
+        und.add_edges_from([(a, b, {"weight": w}) for (a, b), w in weights.items()])
+        groups = {}
+        for node, label in membership.items():
+            groups.setdefault(label, set()).add(node)
+        q = nx.community.modularity(und, groups.values(), weight="weight")
+    else:
+        membership = {node: i for i, node in enumerate(nodes)}
+        q = None
+    return {
+        "igraph_partition": membership,
+        "igraph_modularity": q,
+        "igraph_version": ig.__version__,
+    }
+
+
 def main():
     for name in sys.argv[1:]:
         fixture = json.loads((FIXTURES / f"{name}.json").read_text())
@@ -84,6 +136,7 @@ def main():
             "closeness": measure(lambda g: nx.closeness_centrality(g), g),
             "eigenvector": measure(lambda g: nx.eigenvector_centrality(g, max_iter=100, tol=1e-6), g),
             "katz": measure(lambda g: nx.katz_centrality(g, alpha=0.1, beta=1.0, max_iter=100, tol=1e-6, normalized=True), g),
+            "communities": communities(fixture),
         }
         out = FIXTURES / f"{name}.golden.json"
         out.write_text(json.dumps(golden, indent=2, sort_keys=True) + "\n")
