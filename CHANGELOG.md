@@ -4,6 +4,26 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Python extractor (P6): docs & copy.** The extract README gains
+  the full Python mapping — module-id table (`__init__.py`
+  collapses to its package), kind rows (Protocol classes →
+  interface, PEP 695 aliases → class), the import table (absolute,
+  relative, `__future__`), decorator-call attribution, heritage
+  rules, the defines/refs/writes fill, the tree-sitter-python
+  0.25.0 grammar record — and four disclosed Python limitations:
+  duplicate definitions surface as `MultiDefinition` diagnostics
+  (schema §5.1 working as designed), Python 2 unsupported,
+  name-based Protocol detection, and dynamic Python
+  (importlib/getattr/metaclass injection/monkey-patching)
+  invisible, as in every static extractor. The top README,
+  LAUNCHGUIDE and `llms-install.md` language lines now name
+  Python alongside Rust and TypeScript/JavaScript;
+  `gemini-extension.json` carries no language enumeration (its
+  stale version string folds into the 0.8.0 release bump). The
+  dev-log and listing-copy updates are drafted in the build lane's
+  release-preparation note and ride the release PR, per the house
+  pattern — nothing public has moved yet.
+
 - **Python extractor (P5): surface parity, lifecycle, real-world
   cross-check.** The fixture package now proves the Python graph on
   every surface, in each surface's own parity idiom: HTTP

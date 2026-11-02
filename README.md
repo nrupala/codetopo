@@ -43,7 +43,7 @@ Requires a stable Rust toolchain (install via [rustup](https://rustup.rs)).
 # repository contains multiple binary packages.
 cargo install --git https://github.com/nrupala/codetopo codetopo-cli codetopo-server codetopo-mcp codetopo-acp
 
-# Index a repository (Rust and TypeScript/JavaScript are parsed via tree-sitter)
+# Index a repository (Rust, TypeScript/JavaScript, and Python are parsed via tree-sitter)
 codetopo index ~/my-project --db graph.db
 
 # Find a symbol's id by name (every surface has this discovery step)
@@ -207,7 +207,7 @@ served, not installed.
 ```
         ┌─────────────┐   tree-sitter    ┌──────────────┐
         │ source tree │ ───────────────► │ codetopo-    │   extract symbols,
-        └─────────────┘   Rust, TS/JS     │ extract      │   calls, references
+        └─────────────┘   Rust, TS/JS, Py │ extract      │   calls, references
                                           └──────┬───────┘
                                                  ▼
                                           ┌──────────────┐
@@ -233,7 +233,7 @@ served, not installed.
 | Crate | Role |
 |---|---|
 | `codetopo-core` | Graph model, node/edge kinds, all traversal queries, snapshots |
-| `codetopo-extract` | tree-sitter extractors (Rust, TypeScript/JavaScript) |
+| `codetopo-extract` | tree-sitter extractors (Rust, TypeScript/JavaScript, Python) |
 | `codetopo-store` | SQLite persistence + tamper-evident, hash-chained audit log |
 | `codetopo-cli` | `codetopo` headless CLI — the reference query surface |
 | `codetopo-server` | `codetopo-server` axum HTTP API (thin adapter over core) |
