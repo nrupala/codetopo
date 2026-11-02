@@ -31,6 +31,28 @@ itself is on the <a href="/">front page</a>.</p>
 
 <h2>The story so far</h2>
 
+<h3><span class="when">November 2, 2026 —</span> 0.9.0: the analytics engine</h3>
+<p>codetopo's ranking learns the classic graph measures. Where it once
+ranked symbols four ways, it now answers nine: the original four, unchanged
+to the byte, plus five measures every network-science textbook defines —
+which symbols everything flows through, which sit closest to all the rest,
+and which matter because important things point at them. Three new tools
+join the seventeen, on the command line, over HTTP, and through the agent
+tools alike: one finds the natural communities inside a codebase and scores
+how cleanly they separate; one lays the graph out in dependency order; and
+one draws it — a force-directed map as SVG, drawn identically every time it
+is asked. Every number still travels with its method and its settings;
+where a measure honestly cannot converge on a very large graph, codetopo
+says so, with the reason, instead of returning half an answer. The proof is
+pinned in the open: the new measures were checked against the standard
+reference implementations (networkx and igraph) and agree to the last
+decimal places that matter, twice-run outputs are byte-identical, and on a
+graph of forty thousand symbols the slowest measure finishes in about half
+a minute. The schema stays at 1.2 — nothing stored changes, and snapshots
+keep reading. All eight crates move to 0.9.0 together. 0.9.0 is a release
+candidate since November 2, 2026 — it graduates after a clean watched
+week.</p>
+
 <h3><span class="when">November 2, 2026 —</span> 0.8.0: Python joins</h3>
 <p>codetopo now reads Python. Files ending .py and .pyi are indexed through
 the same contract as Rust and TypeScript/JavaScript: packages and modules
