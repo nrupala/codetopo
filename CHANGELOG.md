@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Python extractor (P1): symbols and the data-flow scan.** The
+  Python walker now emits symbols under the spec §3.2 mapping:
+  functions and async functions, methods (a `def` directly in a class
+  body — `@property` / `@classmethod` / `@staticmethod` are ordinary
+  methods), nested functions scoped by path, classes and nested
+  classes, PEP 695 `type` aliases as class-kind symbols, and
+  module-level plain-name assignments as variables (chained `a = b =`
+  yields both names; class-level assignments, pattern targets and
+  lambdas are not symbols). Every callable and class carries the
+  §3.6 defines/refs/writes scan — parameters (typed, defaulted,
+  splatted, destructured), local/for/with/comprehension/walrus/
+  except-as binding targets, attribute writes by attribute name,
+  annotation names as refs, `global`/`nonlocal` names excluded from
+  defines — under the same marimo discipline as the TS/Rust walkers.
+  Hand-derived conformance fixtures pin the mapping, including the
+  augmented-assignment rule (target read, not written — the
+  disclosed §9 limit).
+
 - **Python extractor (P0): grammar pin and support gate.** The third
   extractor begins: `tree-sitter-python` 0.25.0 (MIT; pairs with the
   workspace's tree-sitter 0.25 runtime, verified against the pinned
