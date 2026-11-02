@@ -17,6 +17,7 @@ landed. **Reuse** rows may contribute code (with license notices preserved);
 | marimo-team/marimo | Apache-2.0 | `DirectedGraph` coordinator pattern (clean-room reimplementation from the pattern description — no marimo source read or copied); `{defs,refs}`→edges pure rule; `descendants`/`ancestors`/`get_path` impact-query semantics; validate-then-apply mutation discipline | 393b59e |
 | danyQe/codebase-mcp | Apache-2.0 | Tool-surface-first API contract; dual-store (deterministic graph = truth, vector = fuzzy overlay); smallest-unit retrieval; full dumps opt-in | — |
 | jc01rho/omo-herdr-dag | MIT | Event-sourced JSON snapshot schema; dependency-edges vs containment-links kept distinct; event-subscription update pattern | — |
+| tree-sitter/tree-sitter-python | MIT | Direct dependency; the Python grammar behind the codetopo-extract Python extractor (third extractor, 0.8.0 series) | — |
 | Arize-ai/openinference | Apache-2.0 | Typed-schema pattern: kind-scoped attributes, spec-first ontology design | — |
 | observablehq/notebook-kit | ISC | Reactive cell-dependency graph as prior art for "code as queryable graph, visuals as byproduct"; notebook→static publish pipeline | — |
 | observablehq/oss-analytics | ISC | CI-regenerated viz artifacts embedded in docs/PRs — maps-on-every-push | — |

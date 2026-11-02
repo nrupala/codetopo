@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Part of codetopo — Owned by 2351485 ALBERTA INC. (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
 
-//! Tree-sitter extractors: Rust and TypeScript/JavaScript source files into
-//! [`codetopo_core::emit::FileSymbols`].
+//! Tree-sitter extractors: Rust, TypeScript/JavaScript, and Python source
+//! files into [`codetopo_core::emit::FileSymbols`].
 //!
 //! One tree-sitter parse per file, then a single recursive walk over the
 //! syntax tree. The walk never panics on odd input: unparseable shapes are
@@ -13,6 +13,7 @@
 //! ID rules, node-kind mappings, and known limitations are documented in the
 //! crate README (`crates/codetopo-extract/README.md`).
 
+mod python;
 mod rust;
 mod ts;
 
@@ -47,7 +48,9 @@ pub enum ExtractError {
 }
 
 /// File extensions this crate can extract (case-insensitive).
-const SUPPORTED: &[&str] = &["rs", "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "md"];
+const SUPPORTED: &[&str] = &[
+    "rs", "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "md", "py", "pyi",
+];
 
 /// True when `path` names a file this crate can extract.
 pub fn is_supported(path: &Path) -> bool {
@@ -87,6 +90,7 @@ pub fn extract_file(
         .unwrap_or_default();
     match ext.as_str() {
         "rs" => rust::extract(package, rel_path, source),
+        "py" | "pyi" => python::extract(package, rel_path, source),
         // Markdown is documentation, not code: it enters the graph as a
         // single Doc node so docs sit in the map next to what they
         // describe (CODE_SCHEMA §2 has the kind; nothing emitted it).
@@ -231,7 +235,10 @@ mod tests {
 
     #[test]
     fn supported_extensions() {
-        for ext in ["rs", "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "md", "RS", "TS"] {
+        for ext in [
+            "rs", "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "md", "py", "pyi", "RS",
+            "TS", "PY",
+        ] {
             assert!(
                 is_supported(Path::new(&format!("a/b.{ext}"))),
                 "{ext} should be supported"
@@ -241,7 +248,7 @@ mod tests {
 
     #[test]
     fn unsupported_extensions() {
-        for ext in ["py", "go", "toml", "json", ""] {
+        for ext in ["go", "toml", "json", ""] {
             assert!(
                 !is_supported(Path::new(&format!("a/b.{ext}"))),
                 "{ext} should not be supported"
@@ -261,7 +268,7 @@ mod tests {
 
     #[test]
     fn unsupported_extension_is_an_error_not_a_panic() {
-        let err = extract_file("pkg", Path::new("x.py"), "print(1)").unwrap_err();
+        let err = extract_file("pkg", Path::new("x.go"), "package main").unwrap_err();
         assert!(matches!(err, ExtractError::UnsupportedExtension(_)));
     }
 
@@ -270,5 +277,6 @@ mod tests {
         // Deliberately broken Rust and TS: must not panic, may return partial output.
         let _ = extract_file("pkg", Path::new("a.rs"), "fn broken( { struct ");
         let _ = extract_file("pkg", Path::new("a.ts"), "class {{{ function ((");
+        let _ = extract_file("pkg", Path::new("a.py"), "def broken(:\n  class == if");
     }
 }
