@@ -39,10 +39,16 @@ pub const ITER_MAX: usize = 100;
 /// above it, the surface declines and names this number as the reason
 /// — exact Brandes is never silently replaced by an approximation.
 ///
-/// PROVISIONAL — set in RA1 from fixture-scale measurement and the
-/// O(V·E) projection; RA5 finalizes it from the scale corpus and the
-/// dense-SCC stress fixture, and the finalized value is what the
-/// 0.9.0 docs publish.
+/// FINALIZED at 50,000 by RA5's scale runs (release builds,
+/// 2026-11-02; `docs/scale-gate.md` records them): the
+/// 40,001-node / 90,017-edge scale corpus completes in ~33 s; a
+/// 2,000-node complete digraph (3,998,000 edges — the density
+/// extreme) in ~35 s; the RA1 probe series (1,000 nodes 0.09 s;
+/// 5,000 2.6 s; 10,000 11 s) projects to roughly a minute at the
+/// ceiling for realistic graphs. A node ceiling cannot bound
+/// density, so a declined answer names the graph's node count
+/// alongside the ceiling, and the measured budgets live in the
+/// scale gate rather than in this constant.
 pub const BETWEENNESS_NODE_CEILING: usize = 50_000;
 
 /// PageRank (Brin & Page 1998): the stationary distribution of a

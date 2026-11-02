@@ -68,6 +68,68 @@ In-process timings (the gate test below, release mode): graph load
 `blast_radius` of the chain tail 126 ms (9,999 nodes); `path`
 head → tail 307 ms (9,999 steps).
 
+## The analytics gate (0.9.0, RA5)
+
+The Rust analytics engine's measures run over the same corpus,
+plus two synthetic extremes. Measured 2026-11-02, release builds,
+on this machine class. Every corpus answer below was produced
+TWICE with byte-identical output (SPEC §7: determinism at corpus
+scale is a correctness property, asserted by the gate test).
+
+The corpus projection (§9 dependency edges, external stubs
+excluded, simple graph): **40,001 nodes / 30,008 directed edges**
+from the fixture's 90,017 stored edges.
+
+| Surface | Wall | Notes |
+|---|---|---|
+| rank pagerank | 0.49 s (CLI, incl. load); 0.10 s in-process | full 40,001-entry ranking |
+| rank katz | 0.48 s | |
+| rank eigenvector | 0.45 s | **absence** — power iteration does not converge on this graph within the method's 100 iterations; reported as an absence, never a partial vector (the designed answer) |
+| rank closeness | 13 s | one BFS per node |
+| rank betweenness | 33 s | exact Brandes, serial; the 50,000-node ceiling (owner decision 3) is finalized on this evidence — see below |
+| communities | 0.91 s | 10,172 communities, Q = 0.9875 |
+| topo-sort | 0.5 s | 30,031 groups, exactly 1 cyclic (the fixture's chain SCC) |
+| render layered | 0.66 s | 19 MB spec |
+| render force | 0.38 s | **declines by design**: 40,001 nodes condense to 30,031 components, above the 3,000 ceiling; the layered layout is the full-graph drawing |
+
+**Dense-SCC stress** — a 2,000-node complete digraph (3,998,000
+edges, one SCC), generated in-process by the core gate test:
+pagerank 5.7 s · betweenness 35 s · closeness 150 s (the density
+extreme for a per-node BFS) · communities 4.6 s (one community,
+Q = 0 — correct for a complete graph) · topo-sort 2.1 s (one
+group) · force layout 6.6 s. Katz reports an **absence**: the
+spectral radius of a complete digraph is n−1 = 1999, so α·ρ ≈ 200
+≫ 1 and non-convergence is mathematically forced — the absence is
+the correct answer, and the gate asserts it as one.
+
+**Condensed force determinism** — a 3,600-node graph of 600
+six-node rings (above the 3,000-node direct ceiling, under it in
+components): the force layout takes the condensed path and is
+run-twice byte-identical in spec and SVG (asserted by the core
+gate test).
+
+**Betweenness ceiling, finalized at 50,000 nodes.** Evidence: the
+40,001-node corpus completes in ~33 s; the density extreme (a
+2,000-node complete digraph) in ~35 s; the RA1 probe series
+(1,000 nodes 0.09 s; 5,000 2.6 s; 10,000 11 s) projects to
+roughly a minute at the ceiling for realistic graphs. A node
+ceiling cannot bound density — a declined answer therefore names
+the graph's node count alongside the ceiling.
+
+**Self-index cross-check.** Codetopo's own index (1,708-node /
+5,387-edge projection) against the Python oracle: PageRank max
+deviation 6.9e-18, betweenness 3.5e-18 (tolerances 1e-6 / 1e-9),
+top-10s identical — and the hubs are the visibly right ones
+(PageRank: `ApiError`, `EdgeKind`, `GraphBuilder`; betweenness:
+the server `app`/`router`, `index_repo`, `call_tool`).
+
+Running the analytics gates (both `#[ignore]`d; release mode):
+
+```sh
+cargo test --release -p codetopo-cli --test analytics_scale -- --ignored --nocapture
+cargo test --release -p codetopo-core --test analytics_scale -- --ignored --nocapture
+```
+
 ## Running the gate
 
 The gate is a deliberately-run integration test, `#[ignore]`d so CI
