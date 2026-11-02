@@ -4,6 +4,28 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Python extractor (P5): surface parity, lifecycle, real-world
+  cross-check.** The fixture package now proves the Python graph on
+  every surface, in each surface's own parity idiom: HTTP
+  (`codetopo-server/tests/api_py.rs` — index report, stats, rank
+  for all four metrics, symbol dossier, diagnostics, and a
+  self-diff, each asserted equal to the CLI's view of the same
+  database), MCP (`codetopo-mcp/tests/mcp_py.rs` — the same
+  answers through the real binary over stdio), and the CLI
+  lifecycle (`codetopo-cli/tests/lifecycle_py.rs` — snapshots of
+  an unchanged tree are byte-identical; restore returns the same
+  graph node-for-node and edge-for-edge; renaming one function in
+  a copy diffs as exactly that pair, impact confined to it). The
+  real-world cross-check (F3, research note in the build lane, not
+  shipped) indexed pallets/click at a pinned commit: file count
+  exact (91/91), def/class rows reconciled exactly against a
+  CPython `ast` count (2078, duplicates split by kind and named),
+  zero failures, dossier and inheritance spot-checks correct —
+  and one builder-level finding recorded for a separate change:
+  dotted call names (`click.echo`) resolve only to external stubs
+  under the current suffix rule, which bites Python's dominant
+  call idioms hardest.
+
 - **Python extractor (P4): the known-answer fixture package.**
   `crates/codetopo-extract/tests/fixture-py/` is `quarry`, a small
   hand-written package (root module + two submodules; relative,

@@ -120,6 +120,20 @@ Diagnostics (2):
   core.py:20 and core.py:24.
 - `UnresolvedCall` for `shape.draw` from `Engine::render`.
 
+## Full-directory indexing (the F4/F5 surfaces' view)
+
+The answers above are the Python files only — that is what
+`known_answer_py.rs` extracts. Indexing the fixture **directory**
+through the CLI, HTTP, or MCP also indexes this README (Markdown
+is a supported surface), which adds: 1 file (4 files indexed in
+total), +1 module node and +1 doc node and +1 file node
+(26 → **29 nodes**), and +3 contains edges (package→README
+module, module→its file, file→its doc; 33 → **36 edges**). The
+parity and lifecycle suites (`codetopo-server/tests/api_py.rs`,
+`codetopo-cli/tests/lifecycle_py.rs`,
+`codetopo-mcp/tests/mcp_py.rs`) assert those totals against the
+CLI's view of the same database.
+
 ## The property/setter duplicate, stated plainly
 
 A `@property` and its `@x.setter` are two `def`s with one name in
