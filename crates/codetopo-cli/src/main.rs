@@ -218,6 +218,10 @@ enum Commands {
         /// Write the SVG rendering here.
         #[arg(long)]
         svg: Option<PathBuf>,
+        /// Which layout: `layered` (layout spec v1, the default) or
+        /// `force` (Fruchterman-Reingold, layout spec v2).
+        #[arg(long, default_value = "layered")]
+        layout: String,
     },
     /// Verify the tamper-evident audit chain.
     Verify {
@@ -639,25 +643,67 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 print_stats(&graph);
             }
         }
-        Commands::Render { db, out, svg } => {
+        Commands::Render { db, out, svg, layout } => {
             let graph = load_graph_from_db(&db)?;
-            let spec = codetopo_core::layout(&graph);
-            let spec_json = serde_json::to_string_pretty(&spec)?;
-            match &out {
-                Some(path) => {
-                    std::fs::write(path, format!("{spec_json}\n"))?;
-                    eprintln!(
-                        "layout spec: {} nodes, {} edges → {}",
-                        spec.nodes.len(),
-                        spec.edges.len(),
-                        path.display()
-                    );
+            match layout.as_str() {
+                "layered" => {
+                    let spec = codetopo_core::layout(&graph);
+                    let spec_json = serde_json::to_string_pretty(&spec)?;
+                    match &out {
+                        Some(path) => {
+                            std::fs::write(path, format!("{spec_json}\n"))?;
+                            eprintln!(
+                                "layout spec: {} nodes, {} edges → {}",
+                                spec.nodes.len(),
+                                spec.edges.len(),
+                                path.display()
+                            );
+                        }
+                        None => println!("{spec_json}"),
+                    }
+                    if let Some(path) = &svg {
+                        std::fs::write(path, codetopo_core::render_svg(&spec))?;
+                        eprintln!("svg: {}", path.display());
+                    }
                 }
-                None => println!("{spec_json}"),
-            }
-            if let Some(path) = &svg {
-                std::fs::write(path, codetopo_core::render_svg(&spec))?;
-                eprintln!("svg: {}", path.display());
+                "force" => match codetopo_core::force_layout(&graph) {
+                    codetopo_core::ForceLayout::Spec(spec) => {
+                        let spec_json = serde_json::to_string_pretty(&spec)?;
+                        match &out {
+                            Some(path) => {
+                                std::fs::write(path, format!("{spec_json}\n"))?;
+                                eprintln!(
+                                    "force layout spec: {} nodes, {} edges → {}",
+                                    spec.nodes.len(),
+                                    spec.edges.len(),
+                                    path.display()
+                                );
+                            }
+                            None => println!("{spec_json}"),
+                        }
+                        if let Some(path) = &svg {
+                            std::fs::write(path, codetopo_core::render_svg_v2(&spec))?;
+                            eprintln!("svg: {}", path.display());
+                        }
+                    }
+                    codetopo_core::ForceLayout::Declined { reason, .. } => {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "layout_version": 2,
+                                "layout": "force",
+                                "rendered": false,
+                                "reason": reason,
+                            }))
+                            .expect("decline serializes")
+                        );
+                    }
+                },
+                other => {
+                    return Err(codetopo_cli::CliError::Usage(format!(
+                        "--layout must be 'layered' or 'force', got '{other}'"
+                    )));
+                }
             }
         }
         Commands::Neighborhood { id, db, depth, json } => {

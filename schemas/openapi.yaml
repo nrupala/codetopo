@@ -743,6 +743,61 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '504':
           $ref: '#/components/responses/RequestTimeout'
+  /v1/graphs/{id}/render:
+    get:
+      tags: [query]
+      operationId: render
+      summary: The graph's layout specification, or its SVG drawing.
+      description: |
+        The layout spec JSON for the requested layout — `layered`
+        (layout spec v1, the default) or `force`
+        (Fruchterman–Reingold, layout spec v2, deterministic with
+        its parameters recorded in the spec) — or, with
+        `format=svg`, the rendered SVG drawing of that spec. Above
+        the force layout's node ceilings the answer is a stated
+        decline object (`rendered: false`, with the reason naming
+        the ceiling) in either format, never a partial drawing.
+        The same spec objects serve the CLI's `render` command and
+        the MCP `codetopo_render` tool.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+        - name: layout
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [layered, force]
+          description: Which layout to compute. Default layered.
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [json, svg]
+          description: The spec object (json) or the drawing (svg). Default json.
+      responses:
+        '200':
+          description: The layout spec object, the decline object, or the SVG drawing.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: The layout spec (v1 or v2), plus `index_id`; or the force decline object.
+            image/svg+xml:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/graphs/{id}/history:
     get:
       tags: [query]

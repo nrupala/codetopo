@@ -182,6 +182,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/graphs/:id/metrics", get(metrics))
         .route("/v1/graphs/:id/communities", get(communities))
         .route("/v1/graphs/:id/topo-sort", get(topo_sort))
+        .route("/v1/graphs/:id/render", get(render))
         .route("/v1/graphs/:id/history", get(history))
         .route("/v1/schema", get(schema))
         .route_layer(axum::middleware::from_fn_with_state(
@@ -1184,6 +1185,66 @@ async fn topo_sort(
     let mut value = codetopo_cli::topo_sort_value(&graph);
     value["index_id"] = json!(index_id);
     Ok(Json(value))
+}
+
+/// Query parameters of `GET /v1/graphs/{id}/render`.
+#[derive(Debug, Deserialize)]
+pub struct RenderQuery {
+    /// `layered` (layout spec v1, default) or `force`
+    /// (Fruchterman–Reingold, layout spec v2).
+    pub layout: Option<String>,
+    /// `json` (the spec object, default) or `svg` (the rendered
+    /// drawing, `image/svg+xml`).
+    pub format: Option<String>,
+}
+
+/// `GET /v1/graphs/{id}/render` — the graph's layout specification
+/// (the shared [`codetopo_cli::render_value`] object), or with
+/// `format=svg` the rendered drawing of that spec. When the force
+/// layout declines above its ceilings, the answer is the stated
+/// decline object in either format — never a partial drawing.
+async fn render(
+    State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
+    UrlPath(index_id): UrlPath<String>,
+    Query(query): Query<RenderQuery>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
+    enforce_tenancy(&state, &index_id, &key)?;
+    let layout_name = query.layout.as_deref().unwrap_or("layered");
+    let format = query.format.as_deref().unwrap_or("json");
+    if !matches!(format, "json" | "svg") {
+        return Err(ApiError::BadRequest {
+            code: "invalid_param",
+            message: format!("format must be 'json' or 'svg', got '{format}'"),
+        });
+    }
+    let db = state.db_path(&index_id);
+    let graph = load_graph_blocking(&db, &index_id)?;
+    let value = codetopo_cli::render_value(&graph, layout_name).map_err(|message| {
+        ApiError::BadRequest {
+            code: "invalid_param",
+            message,
+        }
+    })?;
+    if format == "json" || value["rendered"] == json!(false) {
+        let mut value = value;
+        value["index_id"] = json!(index_id);
+        return Ok(Json(value).into_response());
+    }
+    // format=svg over a real spec: render the spec directly (the
+    // spec types are serialize-only; the renderers consume them).
+    let svg = if layout_name == "layered" {
+        codetopo_core::render_svg(&codetopo_core::layout(&graph))
+    } else {
+        match codetopo_core::force_layout(&graph) {
+            codetopo_core::ForceLayout::Spec(spec) => codetopo_core::render_svg_v2(&spec),
+            codetopo_core::ForceLayout::Declined { .. } => {
+                unreachable!("declines returned as JSON above")
+            }
+        }
+    };
+    Ok(([(CONTENT_TYPE, "image/svg+xml")], svg).into_response())
 }
 
 /// The reason hosted history is always unmeasured (ruling B0.1:

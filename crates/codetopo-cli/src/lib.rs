@@ -994,6 +994,33 @@ pub fn topo_sort_value(graph: &Graph) -> serde_json::Value {
     })
 }
 
+/// The shared render answer behind the CLI's `render`, the HTTP
+/// render route, and the MCP `codetopo_render` tool: the layout
+/// spec JSON (v1 `layered`, v2 `force`), or — when the force
+/// layout declines above its ceilings — the stated decline
+/// (`{layout_version: 2, layout: "force", rendered: false,
+/// reason}`). An unknown layout name is an error.
+pub fn render_value(graph: &Graph, layout_name: &str) -> Result<serde_json::Value, String> {
+    match layout_name {
+        "layered" => Ok(serde_json::to_value(codetopo_core::layout(graph))
+            .expect("layout spec serializes")),
+        "force" => Ok(match codetopo_core::force_layout(graph) {
+            codetopo_core::ForceLayout::Spec(spec) => {
+                serde_json::to_value(spec).expect("force spec serializes")
+            }
+            codetopo_core::ForceLayout::Declined { reason, .. } => json!({
+                "layout_version": 2,
+                "layout": "force",
+                "rendered": false,
+                "reason": reason,
+            }),
+        }),
+        other => Err(format!(
+            "layout must be 'layered' or 'force', got '{other}'"
+        )),
+    }
+}
+
 /// The shared shape of the coupling/cohesion answer (CLI `metrics`,
 /// HTTP `GET /v1/graphs/{id}/metrics`, MCP `codetopo_metrics`): every
 /// type's and package's measurements from core's one computation, with

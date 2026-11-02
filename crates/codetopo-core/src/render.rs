@@ -64,7 +64,7 @@ pub struct LayoutSpec {
 /// participate in layering. Containment (contains/defines) is
 /// drawn but does not layer: hierarchy depth is not dependency
 /// depth, and mixing them flattens both.
-fn is_dependency(kind: EdgeKind) -> bool {
+pub(crate) fn is_dependency(kind: EdgeKind) -> bool {
     matches!(
         kind,
         EdgeKind::Calls
@@ -272,7 +272,7 @@ const X_STEP: u32 = 214;
 const Y_STEP: u32 = 56;
 const MARGIN: u32 = 16;
 
-fn kind_fill(kind: NodeKind) -> (&'static str, &'static str) {
+pub(crate) fn kind_fill(kind: NodeKind) -> (&'static str, &'static str) {
     // (fill, stroke) per kind — a fixed table, part of the spec.
     match kind {
         NodeKind::Package => ("#ede9fe", "#7c3aed"),
@@ -288,7 +288,7 @@ fn kind_fill(kind: NodeKind) -> (&'static str, &'static str) {
     }
 }
 
-fn edge_stroke(kind: EdgeKind) -> (&'static str, Option<&'static str>) {
+pub(crate) fn edge_stroke(kind: EdgeKind) -> (&'static str, Option<&'static str>) {
     // (stroke, dasharray)
     match kind {
         EdgeKind::Calls => ("#334155", None),
@@ -303,7 +303,7 @@ fn edge_stroke(kind: EdgeKind) -> (&'static str, Option<&'static str>) {
     }
 }
 
-fn xml_escape(text: &str) -> String {
+pub(crate) fn xml_escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
         match ch {
@@ -318,7 +318,7 @@ fn xml_escape(text: &str) -> String {
     out
 }
 
-fn truncate_label(label: &str) -> String {
+pub(crate) fn truncate_label(label: &str) -> String {
     const MAX: usize = 26;
     if label.chars().count() <= MAX {
         label.to_string()

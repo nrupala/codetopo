@@ -23,6 +23,7 @@ pub mod coupling;
 pub mod diag;
 pub mod history;
 pub mod emit;
+pub mod force;
 pub mod graph;
 pub mod measure;
 pub mod projection;
@@ -47,6 +48,9 @@ pub use measure::{
     Ranking, SymbolDossier, SymbolMeasurements,
 };
 pub use projection::{AnalyticsProjection, CommunityDetector};
+pub use force::{
+    force_layout, render_svg_v2, ForceLayout, ForceNode, ForceParams, LayoutSpecV2,
+};
 pub use render::{layout, render_svg, LayoutEdge, LayoutNode, LayoutSpec};
 pub use topology::{TopoGroup, TopoOrder, TOPO_SORT_METHOD};
 pub use schema::{Edge, EdgeKind, Loc, Node, NodeKind, Tier};
