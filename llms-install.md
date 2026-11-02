@@ -64,8 +64,8 @@ JSON-RPC calls.
 1. Call `codetopo_describe_schema` — it needs no database and returns
    the node/edge kinds and query vocabulary. A structured answer means
    the server is up.
-2. Call `codetopo_index` with the path of a repository to index (Rust
-   and TypeScript/JavaScript are parsed via tree-sitter). It creates
+2. Call `codetopo_index` with the path of a repository to index (Rust,
+   TypeScript/JavaScript, and Python are parsed via tree-sitter). It creates
    the graph database and reports files indexed, nodes, and edges.
 3. Call `codetopo_stats` against that index — totals should match the
    index report.

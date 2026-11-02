@@ -43,7 +43,7 @@ Developer Tools
 ## Getting Started
 
 ```sh
-# Index a repository (Rust and TypeScript/JavaScript are parsed via tree-sitter)
+# Index a repository (Rust, TypeScript/JavaScript, and Python are parsed via tree-sitter)
 codetopo index ~/my-project --db graph.db
 
 # Find a symbol's id by name (every surface has this discovery step)
