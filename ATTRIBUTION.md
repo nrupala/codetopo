@@ -18,6 +18,9 @@ landed. **Reuse** rows may contribute code (with license notices preserved);
 | danyQe/codebase-mcp | Apache-2.0 | Tool-surface-first API contract; dual-store (deterministic graph = truth, vector = fuzzy overlay); smallest-unit retrieval; full dumps opt-in | — |
 | jc01rho/omo-herdr-dag | MIT | Event-sourced JSON snapshot schema; dependency-edges vs containment-links kept distinct; event-subscription update pattern | — |
 | tree-sitter/tree-sitter-python | MIT | Direct dependency; the Python grammar behind the codetopo-extract Python extractor (third extractor, 0.8.0 series) | — |
+| petgraph/petgraph | MIT OR Apache-2.0 | Direct dependency (0.8.3); graph primitives under the analytics projection — the petgraph graph type the engine's measures run over | — |
+| rustworkx/rustworkx-core | Apache-2.0 | Direct dependency (0.18.1); Brandes betweenness, Wasserman–Faust closeness, power-method eigenvector and Katz centralities for `codetopo_rank` (serial accumulation only — see the analytics SPEC §7) | — |
+| leiden-rs | MIT OR Apache-2.0 | Direct dependency (0.8.1, pinned); the Leiden community-detection algorithm behind `codetopo_communities`, wrapped behind codetopo's own detector trait; licence verified from the crate manifest in RA0 | — |
 | Arize-ai/openinference | Apache-2.0 | Typed-schema pattern: kind-scoped attributes, spec-first ontology design | — |
 | observablehq/notebook-kit | ISC | Reactive cell-dependency graph as prior art for "code as queryable graph, visuals as byproduct"; notebook→static publish pipeline | — |
 | observablehq/oss-analytics | ISC | CI-regenerated viz artifacts embedded in docs/PRs — maps-on-every-push | — |
