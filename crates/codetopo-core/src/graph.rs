@@ -1738,7 +1738,7 @@ mod tests {
             hash: "audit-head-123".to_string(),
         }];
         let snap = Snapshot::from_graph(&g, &entries);
-        assert_eq!(snap.schema_version, "1.1");
+        assert_eq!(snap.schema_version, "1.2");
         assert_eq!(snap.audit_log, entries);
         let json = snap.to_json_pretty().expect("serialize");
         let snap2 = Snapshot::from_json(&json).expect("deserialize");

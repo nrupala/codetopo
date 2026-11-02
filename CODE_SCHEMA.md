@@ -1,6 +1,6 @@
 # CODE_SCHEMA — codetopo typed code-entity ontology
 
-**Version:** 1.1 (2026-10-25)
+**Version:** 1.2 (2026-11-02)
 **License:** Apache-2.0 — this spec is adoption-facing; anyone may implement against it.
 **Ownership:** Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join) — join Muse, then redeem code **101EEK** in Settings within 48 hours of joining and we both earn tokens.
 
@@ -85,8 +85,16 @@ Indexing assigns each file to a **package** before extraction:
   manifest ancestor keep the caller-supplied package name and
   repo-relative paths.
 - A package's **root module** (a crate's `lib.rs`, a package's
-  `index.ts`) shares the package's id: the package node doubles as
-  its root module for containment and import resolution.
+  `index.ts`, a Python package's `__init__.py`) shares the package's
+  id: the package node doubles as its root module for containment
+  and import resolution.
+
+Python relative imports resolve on **module-id segments**, never on
+file paths: the importing module's package is its module id minus the
+last segment — except an `__init__.py` module, whose id already is its
+package. One dot means that package; each further dot ascends one
+segment; ascending past the root segment yields `external::unresolved`.
+The resolution is purely syntactic, like the other languages'.
 
 Imports resolve at graph-build time, in this order: the target
 verbatim when it is a module; the **longest module prefix** of the
@@ -124,8 +132,18 @@ descended into — their branches count toward the enclosing symbol.
 path and is not counted; `catch` +1; each `&&`, `||`, and `??` in a
 binary expression +1.
 
-A branch-free function body counts 0 decision points in both
-languages, so its complexity is exactly 1.
+**Python** (tree-sitter-python): `if` +1 and each `elif` clause +1
+(`else` alone +0); `for` (including `async for`) and `while` +1 each;
+each `except` clause +1; conditional expression (`x if c else y`) +1;
+each `and`/`or` boolean operator +1; inside comprehensions, each
+`for` clause +1 and each `if` clause +1; `match` + (number of `case`
+clauses − 1) — case guards are not counted separately. Not counted:
+`assert`, `with`, `raise`, the `not` operator, comparison chains,
+`else`/`finally` blocks. Lambdas and comprehensions are not symbols
+and are descended into, like closures in the other languages.
+
+A branch-free function body counts 0 decision points in every
+language, so its complexity is exactly 1.
 
 ## 4. Edge kinds (typed, kind-scoped attributes)
 

@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Python extractor (P3): measured fields + CODE_SCHEMA 1.2.** The
+  Python walker now measures like the others (spec §3.7, full
+  parity): `end_line` and `signature` for every symbol — def/class
+  headers cut at the body with the trailing colon stripped, and a
+  variable's signature cut at the assignment's `right` field, so an
+  initializer never appears (`LIMIT: int`, never `LIMIT: int = 10`).
+  Decision counting follows the new Python enumeration in
+  CODE_SCHEMA §3.2: if/elif, for/while, except clauses, conditional
+  expressions, boolean operators, comprehension for/if clauses, and
+  match as (cases − 1) with case guards not counted (in this
+  grammar a guard is an `if_clause` node in `guard` position — the
+  counter skips it there and counts it in comprehensions). Schema
+  bumps **1.1 → 1.2** (additive, per §8: the §3.2 Python enumeration
+  and the §3.1 relative-import note; `SCHEMA_VERSION` follows, and
+  snapshots written at 1.1 keep reading). A hand-counted fixture
+  (MEASURED_PY) pins the counts, including a guarded case and a
+  stub body counting an honest 0.
+
 - **Python extractor (P2): imports, calls, heritage.** The Python
   walker now emits the edge records of spec §3.3–§3.5. Imports are
   module-granularity with the Rust walker's bare-root rule (the
