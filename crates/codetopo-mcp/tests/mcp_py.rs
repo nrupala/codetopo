@@ -98,8 +98,8 @@ fn py_fixture_parity_over_stdio() {
             .as_array()
             .expect("an array")
             .len(),
-        19,
-        "the tool catalogue carries the nineteen tools of the analytics build"
+        20,
+        "the tool catalogue carries the twenty tools of the analytics build"
     );
 
     // Index the fixture through the tool itself.

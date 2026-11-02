@@ -405,6 +405,36 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
+      "description": "The graph's layout specification: 'layered' (layout spec v1, the default) or 'force' (Fruchterman-Reingold, layout spec v2 - deterministic, fixed parameters recorded in the spec). Above the force ceilings the answer is a stated decline naming the ceiling, not a partial drawing. The same spec objects serve the CLI's render command and the HTTP render route.",
+      "inputSchema": {
+        "properties": {
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          },
+          "layout": {
+            "description": "Which layout to compute. Default: layered.",
+            "enum": [
+              "layered",
+              "force"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "db_path"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_render",
+      "title": "Render (layout spec)"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "Hotspots (change frequency x complexity, both factors stated) and change coupling (support/confidence as pair counts) over a local working tree's git history. History is local-only: without repo_path the answer is the unmeasured report (measured: false with the reason), never invented numbers.",
       "inputSchema": {
         "properties": {

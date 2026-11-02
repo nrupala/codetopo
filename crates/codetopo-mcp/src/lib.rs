@@ -369,6 +369,20 @@ pub fn tool_catalog() -> Vec<Value> {
             },
         }),
         json!({
+            "name": "codetopo_render",
+            "title": "Render (layout spec)",
+            "description": "The graph's layout specification: 'layered' (layout spec v1, the default) or 'force' (Fruchterman-Reingold, layout spec v2 - deterministic, fixed parameters recorded in the spec). Above the force ceilings the answer is a stated decline naming the ceiling, not a partial drawing. The same spec objects serve the CLI's render command and the HTTP render route.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "db_path": {"type": "string", "description": "Path to the index database."},
+                    "layout": {"type": "string", "enum": ["layered", "force"], "description": "Which layout to compute. Default: layered."},
+                },
+                "required": ["db_path"],
+            },
+        }),
+        json!({
             "name": "codetopo_history",
             "title": "Change-history measurements (hotspots, change coupling)",
             "description": "Hotspots (change frequency x complexity, both factors stated) and change coupling (support/confidence as pair counts) over a local working tree's git history. History is local-only: without repo_path the answer is the unmeasured report (measured: false with the reason), never invented numbers.",
@@ -462,6 +476,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, ToolError> {
         "codetopo_metrics" => tool_metrics(args),
         "codetopo_communities" => tool_communities(args),
         "codetopo_topo_sort" => tool_topo_sort(args),
+        "codetopo_render" => tool_render(args),
         "codetopo_history" => tool_history(args),
         "codetopo_neighborhood" => tool_neighborhood(args),
         "codetopo_get_symbol" => tool_get_symbol(args),
@@ -758,6 +773,18 @@ fn tool_topo_sort(args: &Value) -> Result<Value, ToolError> {
     Ok(codetopo_cli::topo_sort_value(&graph))
 }
 
+/// `codetopo_render` — the layout spec (v1 layered or v2 force),
+/// in the shared shape the CLI's `render` and the HTTP render
+/// route also return.
+fn tool_render(args: &Value) -> Result<Value, ToolError> {
+    let graph = open_graph(args)?;
+    let layout = args
+        .get("layout")
+        .and_then(Value::as_str)
+        .unwrap_or("layered");
+    codetopo_cli::render_value(&graph, layout).map_err(ToolError::MissingParam)
+}
+
 /// `codetopo_history` — change-history measurements, in the shared
 /// shape the CLI's `history --json` and the HTTP history route also
 /// return. With a `repo_path`, the history is read from that local
@@ -949,9 +976,9 @@ mod tests {
     // -- catalogue ---------------------------------------------------------
 
     #[test]
-    fn catalogue_lists_nineteen_tools() {
+    fn catalogue_lists_twenty_tools() {
         let catalog = tool_catalog();
-        assert_eq!(catalog.len(), 19, "expected 19 tools: {catalog:?}");
+        assert_eq!(catalog.len(), 20, "expected 20 tools: {catalog:?}");
 
         let names: Vec<&str> = catalog
             .iter()
@@ -974,6 +1001,7 @@ mod tests {
                 "codetopo_metrics",
                 "codetopo_communities",
                 "codetopo_topo_sort",
+                "codetopo_render",
                 "codetopo_history",
                 "codetopo_neighborhood",
                 "codetopo_get_symbol",
@@ -1331,7 +1359,7 @@ mod tests {
         assert_eq!(response["id"], 7);
         assert_eq!(
             response["result"]["tools"].as_array().expect("tools").len(),
-            19
+            20
         );
     }
 
@@ -1542,6 +1570,32 @@ mod tests {
             via_tool["methods"]["hotspot"].as_str().expect("method").contains("Tornhill"),
             "the methods travel with the answer"
         );
+    }
+
+    #[test]
+    fn render_tool_matches_the_cli_value_for_both_layouts() {
+        let (_dir, db_path) = fixture_index();
+        let graph = load_graph_from_db(&db_path).expect("graph loads");
+        for layout in ["layered", "force"] {
+            let via_tool = result_of(
+                "codetopo_render",
+                &args(&db_path, json!({ "layout": layout })),
+            );
+            assert_eq!(
+                via_tool,
+                codetopo_cli::render_value(&graph, layout).expect("renders"),
+                "MCP render ({layout}) == CLI render for the same database"
+            );
+        }
+        // The default is the v1 layered spec.
+        let via_tool = result_of("codetopo_render", &args(&db_path, json!({})));
+        assert_eq!(via_tool["layout_version"], 1);
+        let via_tool = result_of(
+            "codetopo_render",
+            &args(&db_path, json!({ "layout": "force" })),
+        );
+        assert_eq!(via_tool["layout_version"], 2);
+        assert_eq!(via_tool["layout"], "force");
     }
 
     #[test]

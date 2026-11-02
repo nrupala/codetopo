@@ -65,6 +65,32 @@ with an ellipsis; the full node id rides in a `<title>` element.
 All label/id text is XML-escaped. The document carries no
 timestamp and no generator string beyond its `<title>` counts.
 
+## Layout spec v2 — the force layout (0.9.0)
+
+`render --layout force` (HTTP `GET /v1/graphs/{id}/render?layout=force`,
+MCP `codetopo_render` with `layout: "force"`) emits layout spec
+**v2**: the same self-contained discipline as v1 — geometry plus
+identity, no colours or grouping baked in — with float canvas
+coordinates on a 1000×1000 canvas. The layout is
+Fruchterman–Reingold (1991), implemented in-house and made
+deterministic the same way v1 is: no randomness (initial placement
+is the circle in ascending id order), a fixed iteration count
+(80) and linear cooling schedule (from 100 canvas units), both
+recorded in the spec's `params` alongside the optimal distance k,
+the source node count, and whether condensation ran.
+Single-threaded accumulation in index order throughout; the same
+graph produces byte-identical spec and SVG on any platform.
+
+Springs act on v1's dependency adjacency over the same node
+universe and drawing edges. Above 3,000 nodes the layout runs over
+the SCC-condensed graph (each spec node is a component:
+`id`/`label`/`kind`/`tier` from its smallest member, `members`
+recording the component size, drawn larger by member count);
+above 3,000 components too, the surface declines with a stated
+reason naming the ceiling — the layered layout remains the
+full-graph drawing. SVG for v2 mirrors v1's styling (same kind
+fills and edge strokes) over the float coordinates.
+
 ## Size behaviour
 
 Output is linear in the graph (`nodes + edges` elements). A

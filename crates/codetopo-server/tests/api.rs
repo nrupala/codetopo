@@ -1027,6 +1027,28 @@ async fn rank_route_matches_the_cli_value_and_finds_the_hub() {
         "HTTP topo-sort == CLI topo-sort"
     );
 
+    // The render route returns the shared layout specs: v1
+    // layered by default, v2 force on request.
+    for (query, version) in [("", 1), ("?layout=force", 2)] {
+        let (status, body) = harness
+            .get(&format!("/v1/graphs/{index_id}/render{query}"))
+            .await;
+        assert_eq!(status, StatusCode::OK, "render{query}: {body}");
+        assert_eq!(body["layout_version"], version, "render{query}");
+        let mut via_http = body.clone();
+        via_http
+            .as_object_mut()
+            .expect("object")
+            .remove("index_id")
+            .expect("index_id present");
+        let layout_name = if version == 2 { "force" } else { "layered" };
+        assert_eq!(
+            via_http,
+            codetopo_cli::render_value(&graph, layout_name).expect("renders"),
+            "HTTP render ({layout_name}) == CLI render"
+        );
+    }
+
     // Default metric, known hub.
     let (status, body) = harness.get(&format!("/v1/graphs/{index_id}/rank")).await;
     assert_eq!(status, StatusCode::OK, "rank default: {body}");
