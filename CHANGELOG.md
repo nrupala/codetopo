@@ -4,6 +4,84 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-02
+
+- **The Rust analytics engine.** `codetopo_rank` grows from four
+  metrics to nine: beside the four it already carried, it now
+  answers five graph centralities computed in Rust over the
+  projected symbol graph — PageRank (the Brin–Page stationary
+  distribution, damping 0.85), betweenness (Brandes, exact,
+  normalized), closeness (Wasserman–Faust), eigenvector (Bonacich)
+  and Katz (α = 0.1, β = 1.0) — each with its method and fixed
+  parameters stated where the number appears; the parameters are
+  part of the method, not tunables. Three new surfaces join the
+  seventeen: `codetopo_communities` (Leiden community detection,
+  run with a fixed published seed, modularity Q reported with the
+  partition), `codetopo_topo_sort` (the projected graph in
+  dependency order) and `codetopo_render` (the graph drawn as
+  deterministic SVG — a Fruchterman–Reingold force layout with no
+  RNG: circle placement, fixed 80 iterations, linear cooling —
+  layout-spec v2, beside the original layered layout, which is
+  untouched). Tools and endpoints rise 17 → 20 on CLI, HTTP and
+  MCP alike. CODE_SCHEMA §9 is the only schema amendment;
+  SCHEMA_VERSION stays 1.2, nothing stored changes, and every
+  pre-existing answer is unchanged — rank's original four metrics
+  byte-for-byte. Proof: committed oracle goldens (networkx for
+  the five measures, python-igraph for communities; Python is
+  the validation oracle only, never in CI), the planted
+  two-villages partition recovered exactly (Q = 0.452381 against
+  hand arithmetic), and on codetopo's own 1,708-node index
+  PageRank agrees with networkx to 6.9e-18 and betweenness to
+  3.5e-18, top-10s identical. Run-twice byte-identity is
+  test-asserted per measure at fixture scale and at corpus scale.
+
+- **Analytics (RA0): crate decisions, one rejection.** Adopted:
+  petgraph 0.8.3 and rustworkx-core 0.18.1; leiden-rs pinned
+  `=0.8.1` (licence read from its manifest: MIT OR Apache-2.0;
+  `#![deny(unsafe_code)]`; default-features off) behind an
+  internal `CommunityDetector` trait, so the detector is
+  replaceable without a surface change. Modularity Q,
+  topological sort and the force layout are built in-house.
+  **Deviation, recorded:** petgraph's `page_rank` was rejected by
+  spike — it does not compute the Brin–Page stationary
+  distribution this release defines — so PageRank is implemented
+  in-house in f64 and oracle-proven (above). rustworkx-core is
+  called with `parallel_threshold = usize::MAX` everywhere: its
+  parallel Brandes accumulates floats in completion order, which
+  would break byte-identity between runs.
+
+- **Analytics (RA5): scale record and ceilings.** Corpus 40,001
+  nodes / 30,008 projected edges, byte-identical across two runs:
+  PageRank 0.49 s, Katz 0.48 s, communities 0.91 s (Q = 0.9875),
+  topo-sort 0.5 s, closeness 13 s, betweenness 33 s. Dense stress
+  (2,000-node complete digraph, 3,998,000 edges): betweenness
+  35 s, closeness 150 s. The betweenness ceiling is finalized at
+  **50,000 nodes** and the force layout's at **3,000 laid-out
+  nodes**; past a ceiling, the answer is an absence with a
+  reason, never a partial result.
+
+- **Float parity fix (serde_json).** A measured value crossing
+  the HTTP boundary landed 1 ULP off the CLI/MCP value
+  (serde_json's default float parser). Five manifests now take
+  serde_json's `float_roundtrip` feature, and parity tests pin
+  CLI/HTTP/MCP agreement. No stored data was affected — every
+  analytics answer is computed on read.
+
+- **Disclosed limits (gate findings F-2/F-3, by design).** Two
+  iterative measures report **absence** where they cannot
+  converge, never a partial vector: eigenvector centrality does
+  not converge on the 40,001-node corpus within the method's 100
+  iterations (the absence is answered in 0.45 s), and Katz cannot
+  converge on a dense graph whose spectral radius makes α·ρ ≫ 1.
+  Closeness is the engine's most expensive measure on dense
+  graphs (150 s on the complete digraph above); exactness is the
+  product, and any future approximation would ship as a new
+  method, never a silent substitution. Carried from 0.8.0,
+  unchanged: dotted call names (`obj.method`) resolve only to
+  `external::` stubs under the builder's verbatim suffix rule —
+  a builder-level behaviour in all three languages, awaiting its
+  own board decision.
+
 ## [0.8.0] — 2026-11-02
 
 - **Python support.** codetopo now indexes Python (`.py`,
