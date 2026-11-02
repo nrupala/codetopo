@@ -273,11 +273,11 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
-      "description": "The top symbols by fan-in, fan-out, blast-radius size, or cyclomatic complexity - counts over the graph, with the count's method stated in the result. A ranking of measurements, never a score of code quality.",
+      "description": "The top symbols by fan-in, fan-out, blast-radius size, cyclomatic complexity, or a centrality measure (pagerank, betweenness, closeness, eigenvector, katz) - measurements over the graph, with the measurement's method stated in the result. A measure that does not converge on the graph is reported as an absence with its reason, never a partial result. A ranking of measurements, never a score of code quality.",
       "inputSchema": {
         "properties": {
           "by": {
-            "description": "Metric to rank by: fan_in, fan_out, blast_radius (default), or complexity.",
+            "description": "Metric to rank by: fan_in, fan_out, blast_radius (default), complexity, pagerank, betweenness, closeness, eigenvector, or katz.",
             "type": "string"
           },
           "db_path": {
@@ -295,7 +295,7 @@
         "type": "object"
       },
       "name": "codetopo_rank",
-      "title": "Rank symbols by a measured count"
+      "title": "Rank symbols by a measurement"
     },
     {
       "annotations": {

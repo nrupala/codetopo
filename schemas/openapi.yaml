@@ -531,17 +531,28 @@ paths:
     get:
       tags: [query]
       operationId: rank
-      summary: The top symbols by a measured count.
+      summary: The top symbols by a measurement.
       description: |
         Nodes ordered by one measurement: `fan_in` or `fan_out` (Henry &
         Kafura 1981 — incoming / outgoing dependency edges, `contains`
         excluded), `blast_radius` (CODE_SCHEMA §6 — the number of
-        transitive dependents), or `complexity` (McCabe 1976 —
+        transitive dependents), `complexity` (McCabe 1976 —
         cyclomatic complexity, CODE_SCHEMA §9; only symbols whose
-        decision points were measured are ranked). Count descending, node id ascending as
-        the tie-break; nodes with a zero count are excluded, and so are
-        `external` stub nodes (the dependency boundary, not symbols of
-        the indexed system). The response
+        decision points were measured are ranked), or a centrality
+        measure over the §9 dependency projection (CODE_SCHEMA §9):
+        `pagerank` (Brin & Page 1998), `betweenness` (Freeman 1977;
+        Brandes 2001), `closeness` (Wasserman & Faust 1994),
+        `eigenvector` (Bonacich 1972), or `katz` (Katz 1953) — each
+        with its parameters fixed in its method text. Count (or value)
+        descending, node id ascending as the tie-break; for the count
+        metrics, nodes with a zero count are excluded, and `external`
+        stub nodes are excluded everywhere (the dependency boundary,
+        not symbols of the indexed system); for the centrality
+        metrics every node in the projection is ranked and 0.0 is a
+        measured value. A centrality measure that does not converge
+        on the graph — or exact betweenness over its stated node
+        ceiling — answers `measured: false` with the reason, never a
+        partial result. The response
         states the metric's method beside the numbers — a ranking of a
         measurement, never a score of code quality. The same object
         serves the CLI's `rank` command and the MCP `codetopo_rank`
@@ -555,7 +566,7 @@ paths:
           description: The metric to rank by (default `blast_radius`).
           schema:
             type: string
-            enum: [fan_in, fan_out, blast_radius, complexity]
+            enum: [fan_in, fan_out, blast_radius, complexity, pagerank, betweenness, closeness, eigenvector, katz]
         - $ref: '#/components/parameters/LimitParam'
       responses:
         '200':
@@ -1252,28 +1263,39 @@ components:
       description: |
         A ranking of a measurement: the metric, its published definition
         (`method` — no number without its method), the total number of
-        nodes with a non-zero count, and the top entries.
+        ranked nodes, and the top entries. For a measure that is absent
+        on the graph (a centrality iteration that did not converge, or
+        exact betweenness over its node ceiling), the response instead
+        carries `measured: false` and a `reason`, with no `total` or
+        `results` — absence is reported as absence.
       required: [index_id, metric, method, total, results]
       properties:
         index_id:
           type: string
         metric:
           type: string
-          enum: [fan_in, fan_out, blast_radius, complexity]
+          enum: [fan_in, fan_out, blast_radius, complexity, pagerank, betweenness, closeness, eigenvector, katz]
         method:
           type: string
-          description: The published definition of the count being ranked.
+          description: The published definition of the measurement being ranked.
+        measured:
+          type: boolean
+          description: Present and false only on the absence shape.
+        reason:
+          type: string
+          description: Present only on the absence shape — why the measure is absent.
         total:
           type: integer
           minimum: 0
-          description: Nodes with a non-zero count (before `limit` truncation).
+          description: Ranked nodes (before `limit` truncation) — for count metrics, nodes with a non-zero count; for centrality metrics, every node in the projection.
         results:
           type: array
           items:
             $ref: '#/components/schemas/RankedSymbol'
     RankedSymbol:
       type: object
-      required: [id, kind, label, count]
+      description: Exactly one of `count` / `value` is present — `count` for the integer metrics, `value` for the centrality metrics.
+      required: [id, kind, label]
       properties:
         id:
           type: string
@@ -1285,7 +1307,10 @@ components:
         count:
           type: integer
           minimum: 1
-          description: The node's count under the ranked metric.
+          description: The node's count under the ranked metric (integer metrics only).
+        value:
+          type: number
+          description: The node's measured value under the ranked metric (centrality metrics only).
     DiffResponse:
       type: object
       description: |

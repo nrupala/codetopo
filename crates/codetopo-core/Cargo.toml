@@ -12,7 +12,13 @@ categories = ["development-tools"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# float_roundtrip: serde_json's default float parser is best-effort
+# and can land 1 ULP off when a float crosses a JSON text boundary
+# (found by the RA1 HTTP parity test, 2026-11-02). The analytics
+# engine's determinism doctrine covers its JSON surface too, so
+# float parsing is exact round-trip in every crate that carries
+# codetopo measurements.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
 # Analytics engine (SPEC — Rust analytics, RA0): the graph-theory stack.
 # petgraph supplies the graph primitives; rustworkx-core the Brandes /
