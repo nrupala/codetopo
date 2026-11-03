@@ -15,8 +15,12 @@
 //!
 //! Creation is price-guarded: the only
 //! handlers that can create an entitlement read the price from a
-//! subscription object's line items and act only when it is the
-//! configured one. A checkout session's payload carries no line items
+//! subscription object's line items and act only when it is one of
+//! the configured ones — the hosted (Team) price, and the Guardrails
+//! price when that tier is open. The price is also the tier stamp:
+//! the plan resolved from it is recorded on the issued key and on
+//! the entitlement, so a replacement key is re-issued at the tier
+//! the subscription pays for. A checkout session's payload carries no line items
 //! (Stripe leaves them unexpanded in events), so
 //! `checkout.session.completed` never creates — it contributes the
 //! claim token, and the subscription event does the creating,
@@ -60,6 +64,15 @@ pub const CLAIM_TTL_SECS: i64 = 7 * 24 * 3600;
 /// Grace between a past-due event and revocation: 7 days.
 pub const PAST_DUE_GRACE_SECS: i64 = 7 * 24 * 3600;
 
+/// The plan name recorded on keys the Guardrails price issues — the
+/// tier stamp for the US$49/mo tier. The server resolves any plan
+/// name it has no limits row for to the hosted row (see
+/// `codetopo_server::limits::plan_limits`), so until a Guardrails
+/// limits row exists the stamp is a true record of the tier paid,
+/// not yet a different enforcement; the record is what a later
+/// limits row — and support, reading the entitlement — go by.
+pub const GUARDRAILS_PLAN: &str = "guardrails";
+
 /// What an applied event decided.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventOutcome {
@@ -74,16 +87,43 @@ pub enum EventOutcome {
     Ignored,
 }
 
-/// The policy the state machine applies: which price is codetopo's,
-/// and which plan its keys carry. Configuration, never literals in the
-/// handlers (the Conduit pattern).
+/// The policy the state machine applies: which prices are codetopo's,
+/// and which plan each one's keys carry. Configuration, never literals
+/// in the handlers (the Conduit pattern).
 pub struct Policy {
-    /// The Stripe price id for the hosted tier.
+    /// The Stripe price id for the hosted tier (Team, US$19/mo).
     pub price_id: String,
-    /// The plan name recorded on issued keys.
+    /// The plan name recorded on keys the hosted price issues.
     pub plan: String,
+    /// The Stripe price id for the Guardrails tier (US$49/mo), when
+    /// that tier is open. `None` is the single-price bridge: only
+    /// `price_id` creates, exactly as before tiers existed.
+    pub guardrails_price_id: Option<String>,
     /// The claim-sealing key (environment-only; see [`crate::crypto`]).
     pub claim_key: [u8; 32],
+}
+
+impl Policy {
+    /// The plan a subscription's line items earn, or `None` when no
+    /// item names a price this bridge sells. Items are read in
+    /// order and the first known price decides: a subscription
+    /// Stripe bills carries one price per item, and neither tier is
+    /// sold as a mixed cart, so the order rule never arbitrates a
+    /// real purchase — it only keeps the resolution deterministic.
+    pub fn plan_for_items(&self, items: &[LineItem]) -> Option<String> {
+        for item in items {
+            let Some(price) = &item.price else {
+                continue;
+            };
+            if price.id == self.price_id {
+                return Some(self.plan.clone());
+            }
+            if self.guardrails_price_id.as_deref() == Some(price.id.as_str()) {
+                return Some(GUARDRAILS_PLAN.to_string());
+            }
+        }
+        None
+    }
 }
 
 /// Applies one signature-verified event.
@@ -239,7 +279,10 @@ fn maybe_email_key(
             return Ok(false);
         };
         let secret = crypto::open(&policy.claim_key, sealed).map_err(fail)?;
-        let email = compose_key_email(&to, &ent.key_id, &secret, &plan_limits(&policy.plan));
+        // The email quotes the entitlement's own tier: a Guardrails
+        // buyer's key email states their plan's limits, not the base
+        // tier's.
+        let email = compose_key_email(&to, &ent.key_id, &secret, &plan_limits(&ent.plan));
         // Claim the send before attempting it: the marker is the
         // lock, taken atomically, so a concurrent event for this
         // subscription backs off here instead of double-sending.
@@ -398,16 +441,16 @@ fn apply_created(
     occurred: i64,
     now: i64,
 ) -> Result<EventOutcome, BridgeError> {
-    if !carries_price(&data.items.data, &policy.price_id) {
+    let Some(plan) = policy.plan_for_items(&data.items.data) else {
         return Ok(EventOutcome::Ignored);
-    }
+    };
     match data.status.as_deref() {
         Some("active") | Some("trialing") => {
-            ensure_key(store, keys, policy, &data.id, occurred, now)?;
+            ensure_key(store, keys, policy, &data.id, Some(&plan), occurred, now)?;
             Ok(EventOutcome::Applied)
         }
         Some("past_due") | Some("unpaid") => {
-            ensure_key(store, keys, policy, &data.id, occurred, now)?;
+            ensure_key(store, keys, policy, &data.id, Some(&plan), occurred, now)?;
             mark_past_due(store, &data.id, occurred, now)?;
             Ok(EventOutcome::Applied)
         }
@@ -431,9 +474,11 @@ fn apply_update(
 ) -> Result<EventOutcome, BridgeError> {
     if store.entitlement(&data.id)?.is_none() {
         let entitled = matches!(data.status.as_deref(), Some("active") | Some("trialing"));
-        if entitled && carries_price(&data.items.data, &policy.price_id) {
-            ensure_key(store, keys, policy, &data.id, occurred, now)?;
-            return Ok(EventOutcome::Applied);
+        if entitled {
+            if let Some(plan) = policy.plan_for_items(&data.items.data) {
+                ensure_key(store, keys, policy, &data.id, Some(&plan), occurred, now)?;
+                return Ok(EventOutcome::Applied);
+            }
         }
         return Ok(EventOutcome::Ignored);
     }
@@ -459,8 +504,19 @@ fn apply_update(
         }
         Some("active") | Some("trialing") => {
             // Back in good standing — the same restore as a creation,
-            // including replacing a revoked key.
-            ensure_key(store, keys, policy, &data.id, occurred, now)?;
+            // including replacing a revoked key. The event's price,
+            // when it names one of ours, refreshes the recorded tier;
+            // an event naming none leaves the record as it stands.
+            let plan = policy.plan_for_items(&data.items.data);
+            ensure_key(
+                store,
+                keys,
+                policy,
+                &data.id,
+                plan.as_deref(),
+                occurred,
+                now,
+            )?;
             Ok(EventOutcome::Applied)
         }
         Some("canceled") => {
@@ -495,23 +551,36 @@ fn apply_update(
 /// Issues (or re-affirms, or replaces) the key for a subscription and,
 /// on a fresh issuance, seals its delivery and registers the
 /// subscription id as a claim token.
+///
+/// `plan` is the tier the calling event's price resolved to, when it
+/// resolved one. Creation is price-guarded at every call site, so a
+/// fresh entitlement always has one; the configured plan is the
+/// defensive fallback, equal to the single-price bridge's behaviour.
+/// For an existing entitlement the resolved plan refreshes the
+/// recorded stamp — the record follows the price the subscription
+/// pays now — and a replacement key is issued under the refreshed
+/// stamp. A live key's own stamp changes only when the key is
+/// replaced: the key store offers no plan mutation, by its design.
 fn ensure_key(
     store: &BridgeStore,
     keys: &KeyStore,
     policy: &Policy,
     subscription_id: &str,
+    plan: Option<&str>,
     occurred: i64,
     now: i64,
 ) -> Result<(), BridgeError> {
     match store.entitlement(subscription_id)? {
         None => {
+            let plan = plan.unwrap_or(&policy.plan).to_string();
             let key_id = key_id_for(subscription_id, 1);
-            let secret = issue_or_adopt(keys, policy, &key_id)?;
+            let secret = issue_or_adopt(keys, &plan, &key_id)?;
             store.save_entitlement(
                 &Entitlement {
                     subscription_id: subscription_id.to_string(),
                     key_id: key_id.clone(),
                     key_seq: 1,
+                    plan,
                     status: STATUS_ACTIVE.to_string(),
                     revoke_at: None,
                     last_event_at: occurred,
@@ -526,6 +595,9 @@ fn ensure_key(
         }
         Some(mut ent) => {
             ent.last_event_at = ent.last_event_at.max(occurred);
+            if let Some(plan) = plan {
+                ent.plan = plan.to_string();
+            }
             if key_is_active(keys, &ent.key_id)? {
                 // Restore / re-affirm: clear any pending revocation.
                 ent.status = STATUS_ACTIVE.to_string();
@@ -537,7 +609,8 @@ fn ensure_key(
             // dead; the buyer claims the new one like the first.
             let seq = ent.key_seq + 1;
             let key_id = key_id_for(subscription_id, seq);
-            let secret = issue_or_adopt(keys, policy, &key_id)?;
+            let plan = ent.plan.clone();
+            let secret = issue_or_adopt(keys, &plan, &key_id)?;
             ent.key_id = key_id.clone();
             ent.key_seq = seq;
             ent.status = STATUS_ACTIVE.to_string();
@@ -654,10 +727,10 @@ fn event_subscription_id(event: &WebhookEvent) -> Option<String> {
 /// or is unrecoverable and an operator concern.
 fn issue_or_adopt(
     keys: &KeyStore,
-    policy: &Policy,
+    plan: &str,
     key_id: &str,
 ) -> Result<Option<String>, BridgeError> {
-    match keys.issue(key_id, &policy.plan) {
+    match keys.issue(key_id, plan) {
         Ok(secret) => Ok(Some(secret)),
         Err(err) if err.code() == "key_exists" => {
             if key_is_active(keys, key_id)? {
@@ -721,13 +794,6 @@ fn key_id_for(subscription_id: &str, seq: i64) -> String {
     }
 }
 
-/// True when any line item names the configured price.
-fn carries_price(items: &[LineItem], price_id: &str) -> bool {
-    items
-        .iter()
-        .any(|item| item.price.as_ref().is_some_and(|price| price.id == price_id))
-}
-
 /// Deserialises an event's `data` into the family shape it needs.
 fn parse_data<T: serde::de::DeserializeOwned>(event: &WebhookEvent) -> Result<T, BridgeError> {
     serde_json::from_value(event.data.clone()).map_err(|err| {
@@ -741,12 +807,14 @@ mod tests {
     use crate::store::BridgeStore;
 
     const PRICE: &str = "price_codetopo";
+    const GUARDRAILS_PRICE: &str = "price_codetopo_guardrails";
     const NOW: i64 = 1_800_000_000;
 
     fn policy() -> Policy {
         Policy {
             price_id: PRICE.to_string(),
             plan: "hosted".to_string(),
+            guardrails_price_id: None,
             // Derived at runtime, not a literal (the hard-coded-key
             // scanner reads tests too, and rightly so).
             claim_key: {
@@ -763,6 +831,24 @@ mod tests {
         )
     }
 
+    /// The two-tier policy: the Guardrails price configured
+    /// alongside the hosted one.
+    fn policy_two_tier() -> Policy {
+        let mut policy = policy();
+        policy.guardrails_price_id = Some(GUARDRAILS_PRICE.to_string());
+        policy
+    }
+
+    fn apply_p(
+        policy: &Policy,
+        store: &BridgeStore,
+        keys: &KeyStore,
+        event: &WebhookEvent,
+        now: i64,
+    ) -> EventOutcome {
+        apply_event(store, keys, policy, None, event, now).expect("apply event")
+    }
+
     fn subscription_event(
         event_id: &str,
         event_type: &str,
@@ -770,10 +856,21 @@ mod tests {
         created: i64,
         extra: serde_json::Value,
     ) -> WebhookEvent {
+        subscription_event_priced(event_id, event_type, sub, created, PRICE, extra)
+    }
+
+    fn subscription_event_priced(
+        event_id: &str,
+        event_type: &str,
+        sub: &str,
+        created: i64,
+        price: &str,
+        extra: serde_json::Value,
+    ) -> WebhookEvent {
         let mut data = serde_json::json!({
             "id": sub,
             "status": "active",
-            "items": { "object": "list", "data": [{ "price": { "id": PRICE } }] },
+            "items": { "object": "list", "data": [{ "price": { "id": price } }] },
             "current_period_end": NOW + 30 * 86_400,
             "cancel_at_period_end": false,
         });
@@ -790,6 +887,17 @@ mod tests {
 
     fn created_event(event_id: &str, sub: &str, created: i64) -> WebhookEvent {
         subscription_event(event_id, "customer.subscription.created", sub, created, serde_json::json!({}))
+    }
+
+    fn created_event_priced(event_id: &str, sub: &str, created: i64, price: &str) -> WebhookEvent {
+        subscription_event_priced(
+            event_id,
+            "customer.subscription.created",
+            sub,
+            created,
+            price,
+            serde_json::json!({}),
+        )
     }
 
     fn checkout_event(event_id: &str, session: &str, sub: &str, created: i64) -> WebhookEvent {
@@ -927,6 +1035,7 @@ mod tests {
         assert_eq!(apply(&store, &keys, &ev, NOW), EventOutcome::Applied);
         let ent = store.entitlement("sub_A").expect("read").expect("entitlement");
         assert_eq!(ent.key_id, "sub_A");
+        assert_eq!(ent.plan, "hosted", "the record carries the tier stamp");
         assert_eq!(ent.status, STATUS_ACTIVE);
         // The buyer claims with the subscription id and gets a working key.
         let (key_id, secret) = claim_key(&store, &policy(), "sub_A", NOW).expect("claim");
@@ -1275,6 +1384,204 @@ mod tests {
             apply(&store, &keys, &ev, NOW);
         }
         assert_eq!(keys.active_len(), 2);
+    }
+
+    /// A Guardrails purchase end to end: the checkout lands first,
+    /// the creation mints under the Guardrails price, and the key
+    /// the buyer claims is stamped with the Guardrails plan — on the
+    /// key record and on the entitlement alike.
+    #[test]
+    fn guardrails_purchase_issues_a_guardrails_stamped_key() {
+        let (store, keys) = stores();
+        let pol = policy_two_tier();
+        let checkout = checkout_event("evt_k", "cs_GR", "sub_GR", NOW);
+        assert_eq!(apply_p(&pol, &store, &keys, &checkout, NOW), EventOutcome::Applied);
+        assert_eq!(keys.len(), 0, "a checkout alone mints nothing");
+        let created = created_event_priced("evt_c", "sub_GR", NOW + 30, GUARDRAILS_PRICE);
+        assert_eq!(apply_p(&pol, &store, &keys, &created, NOW + 30), EventOutcome::Applied);
+        let ent = store.entitlement("sub_GR").expect("read").expect("entitlement");
+        assert_eq!(ent.plan, GUARDRAILS_PLAN);
+        assert_eq!(ent.plan, "guardrails");
+        let (key_id, secret) = claim_key(&store, &pol, "cs_GR", NOW + 60).expect("claim by session");
+        assert_eq!(key_id, "sub_GR");
+        let verified = keys.verify("sub_GR", &secret).expect("claimed key verifies");
+        assert_eq!(verified.plan, "guardrails", "the key itself carries the tier");
+    }
+
+    /// With both tiers configured, a price that is neither is still
+    /// another product's: creation and the update rescue both refuse.
+    #[test]
+    fn an_unknown_price_creates_nothing_with_both_tiers_configured() {
+        let (store, keys) = stores();
+        let pol = policy_two_tier();
+        let created = created_event_priced("evt_1", "sub_U", NOW, "price_someone_else");
+        assert_eq!(apply_p(&pol, &store, &keys, &created, NOW), EventOutcome::Ignored);
+        let update = subscription_event_priced(
+            "evt_2",
+            "customer.subscription.updated",
+            "sub_U",
+            NOW + 30,
+            "price_someone_else",
+            serde_json::json!({}),
+        );
+        assert_eq!(apply_p(&pol, &store, &keys, &update, NOW + 30), EventOutcome::Ignored);
+        assert_eq!(keys.len(), 0);
+        assert!(store.entitlement("sub_U").expect("read").is_none());
+    }
+
+    /// Single-price behaviour is identical when the Guardrails price
+    /// is unset: a subscription carrying that price id is another
+    /// product's as far as this bridge is concerned.
+    #[test]
+    fn the_guardrails_price_is_not_ours_until_configured() {
+        let (store, keys) = stores();
+        let created = created_event_priced("evt_1", "sub_V", NOW, GUARDRAILS_PRICE);
+        assert_eq!(apply(&store, &keys, &created, NOW), EventOutcome::Ignored);
+        assert_eq!(keys.len(), 0);
+        assert!(store.entitlement("sub_V").expect("read").is_none());
+    }
+
+    /// Revocation follows the subscription, not the tier: a
+    /// Guardrails key dies on `subscription.deleted` exactly like a
+    /// Team key does.
+    #[test]
+    fn subscription_deleted_revokes_a_guardrails_key() {
+        let (store, keys) = stores();
+        let pol = policy_two_tier();
+        let created = created_event_priced("evt_c", "sub_GD", NOW, GUARDRAILS_PRICE);
+        apply_p(&pol, &store, &keys, &created, NOW);
+        let (_, secret) = claim_key(&store, &pol, "sub_GD", NOW + 60).expect("claim");
+        assert!(keys.verify("sub_GD", &secret).is_ok());
+        let deleted = subscription_event_priced(
+            "evt_d",
+            "customer.subscription.deleted",
+            "sub_GD",
+            NOW + 120,
+            GUARDRAILS_PRICE,
+            serde_json::json!({ "status": "canceled" }),
+        );
+        assert_eq!(apply_p(&pol, &store, &keys, &deleted, NOW + 120), EventOutcome::Applied);
+        assert!(keys.verify("sub_GD", &secret).is_err());
+        let ent = store.entitlement("sub_GD").expect("read").expect("entitlement");
+        assert_eq!(ent.status, STATUS_REVOKED);
+        assert_eq!(ent.plan, "guardrails", "the record keeps the tier after revocation");
+    }
+
+    /// Both tiers live side by side, each key stamped with its own
+    /// tier; deleting one subscription leaves the other untouched.
+    #[test]
+    fn tiers_coexist_and_revocation_is_scoped_to_the_subscription() {
+        let (store, keys) = stores();
+        let pol = policy_two_tier();
+        let team = created_event("evt_t", "sub_TM", NOW);
+        apply_p(&pol, &store, &keys, &team, NOW);
+        let guard = created_event_priced("evt_g", "sub_GX", NOW, GUARDRAILS_PRICE);
+        apply_p(&pol, &store, &keys, &guard, NOW);
+        let (_, team_secret) = claim_key(&store, &pol, "sub_TM", NOW + 60).expect("team claim");
+        let (_, guard_secret) = claim_key(&store, &pol, "sub_GX", NOW + 60).expect("guardrails claim");
+        assert_eq!(keys.verify("sub_TM", &team_secret).expect("team key").plan, "hosted");
+        assert_eq!(
+            keys.verify("sub_GX", &guard_secret).expect("guardrails key").plan,
+            "guardrails"
+        );
+        let deleted = subscription_event(
+            "evt_d",
+            "customer.subscription.deleted",
+            "sub_TM",
+            NOW + 120,
+            serde_json::json!({ "status": "canceled" }),
+        );
+        apply_p(&pol, &store, &keys, &deleted, NOW + 120);
+        assert!(keys.verify("sub_TM", &team_secret).is_err(), "the deleted tier's key dies");
+        assert!(keys.verify("sub_GX", &guard_secret).is_ok(), "the other tier is untouched");
+    }
+
+    /// A Guardrails subscription restored after revocation is
+    /// re-issued at the Guardrails tier — the replacement takes the
+    /// entitlement's recorded stamp, not the base plan.
+    #[test]
+    fn a_guardrails_replacement_keeps_the_guardrails_stamp() {
+        let (store, keys) = stores();
+        let pol = policy_two_tier();
+        let created = created_event_priced("evt_c", "sub_GN", NOW, GUARDRAILS_PRICE);
+        apply_p(&pol, &store, &keys, &created, NOW);
+        let (_, old_secret) = claim_key(&store, &pol, "sub_GN", NOW + 60).expect("claim");
+        let deleted = subscription_event_priced(
+            "evt_d",
+            "customer.subscription.deleted",
+            "sub_GN",
+            NOW + 120,
+            GUARDRAILS_PRICE,
+            serde_json::json!({ "status": "canceled" }),
+        );
+        apply_p(&pol, &store, &keys, &deleted, NOW + 120);
+        assert!(keys.verify("sub_GN", &old_secret).is_err());
+        let back = subscription_event_priced(
+            "evt_u",
+            "customer.subscription.updated",
+            "sub_GN",
+            NOW + 180,
+            GUARDRAILS_PRICE,
+            serde_json::json!({ "status": "active" }),
+        );
+        apply_p(&pol, &store, &keys, &back, NOW + 180);
+        let ent = store.entitlement("sub_GN").expect("read").expect("entitlement");
+        assert_eq!(ent.key_id, "sub_GN~2");
+        assert_eq!(ent.plan, "guardrails");
+        let (key_id, new_secret) = claim_key(&store, &pol, "sub_GN", NOW + 180).expect("claim replacement");
+        assert_eq!(key_id, "sub_GN~2");
+        let verified = keys.verify("sub_GN~2", &new_secret).expect("replacement verifies");
+        assert_eq!(verified.plan, "guardrails");
+    }
+
+    /// A subscription that switches tier mid-life: the record
+    /// follows the price it pays now, so the next replacement is
+    /// issued at the new tier. (The live key's own stamp changes
+    /// only when the key is replaced — the key store has no plan
+    /// mutation, by design.)
+    #[test]
+    fn a_tier_switch_refreshes_the_record_for_the_next_key() {
+        let (store, keys) = stores();
+        let pol = policy_two_tier();
+        let created = created_event("evt_c", "sub_SW", NOW);
+        apply_p(&pol, &store, &keys, &created, NOW);
+        let (_, secret) = claim_key(&store, &pol, "sub_SW", NOW + 60).expect("claim");
+        assert_eq!(keys.verify("sub_SW", &secret).expect("team key").plan, "hosted");
+        // The subscription moves to the Guardrails price.
+        let switched = subscription_event_priced(
+            "evt_u",
+            "customer.subscription.updated",
+            "sub_SW",
+            NOW + 120,
+            GUARDRAILS_PRICE,
+            serde_json::json!({ "status": "active" }),
+        );
+        apply_p(&pol, &store, &keys, &switched, NOW + 120);
+        let ent = store.entitlement("sub_SW").expect("read").expect("entitlement");
+        assert_eq!(ent.plan, "guardrails", "the record follows the current price");
+        assert_eq!(ent.key_id, "sub_SW", "no replacement while the key lives");
+        // At the next replacement, the new stamp takes effect.
+        let deleted = subscription_event_priced(
+            "evt_d",
+            "customer.subscription.deleted",
+            "sub_SW",
+            NOW + 180,
+            GUARDRAILS_PRICE,
+            serde_json::json!({ "status": "canceled" }),
+        );
+        apply_p(&pol, &store, &keys, &deleted, NOW + 180);
+        let back = subscription_event_priced(
+            "evt_r",
+            "customer.subscription.updated",
+            "sub_SW",
+            NOW + 240,
+            GUARDRAILS_PRICE,
+            serde_json::json!({ "status": "active" }),
+        );
+        apply_p(&pol, &store, &keys, &back, NOW + 240);
+        let (_, new_secret) = claim_key(&store, &pol, "sub_SW", NOW + 240).expect("claim replacement");
+        let verified = keys.verify("sub_SW~2", &new_secret).expect("replacement verifies");
+        assert_eq!(verified.plan, "guardrails");
     }
 
     #[test]

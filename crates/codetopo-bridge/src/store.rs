@@ -66,6 +66,14 @@ pub struct Entitlement {
     /// Issuance sequence for this subscription: 1 for the first key,
     /// +1 per replacement after a revocation.
     pub key_seq: i64,
+    /// The plan (tier) recorded for this subscription: resolved from
+    /// the price the creating event carried, refreshed when a later
+    /// event names a different tier the bridge sells. A replacement
+    /// key is re-issued under this stamp, and the key-delivery email
+    /// quotes this plan's limits. Rows predating tiers read back as
+    /// the server's default plan (see the migration in
+    /// [`BridgeStore::init`]).
+    pub plan: String,
     /// One of the `STATUS_*` constants.
     pub status: String,
     /// Unix seconds when a pending revocation falls due, if one is
@@ -193,6 +201,39 @@ impl BridgeStore {
             )
             .map_err(|err| BridgeError::Store(format!("cannot migrate deliveries: {err}")))?;
         }
+        // Migration for stores created before tiered pricing:
+        // `bridge_entitlements` gains the plan recorded at issuance.
+        // Every pre-tier row was issued under the single configured
+        // plan — the server's default plan in every deployment that
+        // never set CODETOPO_PLAN — so that is the backfill.
+        let has_plan = {
+            let mut statement = conn
+                .prepare("PRAGMA table_info(bridge_entitlements)")
+                .map_err(|err| BridgeError::Store(format!("cannot inspect entitlements: {err}")))?;
+            let columns = statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|err| BridgeError::Store(format!("cannot inspect entitlements: {err}")))?;
+            let mut found = false;
+            for column in columns {
+                let column = column
+                    .map_err(|err| BridgeError::Store(format!("cannot inspect entitlements: {err}")))?;
+                if column == "plan" {
+                    found = true;
+                }
+            }
+            found
+        };
+        if !has_plan {
+            conn.execute(
+                &format!(
+                    "ALTER TABLE bridge_entitlements \
+                     ADD COLUMN plan TEXT NOT NULL DEFAULT '{}'",
+                    codetopo_server::keys::DEFAULT_PLAN
+                ),
+                [],
+            )
+            .map_err(|err| BridgeError::Store(format!("cannot migrate entitlements: {err}")))?;
+        }
         Ok(BridgeStore {
             conn: Mutex::new(conn),
         })
@@ -241,7 +282,7 @@ impl BridgeStore {
     pub fn entitlement(&self, subscription_id: &str) -> Result<Option<Entitlement>, BridgeError> {
         let conn = self.lock()?;
         conn.query_row(
-            "SELECT subscription_id, key_id, key_seq, status, revoke_at, last_event_at
+            "SELECT subscription_id, key_id, key_seq, plan, status, revoke_at, last_event_at
              FROM bridge_entitlements WHERE subscription_id = ?1",
             rusqlite::params![subscription_id],
             |row| {
@@ -249,9 +290,10 @@ impl BridgeStore {
                     subscription_id: row.get(0)?,
                     key_id: row.get(1)?,
                     key_seq: row.get(2)?,
-                    status: row.get(3)?,
-                    revoke_at: row.get(4)?,
-                    last_event_at: row.get(5)?,
+                    plan: row.get(3)?,
+                    status: row.get(4)?,
+                    revoke_at: row.get(5)?,
+                    last_event_at: row.get(6)?,
                 })
             },
         )
@@ -264,11 +306,12 @@ impl BridgeStore {
         let conn = self.lock()?;
         conn.execute(
             "INSERT INTO bridge_entitlements
-                 (subscription_id, key_id, key_seq, status, revoke_at, last_event_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 (subscription_id, key_id, key_seq, plan, status, revoke_at, last_event_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(subscription_id) DO UPDATE SET
                  key_id = excluded.key_id,
                  key_seq = excluded.key_seq,
+                 plan = excluded.plan,
                  status = excluded.status,
                  revoke_at = excluded.revoke_at,
                  last_event_at = excluded.last_event_at,
@@ -277,6 +320,7 @@ impl BridgeStore {
                 ent.subscription_id,
                 ent.key_id,
                 ent.key_seq,
+                ent.plan,
                 ent.status,
                 ent.revoke_at,
                 ent.last_event_at,
@@ -292,7 +336,7 @@ impl BridgeStore {
         let conn = self.lock()?;
         let mut statement = conn
             .prepare(
-                "SELECT subscription_id, key_id, key_seq, status, revoke_at, last_event_at
+                "SELECT subscription_id, key_id, key_seq, plan, status, revoke_at, last_event_at
                  FROM bridge_entitlements
                  WHERE revoke_at IS NOT NULL AND revoke_at <= ?1
                    AND status IN (?2, ?3)
@@ -305,9 +349,10 @@ impl BridgeStore {
                     subscription_id: row.get(0)?,
                     key_id: row.get(1)?,
                     key_seq: row.get(2)?,
-                    status: row.get(3)?,
-                    revoke_at: row.get(4)?,
-                    last_event_at: row.get(5)?,
+                    plan: row.get(3)?,
+                    status: row.get(4)?,
+                    revoke_at: row.get(5)?,
+                    last_event_at: row.get(6)?,
                 })
             })
             .map_err(|err| BridgeError::Store(format!("cannot read entitlements: {err}")))?;
@@ -652,6 +697,7 @@ mod tests {
             subscription_id: "sub_1".to_string(),
             key_id: "sub_1".to_string(),
             key_seq: 1,
+            plan: "hosted".to_string(),
             status: status.to_string(),
             revoke_at,
             last_event_at: 100,
@@ -673,6 +719,7 @@ mod tests {
         store.save_entitlement(&ent(STATUS_PAST_DUE, Some(500)), 100).expect("save");
         let read = store.entitlement("sub_1").expect("read").expect("present");
         assert_eq!(read.status, STATUS_PAST_DUE);
+        assert_eq!(read.plan, "hosted", "the tier stamp round-trips");
         assert_eq!(read.revoke_at, Some(500));
         assert!(store.due_revocations(499).expect("due").is_empty());
         assert_eq!(store.due_revocations(500).expect("due").len(), 1);

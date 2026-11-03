@@ -42,6 +42,7 @@ fn rig() -> Rig {
         policy: Policy {
             price_id: PRICE.to_string(),
             plan: "hosted".to_string(),
+            guardrails_price_id: None,
             claim_key: {
                 use sha2::Digest;
                 Sha256::digest(b"codetopo-bridge http test key").into()

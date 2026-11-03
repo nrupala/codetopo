@@ -46,6 +46,20 @@
 //! hash in `api_keys` is all that remains. A sweep (at startup and every
 //! minute) applies due revocations and purges expired deliveries.
 //!
+//! ## Tiers
+//!
+//! Two hosted tiers are sold, and the price is the tier: the Team
+//! price (`CODETOPO_STRIPE_PRICE_ID`) issues keys under the
+//! configured plan (default `hosted`); the Guardrails price
+//! (`CODETOPO_STRIPE_PRICE_ID_GUARDRAILS`, optional) issues keys
+//! stamped `guardrails`. The stamp is recorded on the key and on
+//! the entitlement, so a replacement key is re-issued at the tier
+//! the subscription pays for, and revocation — which follows the
+//! subscription, never the price — needs no tier logic at all.
+//! With the Guardrails price unset the bridge is exactly the
+//! single-price bridge it was: any other price is another
+//! product's, recorded and ignored.
+//!
 //! ## Key delivery by email (owner directive, 2026-10-18)
 //!
 //! Stripe's receipt proves payment; it does not carry the key. So
@@ -93,7 +107,7 @@
 //!
 //! | event | action |
 //! |---|---|
-//! | `customer.subscription.created` (carrying the codetopo price, entitled status) | ensure a `hosted` key for the subscription (issue on first sight; a replacement if the previous key was revoked) |
+//! | `customer.subscription.created` (carrying a codetopo price, entitled status) | ensure a key for the subscription, stamped with the plan the price resolves to (issue on first sight; a replacement if the previous key was revoked) |
 //! | `checkout.session.completed` (`subscription` mode, `payment_status: paid`) | register the session id as a claim token for the key's delivery — attached immediately, or recorded as pending when the subscription event has not created the entitlement yet; never creates (the payload carries no price) |
 //! | `customer.subscription.updated` | active/trialing → restore: clear pending revocations, replace a revoked key (an entitled update for an unknown subscription creates under the same price guard — Stripe can deliver `created` before the first payment settles); past_due/unpaid → revoke after a 7-day grace unless restored first; `cancel_at_period_end` → revoke at the period end; canceled → revoke at the period end |
 //! | `customer.subscription.deleted` | revoke now |
