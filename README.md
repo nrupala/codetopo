@@ -182,7 +182,15 @@ The same HTTP API, run by us, always on. We host the index; you send a
 repository (public git URL or archive upload) and query the graph from
 anywhere with your key — no local install, no server to run.
 
-**US$19/month per key.**
+### Pricing
+
+| Tier | Price | What it is |
+|---|---|---|
+| Free | US$0 | The local CLI, MCP server, and ACP agent in this repository — free and open source (AGPL-3.0), run on your own machine. |
+| Team | US$19/month per key | The hosted API, run by us. |
+| Guardrails | US$49/month per key | The hosted API at the Guardrails service level — the higher of the two hosted tiers. |
+
+Both hosted tiers include:
 
 | Included | |
 |---|---|
@@ -192,7 +200,8 @@ anywhere with your key — no local install, no server to run.
 
 How it works:
 
-1. [Subscribe](https://buy.stripe.com/cNi00j0hYbEIbT9bz89Zm02) — checkout is handled by Stripe.
+1. Subscribe — [Team](https://buy.stripe.com/cNi00j0hYbEIbT9bz89Zm02) · Guardrails (checkout opens with this release) — checkout is handled by Stripe.
+   <!-- Guardrails subscribe link: insert here in the Stripe step of the tiered-pricing release (product "codetopo Guardrails", US$49/month price, same claim redirect as Team). -->
 2. After payment you land on a claim page. Claim your API key there —
    it is shown exactly once, so save it when it appears.
 3. Call the API at `https://codetopo-api.aimlds.org` with
@@ -202,10 +211,9 @@ How it works:
 Cancel any time from the Stripe receipt link; the key stays active
 until the end of the paid period and is then revoked.
 
-This is the hosted form of the same product. The local CLI, MCP server,
-and ACP agent in this repository stay free and open source (AGPL-3.0)
-and are unchanged — the hosted tier is for when you want the graph
-served, not installed.
+The hosted tiers are this same product, served: the local tools stay
+free and open source and are unchanged — a hosted tier is for when you
+want the graph served, not installed.
 
 ## Architecture
 

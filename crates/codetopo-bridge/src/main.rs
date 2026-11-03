@@ -99,6 +99,7 @@ async fn run() -> Result<(), BridgeError> {
         policy: Policy {
             price_id: config.price_id.clone(),
             plan: config.plan.clone(),
+            guardrails_price_id: config.guardrails_price_id.clone(),
             claim_key: config.claim_key,
         },
         webhook_secret: config.webhook_secret.clone(),
@@ -122,10 +123,14 @@ async fn run() -> Result<(), BridgeError> {
         BridgeError::Config(format!("cannot bind {}: {err}", config.bind))
     })?;
     eprintln!(
-        "codetopo-bridge: listening on http://{} (key store {}, price {})",
+        "codetopo-bridge: listening on http://{} (key store {}, price {}, guardrails price {})",
         config.bind,
         config.keys_db_path.display(),
         config.price_id,
+        config
+            .guardrails_price_id
+            .as_deref()
+            .unwrap_or("not configured"),
     );
     axum::serve(listener, router(state))
         .await

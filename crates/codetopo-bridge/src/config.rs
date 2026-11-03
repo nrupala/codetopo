@@ -86,6 +86,14 @@ pub struct BridgeConfig {
     /// configuration, not code (the Conduit pattern): a new price is an
     /// env change, not a release.
     pub price_id: String,
+    /// The Stripe price id for the Guardrails tier (US$49/mo), when
+    /// that tier is open. Optional as a whole: unset, the bridge is
+    /// the single-price bridge it has always been, and a subscription
+    /// carrying any other price is another product's — recorded, no
+    /// state change. When set it must differ from `price_id`: the
+    /// price is what stamps a key with its tier, so one price naming
+    /// two tiers would make the stamp ambiguous (enforced at parse).
+    pub guardrails_price_id: Option<String>,
     /// Plan recorded on keys the bridge issues.
     pub plan: String,
     /// AES-256 key sealing unclaimed key deliveries, as 64 hex chars
@@ -104,7 +112,9 @@ impl BridgeConfig {
     /// siblings, via [`ServerConfig::from_env`]), plus
     /// `CODETOPO_BRIDGE_BIND`, `CODETOPO_STRIPE_WEBHOOK_SECRET`,
     /// `CODETOPO_STRIPE_PRICE_ID`, `CODETOPO_CLAIM_KEY`, and optionally
-    /// `CODETOPO_PLAN` (default: the hosted plan). Key-delivery email
+    /// `CODETOPO_PLAN` (default: the hosted plan) and
+    /// `CODETOPO_STRIPE_PRICE_ID_GUARDRAILS` (the Guardrails tier's
+    /// price; absent, that tier is not sold). Key-delivery email
     /// is configured by the `CODETOPO_SMTP_*` family (see
     /// [`MailConfig::from_lookup`]); unconfigured, it is simply off.
     pub fn from_env() -> Result<Self, BridgeError> {
@@ -119,6 +129,8 @@ impl BridgeConfig {
         })?;
         let webhook_secret = required("CODETOPO_STRIPE_WEBHOOK_SECRET")?;
         let price_id = required("CODETOPO_STRIPE_PRICE_ID")?;
+        let guardrails_price_id = optional("CODETOPO_STRIPE_PRICE_ID_GUARDRAILS");
+        check_distinct_prices(&price_id, guardrails_price_id.as_deref())?;
         let plan = env_string("CODETOPO_PLAN", DEFAULT_PLAN);
         let claim_key = parse_claim_key(&required("CODETOPO_CLAIM_KEY")?)?;
         let mail = MailConfig::from_lookup(|name| std::env::var(name).ok())?;
@@ -129,6 +141,7 @@ impl BridgeConfig {
             bind,
             webhook_secret,
             price_id,
+            guardrails_price_id,
             plan,
             claim_key,
             mail,
@@ -242,6 +255,29 @@ fn required(name: &str) -> Result<String, BridgeError> {
     }
 }
 
+/// An optional variable: absent or empty is `None`.
+fn optional(name: &str) -> Option<String> {
+    match std::env::var(name) {
+        Ok(value) if !value.trim().is_empty() => Some(value.trim().to_string()),
+        _ => None,
+    }
+}
+
+/// The two tier prices must be distinct. The price a subscription
+/// carries is what stamps its key with a tier; one price naming both
+/// tiers would make that stamp ambiguous, so the configuration is
+/// refused at startup, like every other unusable configuration.
+fn check_distinct_prices(team: &str, guardrails: Option<&str>) -> Result<(), BridgeError> {
+    if guardrails.is_some_and(|other| other == team) {
+        return Err(BridgeError::Config(
+            "CODETOPO_STRIPE_PRICE_ID_GUARDRAILS must differ from \
+             CODETOPO_STRIPE_PRICE_ID: one price cannot stamp two tiers"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn env_string(key: &str, default: &str) -> String {
     match std::env::var(key) {
         Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
@@ -265,6 +301,23 @@ fn parse_claim_key(raw: &str) -> Result<[u8; 32], BridgeError> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn tier_prices_must_be_distinct() {
+        // No Guardrails tier configured: the single-price bridge.
+        assert!(check_distinct_prices("price_team", None).is_ok());
+        // Two tiers, two prices: the tiered bridge.
+        assert!(check_distinct_prices("price_team", Some("price_guardrails")).is_ok());
+        // One price naming both tiers would make the tier stamp
+        // ambiguous; the error names the variable to fix.
+        let err = check_distinct_prices("price_team", Some("price_team"))
+            .expect_err("one price, two tiers is refused");
+        assert!(
+            err.to_string()
+                .contains("CODETOPO_STRIPE_PRICE_ID_GUARDRAILS"),
+            "the error names the variable: {err}"
+        );
+    }
 
     #[test]
     fn claim_key_must_be_exactly_32_hex_bytes() {
