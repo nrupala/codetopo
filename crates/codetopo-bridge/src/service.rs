@@ -65,12 +65,11 @@ pub const CLAIM_TTL_SECS: i64 = 7 * 24 * 3600;
 pub const PAST_DUE_GRACE_SECS: i64 = 7 * 24 * 3600;
 
 /// The plan name recorded on keys the Guardrails price issues — the
-/// tier stamp for the US$49/mo tier. The server resolves any plan
-/// name it has no limits row for to the hosted row (see
-/// `codetopo_server::limits::plan_limits`), so until a Guardrails
-/// limits row exists the stamp is a true record of the tier paid,
-/// not yet a different enforcement; the record is what a later
-/// limits row — and support, reading the entitlement — go by.
+/// tier stamp for the US$49/mo tier. The server's limits table
+/// carries a Guardrails row (see `codetopo_server::limits::plan_limits`;
+/// the Director's ruling, 2026-11-03: 100 active indexes, 50,000
+/// queries per month, 250,000 files per index), so the stamp is both
+/// the record of the tier paid and a different enforcement.
 pub const GUARDRAILS_PLAN: &str = "guardrails";
 
 /// What an applied event decided.

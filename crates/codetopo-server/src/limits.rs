@@ -12,16 +12,20 @@
 //! so a limit lives in exactly one place instead of being a literal
 //! scattered through the handlers that enforce it.
 //!
-//! Two plans exist. `self-hosted` is the operator's own keys: every
+//! Three plans exist. `self-hosted` is the operator's own keys: every
 //! limit is `None`, the envelope does not apply — an operator is
 //! trusted with their own box. `hosted` is the paid tier from the
 //! plan: US$19/month per key, 25 active indexes, 10,000 queries per
 //! month, a 50,000-file cap per index, and the ingest caps S2 shipped
-//! as interim constants (now this table's hosted row). A plan name
-//! the table does not know — an admin can type anything after
-//! `--plan` — resolves to the **hosted** row, never the operator's:
-//! an unrecognized plan must fail toward the tenant envelope, not
-//! toward unlimited.
+//! as interim constants (now this table's hosted row). `guardrails`
+//! is the higher hosted tier (US$49/month; the Director's ruling,
+//! 2026-11-03): 100 active indexes, 50,000 queries per month, a
+//! 250,000-file cap per index, and the hosted row's remaining
+//! envelope (query timeout, index-op concurrency, ingest caps).
+//! A plan name the table does not know — an admin can type anything
+//! after `--plan` — resolves to the **hosted** row, never the
+//! operator's: an unrecognized plan must fail toward the tenant
+//! envelope, not toward unlimited.
 //!
 //! "Per month" is the **UTC calendar month**: the metering log's
 //! timestamps are UTC, a key's usage in a month is the count of its
@@ -53,7 +57,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use crate::auth::KeyPlan;
 use crate::error::ApiError;
 use crate::ingest::IngestCaps;
-use crate::keys::SELF_HOSTED_PLAN;
+use crate::keys::{GUARDRAILS_PLAN, SELF_HOSTED_PLAN};
 
 /// Active indexes a hosted key may hold at once (the plan's offer).
 pub const HOSTED_MAX_ACTIVE_INDEXES: usize = 25;
@@ -63,6 +67,16 @@ pub const HOSTED_MAX_QUERIES_PER_MONTH: u64 = 10_000;
 
 /// Files one hosted index may be built from (the plan's repo cap).
 pub const HOSTED_MAX_FILES_PER_INDEX: usize = 50_000;
+
+/// Active indexes a Guardrails key may hold at once (the Director's
+/// ruling, 2026-11-03: the higher hosted tier's offer).
+pub const GUARDRAILS_MAX_ACTIVE_INDEXES: usize = 100;
+
+/// Metered queries a Guardrails key may make per UTC calendar month.
+pub const GUARDRAILS_MAX_QUERIES_PER_MONTH: u64 = 50_000;
+
+/// Files one Guardrails index may be built from.
+pub const GUARDRAILS_MAX_FILES_PER_INDEX: usize = 250_000;
 
 /// Wall-clock budget for one hosted query. The scale gate's queries
 /// answer in well under a second at 46k nodes; 30 s is generous
@@ -114,6 +128,15 @@ const HOSTED_LIMITS: PlanLimits = PlanLimits {
     ingest: IngestCaps::HOSTED,
 };
 
+const GUARDRAILS_LIMITS: PlanLimits = PlanLimits {
+    max_active_indexes: Some(GUARDRAILS_MAX_ACTIVE_INDEXES),
+    max_queries_per_month: Some(GUARDRAILS_MAX_QUERIES_PER_MONTH),
+    max_files_per_index: Some(GUARDRAILS_MAX_FILES_PER_INDEX),
+    query_timeout: Some(Duration::from_secs(HOSTED_QUERY_TIMEOUT_SECS)),
+    max_concurrent_index_ops: Some(HOSTED_MAX_CONCURRENT_INDEX_OPS),
+    ingest: IngestCaps::HOSTED,
+};
+
 const SELF_HOSTED_LIMITS: PlanLimits = PlanLimits {
     max_active_indexes: None,
     max_queries_per_month: None,
@@ -124,12 +147,13 @@ const SELF_HOSTED_LIMITS: PlanLimits = PlanLimits {
 };
 
 /// The limits a plan name resolves to. Only `self-hosted` is
-/// unlimited; `hosted` — and any name the table does not know — gets
-/// the tenant envelope (see the module docs for why unknown fails
-/// toward hosted).
+/// unlimited; `guardrails` gets its own wider row; `hosted` — and
+/// any name the table does not know — gets the tenant envelope
+/// (see the module docs for why unknown fails toward hosted).
 pub fn plan_limits(plan: &str) -> PlanLimits {
     match plan {
         SELF_HOSTED_PLAN => SELF_HOSTED_LIMITS,
+        GUARDRAILS_PLAN => GUARDRAILS_LIMITS,
         _ => HOSTED_LIMITS,
     }
 }
@@ -257,7 +281,7 @@ async fn within<T>(limit: Option<Duration>, future: impl Future<Output = T>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keys::DEFAULT_PLAN;
+    use crate::keys::{DEFAULT_PLAN, GUARDRAILS_PLAN};
 
     #[test]
     fn hosted_plan_carries_the_offer_numbers() {
@@ -269,6 +293,25 @@ mod tests {
             limits.query_timeout,
             Some(Duration::from_secs(30)),
             "a query timeout exists and is the documented value"
+        );
+        assert_eq!(limits.max_concurrent_index_ops, Some(1));
+        assert_eq!(limits.ingest, IngestCaps::HOSTED);
+    }
+
+    #[test]
+    fn guardrails_plan_carries_the_ruled_numbers() {
+        // The Director's ruling (2026-11-03): the higher hosted tier
+        // allows 100 active indexes, 50,000 queries per month, and
+        // 250,000 files per index; the rest of the envelope is the
+        // hosted row's.
+        let limits = plan_limits(GUARDRAILS_PLAN);
+        assert_eq!(limits.max_active_indexes, Some(100));
+        assert_eq!(limits.max_queries_per_month, Some(50_000));
+        assert_eq!(limits.max_files_per_index, Some(250_000));
+        assert_eq!(
+            limits.query_timeout,
+            Some(Duration::from_secs(30)),
+            "the query timeout is the hosted row's"
         );
         assert_eq!(limits.max_concurrent_index_ops, Some(1));
         assert_eq!(limits.ingest, IngestCaps::HOSTED);

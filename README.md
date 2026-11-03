@@ -190,13 +190,13 @@ anywhere with your key — no local install, no server to run.
 | Team | US$19/month per key | The hosted API, run by us. |
 | Guardrails | US$49/month per key | The hosted API at the Guardrails service level — the higher of the two hosted tiers. |
 
-Both hosted tiers include:
+Included limits, by tier:
 
-| Included | |
-|---|---|
-| Active indexes | 25 |
-| Queries | 10,000 / month |
-| Repository size | up to 50,000 files per index |
+| Included | Team | Guardrails |
+|---|---|---|
+| Active indexes | 25 | 100 |
+| Queries | 10,000 / month | 50,000 / month |
+| Repository size | up to 50,000 files per index | up to 250,000 files per index |
 
 How it works:
 
