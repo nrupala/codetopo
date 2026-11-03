@@ -21,6 +21,10 @@ codetopo is a local stdio MCP server written in Rust. It exposes 20 tools: `code
 cargo install codetopo-mcp
 ```
 
+The MCP server's crate is `codetopo-mcp`; the CLI is the separate
+`codetopo-cli` crate (`cargo install codetopo-cli`). There is no
+crate named `codetopo`.
+
 - Client configuration: command `codetopo-mcp` over stdio — no arguments, no environment variables, no API key.
 
 ```json

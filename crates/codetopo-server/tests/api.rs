@@ -774,6 +774,47 @@ fn urlencode(value: &str) -> String {
 }
 
 
+/// The `/v1/schema` query vocabulary is pinned exactly. The 0.9.0
+/// board test pass found `render` missing from it although the
+/// `/v1/graphs/:id/render` route exists and works (flag F-M3b); the
+/// exact set means the next route added without a schema update
+/// fails here instead of drifting silently. The names are the
+/// schema's own vocabulary (the route segments with `-` as `_`).
+#[tokio::test]
+async fn schema_queries_match_the_query_vocabulary() {
+    let harness = Harness::new();
+    let (status, schema) = harness.get("/v1/schema").await;
+    assert_eq!(status, StatusCode::OK, "schema: {schema}");
+    let queries: std::collections::BTreeSet<&str> = schema["queries"]
+        .as_array()
+        .expect("queries list")
+        .iter()
+        .filter_map(|q| q.as_str())
+        .collect();
+    let expected: std::collections::BTreeSet<&str> = [
+        "descendants",
+        "ancestors",
+        "blast_radius",
+        "path",
+        "neighborhood",
+        "search",
+        "symbol",
+        "stats",
+        "verify",
+        "diagnostics",
+        "rank",
+        "diff",
+        "metrics",
+        "history",
+        "communities",
+        "topo_sort",
+        "render",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(queries, expected, "schema queries drifted: {schema}");
+}
+
 // ---------------------------------------------------------------------------
 // (PR C) Discovery routes + unified package identity
 // ---------------------------------------------------------------------------

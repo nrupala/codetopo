@@ -810,7 +810,7 @@ pub fn describe_schema() -> serde_json::Value {
         "queries": ["descendants", "ancestors", "blast_radius", "path",
                     "neighborhood", "search", "symbol", "stats", "verify",
                     "diagnostics", "rank", "diff", "metrics", "history",
-                    "communities", "topo_sort"],
+                    "communities", "topo_sort", "render"],
     })
 }
 

@@ -97,3 +97,82 @@ fn render_defaults_to_stdout_json() {
     assert_eq!(spec["layout_version"], 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A call chain long enough to condense past the 3,000-node force
+/// ceiling (3,100 functions + package/module/file = 3,103 nodes), so
+/// `force_layout` declines. Built programmatically — the fixture is
+/// the shape of the board test-pass case (flag F-M2), not a checked-in
+/// blob.
+fn chain_fixture(tag: &str, functions: usize) -> (PathBuf, PathBuf) {
+    let dir = std::env::temp_dir().join(format!("codetopo-render-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let repo = dir.join("repo");
+    std::fs::create_dir_all(&repo).expect("repo dir");
+    let mut src = String::from("def f0000():\n    return 0\n");
+    for i in 1..functions {
+        src.push_str(&format!("\ndef f{i:04}():\n    return f{:04}()\n", i - 1));
+    }
+    std::fs::write(repo.join("chain.py"), src).expect("fixture file");
+    let db = dir.join("graph.db");
+    index_repo(&repo, &db, "fixture", None, None).expect("index");
+    (dir, db)
+}
+
+#[test]
+fn force_decline_with_svg_requested_fails_loudly() {
+    let (dir, db) = chain_fixture("decline-svg", 3100);
+    let svg_path = dir.join("big.svg");
+    let out = Command::new(env!("CARGO_BIN_EXE_codetopo"))
+        .args(["render", "--db"])
+        .arg(&db)
+        .args(["--layout", "force", "--svg"])
+        .arg(&svg_path)
+        .output()
+        .expect("run render");
+    assert!(!out.status.success(), "a declined --svg render must exit non-zero");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("force layout declines"),
+        "stderr carries the decline reason: {stderr}"
+    );
+    assert!(!svg_path.exists(), "no SVG file is written on a decline");
+    // The stdout JSON answer is unchanged: the decline, stated.
+    let answer: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout is json");
+    assert_eq!(answer["rendered"], false);
+    assert!(answer["reason"].as_str().expect("reason").contains("force layout declines"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn force_decline_without_svg_remains_a_json_answer() {
+    let (dir, db) = chain_fixture("decline-json", 3100);
+    let out = Command::new(env!("CARGO_BIN_EXE_codetopo"))
+        .args(["render", "--db"])
+        .arg(&db)
+        .args(["--layout", "force"])
+        .output()
+        .expect("run render");
+    assert!(out.status.success(), "a JSON decline answer exits 0: {}", String::from_utf8_lossy(&out.stderr));
+    let answer: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout is json");
+    assert_eq!(answer["rendered"], false);
+    assert!(answer["reason"].as_str().expect("reason").contains("force layout declines"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn force_render_with_svg_writes_the_file() {
+    let (dir, db) = fixture("force-ok");
+    let svg_path = dir.join("small.svg");
+    let out = Command::new(env!("CARGO_BIN_EXE_codetopo"))
+        .args(["render", "--db"])
+        .arg(&db)
+        .args(["--layout", "force", "--svg"])
+        .arg(&svg_path)
+        .output()
+        .expect("run render");
+    assert!(out.status.success(), "force render: {}", String::from_utf8_lossy(&out.stderr));
+    let svg = std::fs::read_to_string(&svg_path).expect("svg written");
+    assert!(svg.starts_with("<?xml version=\"1.0\""));
+    assert!(svg.contains("<svg"), "svg root present");
+    let _ = std::fs::remove_dir_all(&dir);
+}
