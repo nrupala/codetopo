@@ -35,6 +35,10 @@ MCP server. (The project README's longer command additionally installs
 the `codetopo` CLI, the `codetopo-server` HTTP API, and the
 `codetopo-acp` agent.)
 
+From crates.io, the same binary installs by name: `cargo install
+codetopo-mcp`. The MCP server's crate is `codetopo-mcp` and the CLI's
+crate is `codetopo-cli`; there is no crate named `codetopo`.
+
 The first build compiles from source and can take several minutes. The
 binary lands in `~/.cargo/bin/codetopo-mcp` — make sure `~/.cargo/bin`
 is on the `PATH` your MCP client sees.

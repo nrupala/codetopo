@@ -280,10 +280,12 @@ impl RankMetric {
             Self::PageRank => Cow::Borrowed(
                 "PageRank (Brin & Page 1998): the stationary distribution of a \
                  random walk with teleportation (damping 0.85, power iteration \
-                 from the uniform vector, tolerance 1e-6, max 100 iterations) \
-                 over the CODE_SCHEMA §9 dependency projection as a simple \
-                 graph (parallel edges collapse, self-loops dropped, external \
-                 stubs excluded); every node in the projection is ranked",
+                 from the uniform vector, max 100 iterations, stopping when \
+                 the L1 step falls below n x 1e-6 — the 1e-6 is the stopping \
+                 rule, not an accuracy bound) over the CODE_SCHEMA §9 \
+                 dependency projection as a simple graph (parallel edges \
+                 collapse, self-loops dropped, external stubs excluded); \
+                 every node in the projection is ranked",
             ),
             Self::Betweenness => Cow::Owned(format!(
                 "betweenness centrality (Freeman 1977; Brandes 2001): the \

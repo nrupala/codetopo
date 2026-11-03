@@ -693,10 +693,22 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                                 "layout_version": 2,
                                 "layout": "force",
                                 "rendered": false,
-                                "reason": reason,
+                                "reason": reason.clone(),
                             }))
                             .expect("decline serializes")
                         );
+                        // A requested SVG file that is never written
+                        // must not look like success: the JSON above
+                        // stays the answer on stdout, but a caller who
+                        // asked for a file gets the decline on stderr
+                        // and a non-zero exit (board test pass on
+                        // 0.9.0, flag F-M2).
+                        if let Some(path) = &svg {
+                            return Err(codetopo_cli::CliError::Usage(format!(
+                                "force layout declined, no SVG written to {}: {reason}",
+                                path.display()
+                            )));
+                        }
                     }
                 },
                 other => {

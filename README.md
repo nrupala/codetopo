@@ -43,6 +43,10 @@ Requires a stable Rust toolchain (install via [rustup](https://rustup.rs)).
 # repository contains multiple binary packages.
 cargo install --git https://github.com/nrupala/codetopo codetopo-cli codetopo-server codetopo-mcp codetopo-acp
 
+# From crates.io, install the same packages by name — `cargo install
+# codetopo-cli` for the CLI, `cargo install codetopo-mcp` for the MCP
+# server. There is no crate named `codetopo`.
+
 # Index a repository (Rust, TypeScript/JavaScript, and Python are parsed via tree-sitter)
 codetopo index ~/my-project --db graph.db
 

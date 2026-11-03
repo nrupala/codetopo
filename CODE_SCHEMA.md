@@ -305,8 +305,15 @@ text. Parameters are fixed in the definitions, not tunable per query.
 
 - **PageRank** (Brin & Page 1998): the stationary distribution of a
   random walk with teleportation; damping 0.85; power iteration from
-  the uniform vector, tolerance 1e-6, max 100 iterations; dangling
-  nodes redistribute uniformly.
+  the uniform vector, max 100 iterations; dangling nodes redistribute
+  uniformly. The iteration stops when the L1 change between
+  successive vectors drops below n × 1e-6 (n = the node count): the
+  1e-6 is that stopping rule, not an accuracy bound against the
+  fully converged vector. At the same stopping rule the
+  implementation matches networkx (independent measurement, board
+  test pass 2026-11-02: max deviation 8.3e-17); against a reference
+  converged at tolerance 1e-15 the observed per-node deviation is
+  1.31e-6 (same measurement).
 - **Betweenness** (Freeman 1977; Brandes 2001): the fraction of
   all-pairs shortest paths through the node, endpoints excluded,
   normalized, exact. Above a stated node ceiling the measure is
