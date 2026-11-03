@@ -58,6 +58,11 @@ pub const DOCUMENTED_EXAMPLE_SECRET: &str = "change-me";
 /// from the paid-path plan.
 pub const DEFAULT_PLAN: &str = "hosted";
 
+/// Plan recorded on keys issued for the Guardrails tier (US$49/month):
+/// the higher of the two hosted tiers, carrying its own wider limits
+/// row (see [`crate::limits`]).
+pub const GUARDRAILS_PLAN: &str = "guardrails";
+
 /// Lifecycle status of a key that may authenticate.
 const STATUS_ACTIVE: &str = "active";
 /// Lifecycle status of a key that may no longer authenticate.
