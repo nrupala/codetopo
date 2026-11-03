@@ -200,8 +200,7 @@ Both hosted tiers include:
 
 How it works:
 
-1. Subscribe — [Team](https://buy.stripe.com/cNi00j0hYbEIbT9bz89Zm02) · Guardrails (checkout opens with this release) — checkout is handled by Stripe.
-   <!-- Guardrails subscribe link: insert here in the Stripe step of the tiered-pricing release (product "codetopo Guardrails", US$49/month price, same claim redirect as Team). -->
+1. Subscribe — [Team](https://buy.stripe.com/cNi00j0hYbEIbT9bz89Zm02) · [Guardrails](https://buy.stripe.com/5kQ3cvd4K6kog9p32C9Zm0k) — checkout is handled by Stripe.
 2. After payment you land on a claim page. Claim your API key there —
    it is shown exactly once, so save it when it appears.
 3. Call the API at `https://codetopo-api.aimlds.org` with
