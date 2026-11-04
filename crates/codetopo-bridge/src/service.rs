@@ -46,12 +46,30 @@
 //!   revocation. If the key was already revoked, restore issues a
 //!   *replacement* key with a fresh claim delivery — the old secret
 //!   is gone and is never resurrected.
+//!
+//! Three of those transitions also email the buyer (see
+//! [`maybe_email_lifecycle`]): a cancellation scheduled for the
+//! period end, a subscription ended (the `deleted` event, or an
+//! update whose cancellation is already effective), and the first
+//! entry into past-due. The trigger is derived from the event and
+//! the entitlement it produced, once, after the event is recorded —
+//! the same best-effort discipline as the key email: a failed send
+//! is logged and never fails the webhook. One event family is
+//! absent by decision: `charge.refunded` is not delivered to this
+//! endpoint (it is not in the endpoint's subscription list) and a
+//! charge payload names an invoice, not a subscription, so refunds
+//! get no bridge email; the buyer's refund notification is Stripe's
+//! own refund email. The gap is named in the crate docs and the
+//! changelog.
 
 use codetopo_server::keys::KeyStore;
 use codetopo_server::limits::plan_limits;
 
 use crate::crypto;
-use crate::mail::{compose_key_email, KeyMailer};
+use crate::mail::{
+    compose_cancellation_scheduled_email, compose_key_email, compose_payment_failed_email,
+    compose_subscription_ended_email, KeyMailer,
+};
 use crate::store::{
     BridgeStore, Entitlement, STATUS_ACTIVE, STATUS_CANCEL_SCHEDULED, STATUS_PAST_DUE,
     STATUS_REVOKED,
@@ -181,6 +199,14 @@ pub fn apply_event(
                 Ok(EventOutcome::Applied)
             })?
         }
+        // Refunds get no bridge handling, by decision: the endpoint
+        // is not subscribed to `charge.refunded`, and a charge
+        // payload names an invoice, not the subscription the
+        // entitlement keys on, so there is no honest way to address
+        // a refund email from it. The buyer's refund notification is
+        // Stripe's own refund email. The arm exists so the absence
+        // is read here, not discovered.
+        "charge.refunded" => EventOutcome::Ignored,
         "invoice.payment_failed" => {
             let data = parse_data::<InvoiceData>(event)?;
             match data.subscription_id() {
@@ -216,6 +242,7 @@ pub fn apply_event(
         // send is slow or Stripe redelivers meanwhile, the replay is
         // a duplicate and the hook below never runs twice for it.
         maybe_email_key(store, policy, mailer, event, now);
+        maybe_email_lifecycle(store, mailer, event, now);
     }
     Ok(outcome)
 }
@@ -311,6 +338,126 @@ fn maybe_email_key(
         eprintln!(
             "codetopo-bridge: key email not sent for event {} (subscription \
              {subscription_id}): {err}",
+            event.event_id
+        );
+    }
+}
+
+/// Offers the one lifecycle email an applied event carries, if any.
+///
+/// The news is derived from the event and the entitlement it
+/// produced — no handler grows a mail parameter, and each rule
+/// names the transition it reports:
+///
+/// - `customer.subscription.deleted` → the subscription has ended;
+///   the key no longer works.
+/// - A `customer.subscription.updated` whose payload carries a
+///   cancellation (`cancel_at_period_end`, `cancel_at`, or the
+///   `canceled` status): if the entitlement is now revoked, the
+///   cancellation was already effective and the news is the ending;
+///   if it is cancel-scheduled, the news is the scheduling, with
+///   the entitlement's own `revoke_at` as the date the key stops.
+/// - Any event that leaves the entitlement past-due with the grace
+///   deadline this very event set (`revoke_at == now + grace`) →
+///   the payment failed. That equality is the first-entry test:
+///   `mark_past_due_row` sets the deadline exactly then and never
+///   moves it on a repeat signal, so a second failure notice is
+///   not re-emailed.
+///
+/// Failure rules match the key email's: nothing here may fail the
+/// webhook. A lifecycle notice with no recorded buyer address is a
+/// log line (the address only ever arrives on the checkout event,
+/// so a subscription whose checkout predates address capture gets
+/// no lifecycle mail), and a transport error is logged with the
+/// event id. Unlike the key email there is no send marker and no
+/// retry: the event-id guard is the dedup (a redelivery is a
+/// duplicate and never reaches this hook).
+fn maybe_email_lifecycle(
+    store: &BridgeStore,
+    mailer: Option<&dyn KeyMailer>,
+    event: &WebhookEvent,
+    now: i64,
+) {
+    let Some(mailer) = mailer else {
+        return;
+    };
+    let Some(subscription_id) = event_subscription_id(event) else {
+        return;
+    };
+    let attempt = |store: &BridgeStore| -> Result<bool, String> {
+        let fail = |err: BridgeError| err.to_string();
+        let Some(ent) = store.entitlement(&subscription_id).map_err(fail)? else {
+            return Ok(false);
+        };
+        // Which notice, if any, this event carries. Cancellation
+        // news is read before the past-due news: an update carries
+        // one status, and a cancellation it schedules is the fact
+        // the buyer acted on.
+        enum News {
+            Ended,
+            Scheduled(i64),
+            PaymentFailed(i64),
+        }
+        let news = match event.event_type.as_str() {
+            "customer.subscription.deleted" => Some(News::Ended),
+            "customer.subscription.updated" => {
+                let data = parse_data::<SubscriptionData>(event).map_err(fail)?;
+                let carries_cancellation = data.cancel_at_period_end
+                    || data.cancel_at.is_some()
+                    || data.status.as_deref() == Some("canceled");
+                if !carries_cancellation {
+                    None
+                } else if ent.status == STATUS_REVOKED {
+                    Some(News::Ended)
+                } else if ent.status == STATUS_CANCEL_SCHEDULED {
+                    ent.revoke_at.map(News::Scheduled)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        let news = match news {
+            Some(news) => news,
+            None => {
+                if ent.status == STATUS_PAST_DUE
+                    && ent.revoke_at == Some(now + PAST_DUE_GRACE_SECS)
+                {
+                    News::PaymentFailed(now + PAST_DUE_GRACE_SECS)
+                } else {
+                    return Ok(false);
+                }
+            }
+        };
+        let Some(to) = store.buyer_email(&subscription_id).map_err(fail)? else {
+            eprintln!(
+                "codetopo-bridge: no buyer email recorded for subscription \
+                 {subscription_id} (event {}); no lifecycle email sent",
+                event.event_id
+            );
+            return Ok(false);
+        };
+        let email = match news {
+            News::Ended => compose_subscription_ended_email(&to),
+            News::Scheduled(ends_at) => compose_cancellation_scheduled_email(&to, ends_at),
+            News::PaymentFailed(grace_ends_at) => {
+                compose_payment_failed_email(&to, grace_ends_at)
+            }
+        };
+        mailer
+            .send_lifecycle_email(&email)
+            .map_err(|err| err.to_string())?;
+        eprintln!(
+            "codetopo-bridge: lifecycle email sent for subscription \
+             {subscription_id} (event {})",
+            event.event_id
+        );
+        Ok(true)
+    };
+    if let Err(err) = attempt(store) {
+        eprintln!(
+            "codetopo-bridge: lifecycle email not sent for event {} \
+             (subscription {subscription_id}): {err}",
             event.event_id
         );
     }
@@ -929,6 +1076,7 @@ mod tests {
     /// send, and can be told to fail. Hermetic by construction.
     struct RecordingMailer {
         sent: std::sync::Mutex<Vec<crate::mail::KeyEmail>>,
+        lifecycle: std::sync::Mutex<Vec<crate::mail::LifecycleEmail>>,
         failing: std::sync::Mutex<bool>,
     }
 
@@ -936,11 +1084,15 @@ mod tests {
         fn new() -> Self {
             RecordingMailer {
                 sent: std::sync::Mutex::new(Vec::new()),
+                lifecycle: std::sync::Mutex::new(Vec::new()),
                 failing: std::sync::Mutex::new(false),
             }
         }
         fn sent(&self) -> Vec<crate::mail::KeyEmail> {
             self.sent.lock().expect("sent lock").clone()
+        }
+        fn lifecycle(&self) -> Vec<crate::mail::LifecycleEmail> {
+            self.lifecycle.lock().expect("lifecycle lock").clone()
         }
         fn set_failing(&self, failing: bool) {
             *self.failing.lock().expect("failing lock") = failing;
@@ -956,6 +1108,20 @@ mod tests {
                 return Err(crate::mail::MailError("test transport is down".to_string()));
             }
             self.sent.lock().expect("sent lock").push(email.clone());
+            Ok(())
+        }
+
+        fn send_lifecycle_email(
+            &self,
+            email: &crate::mail::LifecycleEmail,
+        ) -> Result<(), crate::mail::MailError> {
+            if *self.failing.lock().expect("failing lock") {
+                return Err(crate::mail::MailError("test transport is down".to_string()));
+            }
+            self.lifecycle
+                .lock()
+                .expect("lifecycle lock")
+                .push(email.clone());
             Ok(())
         }
     }
@@ -983,6 +1149,15 @@ mod tests {
         ) -> Result<(), crate::mail::MailError> {
             std::thread::sleep(std::time::Duration::from_millis(300));
             self.sent.lock().expect("sent lock").push(email.clone());
+            Ok(())
+        }
+
+        fn send_lifecycle_email(
+            &self,
+            _email: &crate::mail::LifecycleEmail,
+        ) -> Result<(), crate::mail::MailError> {
+            // The slow double exists to widen the key email's race
+            // window; lifecycle sends are not its subject.
             Ok(())
         }
     }
@@ -1860,5 +2035,208 @@ mod tests {
         assert_eq!(sent[0].to, "buyer@example.com");
         let delivery = store.delivery("sub_Z").expect("read").expect("delivery");
         assert_eq!(delivery.emailed_at, Some(NOW + 60));
+    }
+
+    /// A purchase with the mailer attached throughout and the
+    /// buyer's address recorded at checkout: entitlement, key, and
+    /// the key email — and no lifecycle news yet.
+    fn purchase_with_mailer(
+        store: &BridgeStore,
+        keys: &KeyStore,
+        mailer: &RecordingMailer,
+        sub: &str,
+        session: &str,
+    ) {
+        let created = created_event(&format!("evt_c_{sub}"), sub, NOW);
+        assert_eq!(
+            apply_with_mailer(store, keys, mailer, &created, NOW),
+            EventOutcome::Applied
+        );
+        let checkout = checkout_event_with_email(
+            &format!("evt_k_{sub}"),
+            session,
+            sub,
+            NOW + 30,
+            "buyer@example.com",
+        );
+        assert_eq!(
+            apply_with_mailer(store, keys, mailer, &checkout, NOW + 30),
+            EventOutcome::Applied
+        );
+        assert_eq!(mailer.sent().len(), 1, "the key email went out");
+        assert!(
+            mailer.lifecycle().is_empty(),
+            "a purchase carries no lifecycle news"
+        );
+    }
+
+    #[test]
+    fn a_scheduled_cancellation_emails_the_buyer_the_period_end() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        purchase_with_mailer(&store, &keys, &mailer, "sub_LC1", "cs_LC1");
+        let (_, secret) = claim_key(&store, &policy(), "sub_LC1", NOW + 60).expect("claim");
+
+        let ends = NOW + 20 * 86_400;
+        let update = subscription_event(
+            "evt_u_lc1",
+            "customer.subscription.updated",
+            "sub_LC1",
+            NOW + 3600,
+            serde_json::json!({
+                "cancel_at_period_end": true,
+                "current_period_end": ends,
+            }),
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &update, NOW + 3600),
+            EventOutcome::Applied
+        );
+        let lifecycle = mailer.lifecycle();
+        assert_eq!(lifecycle.len(), 1, "one cancellation email");
+        assert_eq!(lifecycle[0].to, "buyer@example.com");
+        assert!(lifecycle[0].subject.contains("cancelled"));
+        assert!(
+            lifecycle[0]
+                .text
+                .contains(&format!("keeps working until {}", crate::mail::date_line(ends))),
+            "the email states the entitlement's own period end"
+        );
+        // The news matches the state: the paid period is still live.
+        assert!(keys.verify("sub_LC1", &secret).is_ok());
+    }
+
+    #[test]
+    fn subscription_deleted_emails_the_buyer_that_access_has_ended() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        purchase_with_mailer(&store, &keys, &mailer, "sub_LC2", "cs_LC2");
+        let (_, secret) = claim_key(&store, &policy(), "sub_LC2", NOW + 60).expect("claim");
+
+        let deleted = subscription_event(
+            "evt_d_lc2",
+            "customer.subscription.deleted",
+            "sub_LC2",
+            NOW + 120,
+            serde_json::json!({ "status": "canceled" }),
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &deleted, NOW + 120),
+            EventOutcome::Applied
+        );
+        let lifecycle = mailer.lifecycle();
+        assert_eq!(lifecycle.len(), 1, "one ended email");
+        assert!(lifecycle[0].subject.contains("ended"));
+        assert!(lifecycle[0].text.contains("no longer works"));
+        assert!(keys.verify("sub_LC2", &secret).is_err(), "the key is dead");
+    }
+
+    #[test]
+    fn an_immediate_cancellation_emails_the_ending_not_the_scheduling() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        purchase_with_mailer(&store, &keys, &mailer, "sub_LC3", "cs_LC3");
+
+        // The subscription reports itself canceled with the period
+        // already over: the handler revokes now, and the email must
+        // say the subscription ended — not that it will end.
+        let update = subscription_event(
+            "evt_u_lc3",
+            "customer.subscription.updated",
+            "sub_LC3",
+            NOW + 120,
+            serde_json::json!({
+                "status": "canceled",
+                "current_period_end": NOW + 60,
+            }),
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &update, NOW + 120),
+            EventOutcome::Applied
+        );
+        let lifecycle = mailer.lifecycle();
+        assert_eq!(lifecycle.len(), 1, "one ended email");
+        assert!(lifecycle[0].subject.contains("ended"));
+        let ent = store.entitlement("sub_LC3").expect("read").expect("entitlement");
+        assert_eq!(ent.status, STATUS_REVOKED);
+    }
+
+    #[test]
+    fn the_first_payment_failure_emails_once_and_a_repeat_does_not() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        purchase_with_mailer(&store, &keys, &mailer, "sub_LC4", "cs_LC4");
+
+        let failed = invoice_event("evt_f1_lc4", "invoice.payment_failed", "sub_LC4", NOW + 120);
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &failed, NOW + 120),
+            EventOutcome::Applied
+        );
+        let lifecycle = mailer.lifecycle();
+        assert_eq!(lifecycle.len(), 1, "one payment-failed email");
+        assert!(lifecycle[0].subject.contains("payment failed"));
+        let grace_ends = NOW + 120 + PAST_DUE_GRACE_SECS;
+        assert!(
+            lifecycle[0]
+                .text
+                .contains(&format!("until {}", crate::mail::date_line(grace_ends))),
+            "the email states the grace end the entitlement carries"
+        );
+
+        // A second failure signal is a distinct event and applies —
+        // but the grace clock never restarts, and neither does the
+        // email.
+        let failed2 = invoice_event("evt_f2_lc4", "invoice.payment_failed", "sub_LC4", NOW + 180);
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &failed2, NOW + 180),
+            EventOutcome::Applied
+        );
+        assert_eq!(mailer.lifecycle().len(), 1, "no second failure email");
+    }
+
+    #[test]
+    fn a_past_due_update_emails_the_payment_failure() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        purchase_with_mailer(&store, &keys, &mailer, "sub_LC5", "cs_LC5");
+
+        let due = subscription_event(
+            "evt_u_lc5",
+            "customer.subscription.updated",
+            "sub_LC5",
+            NOW + 120,
+            serde_json::json!({ "status": "past_due" }),
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &due, NOW + 120),
+            EventOutcome::Applied
+        );
+        let lifecycle = mailer.lifecycle();
+        assert_eq!(lifecycle.len(), 1, "one payment-failed email");
+        assert!(lifecycle[0].subject.contains("payment failed"));
+    }
+
+    #[test]
+    fn lifecycle_news_without_a_recorded_address_sends_nothing() {
+        let (store, keys) = stores();
+        // A purchase whose checkout carried no address: the whole
+        // flow converges (this is the pre-address-capture shape),
+        // and the later lifecycle events have nowhere to write to.
+        purchase(&store, &keys, "sub_LC6", "cs_LC6");
+        let mailer = RecordingMailer::new();
+        let deleted = subscription_event(
+            "evt_d_lc6",
+            "customer.subscription.deleted",
+            "sub_LC6",
+            NOW + 120,
+            serde_json::json!({ "status": "canceled" }),
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &deleted, NOW + 120),
+            EventOutcome::Applied,
+            "the event still applies; only the email has nowhere to go"
+        );
+        assert!(mailer.lifecycle().is_empty());
+        assert!(mailer.sent().is_empty());
     }
 }

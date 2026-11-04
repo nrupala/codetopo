@@ -4,6 +4,33 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **codetopo-bridge — lifecycle emails.** The bridge emailed the
+  buyer once, at purchase, and then never again: a customer who
+  cancelled, or whose payment failed, heard nothing from us (the
+  cancellation silence was caught live on the Director's own
+  Guardrails purchase, 2026-11-03). The bridge now sends three
+  transactional emails on the events it already processes, each
+  stating what happened, what it means for the buyer's key, and
+  the one next action: a cancellation scheduled for the period
+  end (the key keeps working until the entitlement's own end
+  date, which the email states), a subscription ended — the
+  `deleted` event or an already-effective cancellation (the key
+  no longer works), and the first entry into past-due (the key
+  keeps working through the 7-day grace while Stripe retries,
+  which the email states, with the fix route that exists today:
+  the Stripe invoice/receipt link, behind the same
+  `MANAGE_SUBSCRIPTION_URL` seam the quickstart uses). Sends are
+  best-effort like the key email's — logged on failure, never a
+  failed webhook — and derive once from the applied event, so a
+  redelivery cannot re-send. **The gap, plainly:** refunds get
+  no bridge email. The webhook endpoint is not subscribed to
+  `charge.refunded`, and a charge payload names an invoice, not
+  the subscription the entitlement keys on, so the bridge cannot
+  address one honestly; the buyer's refund notification today is
+  Stripe's own refund email (the account setting switched on
+  2026-11-03). Closing it needs the endpoint subscription plus a
+  charge-to-subscription resolution.
+
 - **codetopo-bridge — the key now arrives with a quickstart.** A
   bare key taught the buyer nothing: the claim page showed the
   credential with only the Bearer line, and the key email likewise
