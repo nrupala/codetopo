@@ -10,9 +10,14 @@
 //! tells them what they bought. When SMTP submission is configured
 //! (see [`crate::config::MailConfig`]), [`crate::service`] composes
 //! one message per issued key and sends it to the address the
-//! checkout session carried. The message carries the credential in
-//! full exactly once, the API base, the plan's limits, and the
-//! support address — plain text, plain words.
+//! checkout session carried. The message carries the credential —
+//! once as the key itself and once inside the worked first-call
+//! example, nowhere else — the API base, the plan's limits, a
+//! quickstart (the first call with the key filled in, three first
+//! steps, and the MCP configuration the repo documents), and the
+//! support address — plain text, plain words. A bare key teaches
+//! nothing; the quickstart is what makes the purchase usable, and
+//! the claim page carries the same material for the same reason.
 //!
 //! Email here is a *delivery copy*, never an authority. Nothing in
 //! the bridge accepts an email address as proof of anything: claims
@@ -42,6 +47,63 @@ use crate::config::{MailConfig, MailTls};
 pub const API_BASE_URL: &str = "https://codetopo-api.aimlds.org";
 /// Where a buyer writes when the key is lost; printed in the email.
 pub const SUPPORT_EMAIL: &str = "info@aimlds.org";
+/// The MCP client configuration exactly as the README and the
+/// install guide document it. codetopo's MCP server is the free
+/// local companion — stdio, on the buyer's own machine, and it
+/// takes no key — so the quickstart prints the block as-is and says
+/// so; the buyer's key belongs to the hosted API, not to this block.
+pub const MCP_CONFIG_SNIPPET: &str =
+    "{ \"mcpServers\": { \"codetopo\": { \"command\": \"codetopo-mcp\" } } }";
+
+/// The direct manage/cancel link: Stripe's Customer Portal for
+/// this product, activated on the Stripe side on 2026-11-03 (cancel
+/// at period end, invoice history). Both buyer surfaces print it
+/// via [`manage_subscription_line`]. The `None` arm of the line
+/// remains as the honest fallback — it points the buyer at the
+/// manage link in their Stripe receipt email — should the portal
+/// ever be deactivated and this constant cleared.
+pub const MANAGE_SUBSCRIPTION_URL: Option<&str> =
+    Some("https://billing.stripe.com/p/login/5kQ6oH9SydMQ6yPav49Zm00");
+
+/// The manage-or-cancel line both buyer surfaces (the key email and
+/// the claim page) carry, so cancelling never requires hunting
+/// through a dashboard. The line prints the Customer Portal link
+/// (see [`MANAGE_SUBSCRIPTION_URL`]); were that constant ever
+/// cleared, the line would name the receipt-email route instead.
+/// The end-of-period behaviour is the README's published
+/// term: the key stays active until the end of the paid period and
+/// is then revoked.
+pub fn manage_subscription_line() -> String {
+    match MANAGE_SUBSCRIPTION_URL {
+        Some(url) => format!(
+            "Manage or cancel your subscription anytime: {url} — cancelling \
+             stops the next charge, and your key stays active until the end \
+             of the paid period."
+        ),
+        None => "Manage or cancel your subscription anytime from the link \
+                 in your Stripe receipt email — cancelling stops the next \
+                 charge, and your key stays active until the end of the \
+                 paid period."
+            .to_string(),
+    }
+}
+
+/// The indexing call — step two of the quickstart (step one is the
+/// `GET /v1/schema` key check) — with the buyer's credential filled
+/// in, ready to copy and run. The claim page prints the same
+/// example: a buyer leaves either surface able to make the call,
+/// not holding a bare key. `repo_url` is the hosted ingest mode:
+/// a hosted key is refused `repo_path`, a path on the server host,
+/// so buyer examples never show that shape. The answer carries the
+/// `index_id` every later call names.
+pub fn first_call_example(key_id: &str, secret: &str) -> String {
+    format!(
+        "curl -H \"Authorization: Bearer {key_id}:{secret}\" \\\n\
+         \x20 -X POST {API_BASE_URL}/v1/index \\\n\
+         \x20 -H 'Content-Type: application/json' \\\n\
+         \x20 -d '{{\"repo_url\": \"https://github.com/your-name/your-repo\"}}'"
+    )
+}
 /// How long one SMTP conversation may take before the send is a
 /// failure. Webhook handling waits for the send (the event is
 /// already recorded by then, so a redelivery is a duplicate and
@@ -59,7 +121,8 @@ pub struct KeyEmail {
     pub to: String,
     /// The subject line.
     pub subject: String,
-    /// The plain-text body. Carries the credential exactly once.
+    /// The plain-text body. Carries the credential twice: as the
+    /// key, and inside the worked first-call example.
     pub text: String,
 }
 
@@ -82,7 +145,9 @@ pub trait KeyMailer: Send + Sync {
 
 /// Composes the key email for one issued key. The limits are read
 /// from the plan's own table, so the email can never promise a
-/// different envelope than the server enforces.
+/// different envelope than the server enforces. The quickstart
+/// section is composed from the same constants the claim page
+/// prints, so the two surfaces teach the same first steps.
 pub fn compose_key_email(to: &str, key_id: &str, secret: &str, limits: &PlanLimits) -> KeyEmail {
     let plan_line = match (limits.max_active_indexes, limits.max_queries_per_month) {
         (Some(indexes), Some(queries)) => format!(
@@ -92,6 +157,11 @@ pub fn compose_key_email(to: &str, key_id: &str, secret: &str, limits: &PlanLimi
         ),
         _ => "Your plan carries no fixed cap on active indexes or monthly queries.".to_string(),
     };
+    let first_call = first_call_example(key_id, secret);
+    // The manage line prints the live Customer Portal link (see
+    // MANAGE_SUBSCRIPTION_URL); it would name the Stripe receipt
+    // route only if that constant were ever cleared.
+    let manage_line = manage_subscription_line();
     let text = format!(
         "Your codetopo Hosted subscription is active, and your API key is ready.\n\
          \n\
@@ -110,6 +180,45 @@ pub fn compose_key_email(to: &str, key_id: &str, secret: &str, limits: &PlanLimi
          API base: {API_BASE_URL}\n\
          \n\
          {plan_line}\n\
+         \n\
+         Using your key\n\
+         \n\
+         Three first steps:\n\
+         \n\
+         1. Check your key works —\n\
+         GET {API_BASE_URL}/v1/schema\n\
+         with your Authorization header (the Bearer line above). With\n\
+         your key it answers with the API's schema; without one, the\n\
+         same call is refused.\n\
+         \n\
+         2. Index a repository — this call, with your key filled in:\n\
+         \n\
+         {first_call}\n\
+         \n\
+         The reply carries an index_id, with files_indexed, nodes and\n\
+         edges counted. Every later call names that index_id. (A public\n\
+         git URL is the way in — the hosted API cannot index a path on\n\
+         your own machine.)\n\
+         \n\
+         3. Ask the graph questions, with the same Authorization header:\n\
+         GET {API_BASE_URL}/v1/graphs/<index_id>/search?q=<term>\n\
+         finds symbols by name, and\n\
+         GET {API_BASE_URL}/v1/graphs/<index_id>/stats\n\
+         sums the index up. From a symbol id,\n\
+         GET {API_BASE_URL}/v1/graphs/<index_id>/symbol?node=<symbol-id>\n\
+         reads that symbol's dossier — kind, location, and what it\n\
+         depends on; from there you can also ask what calls it, what it\n\
+         calls, and what breaks if it changes.\n\
+         \n\
+         Using an MCP client? codetopo's MCP server is the free local\n\
+         companion — the same engine on your own machine, and it takes\n\
+         no key (your key is for the hosted API above). Install it with\n\
+         `cargo install codetopo-mcp`, then add this to your client's\n\
+         MCP settings:\n\
+         \n\
+         {MCP_CONFIG_SNIPPET}\n\
+         \n\
+         {manage_line}\n\
          \n\
          If you lose the key or it stops working, contact support at\n\
          {SUPPORT_EMAIL} with your Stripe receipt.\n"
@@ -208,16 +317,60 @@ mod tests {
     }
 
     #[test]
-    fn the_message_carries_the_credential_exactly_once() {
+    fn the_credential_appears_only_as_the_key_and_in_the_first_call() {
         let email = composed();
         assert_eq!(email.to, "buyer@example.com");
         assert_eq!(
             email.text.matches("sub_Example:deadbeefcafe").count(),
-            1,
-            "the full credential appears once, never repeated"
+            2,
+            "the full credential appears as the key and inside the worked \
+             first-call example — and nowhere else"
         );
         // The bearer line names the shape, not the secret.
         assert!(email.text.contains("Authorization: Bearer <key>"));
+    }
+
+    #[test]
+    fn the_message_teaches_the_buyer_to_use_the_key() {
+        // Failure messages never interpolate the body: it carries a
+        // credential, and assertion output is a log surface.
+        let email = composed();
+        assert!(
+            email.text.contains(&format!("{API_BASE_URL}/v1/index")),
+            "the first call targets the hosted index route"
+        );
+        assert!(
+            email.text.contains("\"repo_url\""),
+            "the example indexes by public git URL, the hosted mode"
+        );
+        assert!(
+            email.text.contains("/v1/schema"),
+            "the key-check step names the schema route"
+        );
+        assert!(
+            email.text.contains("search?q="),
+            "the search step names its route"
+        );
+        assert!(
+            email.text.contains("/stats"),
+            "the stats step names its route"
+        );
+        assert!(
+            email.text.contains("symbol?node="),
+            "the dossier route is named as the way onward"
+        );
+        assert!(
+            email.text.contains(MCP_CONFIG_SNIPPET),
+            "the documented MCP configuration is printed verbatim"
+        );
+        assert!(
+            email.text.contains("cargo install codetopo-mcp"),
+            "the MCP section says how the local server is installed"
+        );
+        assert!(
+            email.text.contains("Manage or cancel your subscription"),
+            "the manage-or-cancel line is present"
+        );
     }
 
     #[test]
@@ -329,8 +482,8 @@ mod tests {
         );
         assert_eq!(
             transcript.matches("sub_Example:deadbeefcafe").count(),
-            1,
-            "the credential crosses the wire exactly once"
+            2,
+            "the credential crosses the wire as the key and in the example"
         );
         assert!(
             transcript.contains("Subject: Your codetopo API key"),

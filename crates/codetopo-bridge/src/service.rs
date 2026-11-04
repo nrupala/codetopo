@@ -1617,8 +1617,9 @@ mod tests {
         ));
     }
 
-    /// Extracts the credential a key email carries, asserting it is
-    /// present exactly once — the same bar the composition tests set.
+    /// Extracts the credential a key email carries, asserting its
+    /// only appearances are the key itself and the worked first-call
+    /// example — the same bar the composition tests set.
     fn emailed_credential(email: &crate::mail::KeyEmail, key_id: &str) -> String {
         let marker = format!("{key_id}:");
         let start = email.text.find(&marker).expect("credential in the email") + marker.len();
@@ -1629,8 +1630,8 @@ mod tests {
         assert_eq!(secret.len(), 64, "the full secret, from the email");
         assert_eq!(
             email.text.matches(&format!("{marker}{secret}")).count(),
-            1,
-            "exactly one appearance of the credential"
+            2,
+            "the credential appears as the key and in the first-call example only"
         );
         secret
     }

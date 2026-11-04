@@ -37,7 +37,10 @@ use codetopo_server::keys::KeyStore;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::mail::KeyMailer;
+use crate::mail::{
+    first_call_example, manage_subscription_line, KeyMailer, API_BASE_URL, MCP_CONFIG_SNIPPET,
+    SUPPORT_EMAIL,
+};
 use crate::stripe::{verify_signature, WebhookEvent};
 use crate::service::{apply_event, claim_key, Policy};
 use crate::store::BridgeStore;
@@ -179,10 +182,20 @@ fn claim_page_html(prefill: Option<&str>) -> String {
     }
 }
 
-/// The success page: the credential, once, with handling instructions.
-/// The credential is HTML-escaped even though its alphabet is tame —
-/// it is data in a page, and pages escape data.
+/// The success page: the credential, with handling instructions and
+/// the quickstart — the first call with the key filled in, three
+/// first steps, the MCP configuration, and the support line, the
+/// same material the key email carries. A bare key teaches nothing;
+/// the buyer leaves this page able to use what they bought. The
+/// credential is HTML-escaped even though its alphabet is tame —
+/// it is data in a page, and pages escape data. The escaped
+/// credential is what the worked example is composed from; the
+/// example's static text carries no HTML-significant characters.
 fn claim_success_page(key_id: &str, secret: &str) -> String {
+    let key_id = html_escape(key_id);
+    let secret = html_escape(secret);
+    let first_call = first_call_example(&key_id, &secret);
+    let manage_line = manage_subscription_line();
     format!(
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\
          <title>Your codetopo API key</title></head><body>\
@@ -190,12 +203,50 @@ fn claim_success_page(key_id: &str, secret: &str) -> String {
          <p>Copy this credential now and store it somewhere safe. \
          It is shown exactly once — the bridge keeps only a hash, so it \
          cannot be displayed again.</p>\
-         <pre><code>{}:{}</code></pre>\
+         <pre><code>{key_id}:{secret}</code></pre>\
          <p>Send it as <code>Authorization: Bearer &lt;key&gt;</code> \
          with every request to the codetopo API.</p>\
-         </body></html>",
-        html_escape(key_id),
-        html_escape(secret)
+         <h2>Use your key</h2>\
+         <p>API base: <code>{API_BASE_URL}</code></p>\
+         <p>Three first steps:</p>\
+         <ol>\
+         <li><strong>Check your key works</strong> — \
+         <code>GET {API_BASE_URL}/v1/schema</code> with your \
+         Authorization header (the Bearer line above). With your key \
+         it answers with the API's schema; without one, the same \
+         call is refused.</li>\
+         <li><strong>Index a repository</strong> — this call, with \
+         your key filled in:\
+         <pre><code>{first_call}</code></pre>\
+         The reply carries an <code>index_id</code>, with files \
+         indexed, nodes and edges counted — every later call names \
+         that <code>index_id</code>. A public git URL is the way in: \
+         the hosted API cannot index a path on your own machine.</li>\
+         <li><strong>Ask the graph questions</strong> — \
+         <code>GET {API_BASE_URL}/v1/graphs/&lt;index_id&gt;/search?q=&lt;term&gt;</code> \
+         finds symbols by name, and \
+         <code>GET {API_BASE_URL}/v1/graphs/&lt;index_id&gt;/stats</code> \
+         sums the index up, both with the same Authorization header. \
+         From a symbol id, \
+         <code>GET {API_BASE_URL}/v1/graphs/&lt;index_id&gt;/symbol?node=&lt;symbol-id&gt;</code> \
+         reads that symbol's dossier — kind, location, and what it \
+         depends on; from there you can also ask what calls it, what \
+         it calls, and what breaks if it changes.</li>\
+         </ol>\
+         <p>Using an MCP client? codetopo's MCP server is the free \
+         local companion — the same engine on your own machine, and \
+         it takes no key (your key is for the hosted API above). \
+         Install it with <code>cargo install codetopo-mcp</code>, \
+         then add this to your client's MCP settings:</p>\
+         <pre><code>{MCP_CONFIG_SNIPPET}</code></pre>\
+         <p>{manage_line}</p>\
+         <!-- Manage/cancel direct link: the line above prints the \
+         live Stripe Customer Portal URL from MANAGE_SUBSCRIPTION_URL \
+         in crate::mail (portal activated Stripe-side 2026-11-03). -->\
+         <p>Questions, or a lost key: contact support at \
+         <a href=\"mailto:{SUPPORT_EMAIL}\">{SUPPORT_EMAIL}</a> with \
+         your Stripe receipt.</p>\
+         </body></html>"
     )
 }
 
@@ -288,6 +339,66 @@ mod tests {
         assert!(
             page.contains("name=\"token\" id=\"token\" value=\"cs_test_abc123\""),
             "{page}"
+        );
+    }
+
+    #[test]
+    fn the_success_page_teaches_the_buyer_to_use_the_key() {
+        // Failure messages never interpolate the page: it carries a
+        // credential, and assertion output is a log surface.
+        let page = claim_success_page("sub_Example", "deadbeefcafe");
+        assert!(
+            page.contains("https://codetopo-api.aimlds.org/v1/index"),
+            "the first call targets the hosted index route"
+        );
+        assert!(
+            page.contains("Authorization: Bearer sub_Example:deadbeefcafe"),
+            "the worked example carries the buyer's own key"
+        );
+        assert!(
+            page.contains("\"repo_url\""),
+            "the example indexes by public git URL, the hosted mode"
+        );
+        assert!(
+            page.contains("/v1/schema"),
+            "the key-check step names the schema route"
+        );
+        assert!(page.contains("search?q="), "the search step names its route");
+        assert!(page.contains("/stats"), "the stats step names its route");
+        assert!(
+            page.contains("symbol?node="),
+            "the dossier route is named as the way onward"
+        );
+        assert!(
+            page.contains("\"mcpServers\"") && page.contains("codetopo-mcp"),
+            "the documented MCP configuration is on the page"
+        );
+        assert!(
+            page.contains("Manage or cancel your subscription"),
+            "the manage-or-cancel line is on the page"
+        );
+        assert!(
+            page.contains("billing.stripe.com/p/login/") && !page.contains("PLACEHOLDER"),
+            "the manage line prints the live Customer Portal link, not a placeholder"
+        );
+        assert!(
+            page.contains("info@aimlds.org"),
+            "the support address is on the page"
+        );
+        // The shown-once warning survives the quickstart.
+        assert!(page.contains("shown exactly once"), "the warning is intact");
+    }
+
+    #[test]
+    fn the_success_page_escapes_the_credential_everywhere_it_appears() {
+        let page = claim_success_page("sub_<x>", "<script>alert(1)</script>");
+        assert!(
+            !page.contains("<script>alert(1)</script>"),
+            "the raw credential must never appear in the page"
+        );
+        assert!(
+            page.contains("sub_&lt;x&gt;:&lt;script&gt;alert(1)&lt;/script&gt;"),
+            "the credential may appear only in escaped form"
         );
     }
 
