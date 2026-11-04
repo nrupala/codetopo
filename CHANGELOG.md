@@ -4,6 +4,29 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **codetopo-bridge — the key now arrives with a quickstart.** A
+  bare key taught the buyer nothing: the claim page showed the
+  credential with only the Bearer line, and the key email likewise
+  carried no example and no configuration. Both surfaces now teach
+  the same three first steps, the flow as verified live against the
+  hosted API: check the key (`GET /v1/schema`), index a repository
+  (`POST /v1/index` with a public `repo_url` — the buyer's key
+  filled into a copy-paste curl example; hosted keys cannot use
+  `repo_path`), then ask the graph questions (`search`, `stats`,
+  and the symbol dossier as the way onward). Both also carry the
+  MCP client configuration exactly as documented (the MCP server
+  is the free local stdio companion and takes no key; the key is
+  for the hosted API), a manage-or-cancel line, and the support
+  line. The credential's appearances stay enumerated: in the email
+  it now appears twice — as the key, and inside the worked
+  example — and the composition and service tests assert exactly
+  that. The manage-or-cancel line names the Stripe receipt route
+  for now: Stripe's Customer Portal is not activated for this
+  product and no portal URL exists in the repo, so the direct link
+  waits on that Stripe-side activation — the placeholder is marked
+  in `mail.rs` (`MANAGE_SUBSCRIPTION_URL`) and beside the claim
+  page's line.
+
 ## [0.9.0] — 2026-11-02
 
 - **The Rust analytics engine.** `codetopo_rank` grows from four
