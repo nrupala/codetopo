@@ -112,8 +112,8 @@
 //! | `customer.subscription.updated` | active/trialing → restore: clear pending revocations, replace a revoked key (an entitled update for an unknown subscription creates under the same price guard — Stripe can deliver `created` before the first payment settles); past_due/unpaid → revoke after a 7-day grace unless restored first; `cancel_at_period_end` → revoke at the period end; canceled → revoke at the period end |
 //! | `customer.subscription.deleted` | revoke now |
 //! | `invoice.payment_failed` | mark past due: the same 7-day grace |
-//! | `invoice.payment_succeeded` | clear the grace when the entitlement is in it |
-//! | `charge.refunded` | resolve the charge to its entitlement (charge → invoice → the subscription recorded for that invoice → entitlement) and email the buyer the refund notice; no state change — a refund is not a cancellation, and the entitlement keeps the status its own events gave it. A charge that resolves nowhere (another product's, an unseen invoice) is recorded and ignored with a log line |
+//! | `invoice.payment_succeeded` | clear the grace when the entitlement is in it; re-activate an entitlement a full refund ended (the renewal edge, below) |
+//! | `charge.refunded` | resolve the charge to its entitlement (charge → invoice → the subscription recorded for that invoice → entitlement) and email the buyer the refund notice. A partial refund changes no state — a refund is not a cancellation, and the entitlement keeps the status its own events gave it. A full refund ends the entitlement (the Director's ruling, 2026-11-03): the key is revoked now, the reason `full_refund` is recorded, and the email directs the buyer to cancel in the Customer Portal to stop the next charge. A charge that resolves nowhere (another product's, an unseen invoice) is recorded and ignored with a log line |
 //! | anything else, or another product's price | recorded, no state change |
 //!
 //! Three applied transitions also email the buyer, on the same
@@ -125,13 +125,16 @@
 //! past-due (the email states the grace end and how to fix the
 //! payment method). A fourth email completes the set: a refund
 //! against a codetopo charge (the email states the amount this
-//! refund returned, the plan, and what the refund does to the key —
-//! under the lifecycle rules, nothing by itself: the email reads
-//! the key's fate from the entitlement's status, so a refund that
-//! lands after the subscription ended says the key has stopped,
-//! and one that lands on a live subscription says the refund
-//! changed nothing). A failed lifecycle send is logged and never
-//! fails the webhook.
+//! refund returned, the plan, and what the refund does to the
+//! key: a partial refund changes nothing by itself, so its email
+//! reads the key's fate from the entitlement's status — a refund
+//! that lands after the subscription ended says the key has
+//! stopped, and one that lands on a live subscription says the
+//! refund changed nothing — while a full refund ends the
+//! entitlement, and its email states the ending, the stopped
+//! key, and the Customer Portal cancel route for the next
+//! charge). A failed lifecycle send is logged and never fails
+//! the webhook.
 //!
 //! The webhook endpoint must be subscribed to all of the event types
 //! above — in particular `customer.subscription.created`: without it,
@@ -139,23 +142,32 @@
 //! The endpoint's subscription list is managed in the Stripe
 //! Dashboard (the endpoint was created there; no code in this repo
 //! provisions it). `charge.refunded` is the one event this list
-//! gained after the endpoint was created: until it is added there
-//! (Developers → Webhooks → the codetopo-billing endpoint → Add
-//! events → `charge.refunded`), Stripe never delivers refund events
-//! and the refund machinery above simply never runs — silently,
-//! which is why the step is written here and in the changelog.
+//! gained after the endpoint was created; it was added there on
+//! 2026-11-03 (Developers → Webhooks → the codetopo-billing
+//! endpoint → Add events → `charge.refunded`) — before that
+//! addition Stripe never delivered refund events and the refund
+//! machinery above simply never ran, silently, which is why the
+//! step is written here and in the changelog.
 //!
 //! Two limits of the refund resolution, stated plainly: the
 //! invoice → subscription link is recorded from invoice events as
 //! they are applied, so a refund against an invoice from before
 //! this recording existed (or whose invoice events the endpoint
 //! never received) cannot resolve and gets no bridge email —
-//! Stripe's own refund email remains that buyer's notice; and a
-//! refund does not revoke anything, by the standing rule that a
-//! refund and a cancellation are separate acts — whether a full
-//! refund *should* also end an entitlement is a policy question
-//! this code deliberately does not decide (it is named as an open
-//! question in the change that introduced refund email).
+//! Stripe's own refund email remains that buyer's notice. And
+//! the refund rules themselves, as ruled by the Director on
+//! 2026-11-03: a refund and a cancellation remain separate acts,
+//! a partial refund revokes nothing, but a FULL refund also ends
+//! the entitlement — the key is revoked on the spot with the
+//! reason `full_refund` recorded, and because the bridge holds
+//! no Stripe secret key it cannot cancel the subscription for
+//! the buyer, so the refund email directs them to cancel in the
+//! Customer Portal to stop the next charge. The renewal edge
+//! follows (Wright's call under the ruling, named for the
+//! Director's correction): if a subscription a full refund ended
+//! is charged again, the payment re-activates the entitlement
+//! with a replacement key — money taken is service owed; no
+//! other revocation is undone by a payment.
 //!
 //! Replays are no-ops (processed event ids), and an event older than
 //! the last one applied to its subscription is stale and skipped, so

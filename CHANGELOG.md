@@ -4,6 +4,25 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **codetopo-bridge — a full refund ends the entitlement.** The
+  refund change below named its open question; the Director ruled
+  it the same day (2026-11-03): a FULL refund — the cumulative
+  refunded total at the charge's whole amount — also ends the
+  entitlement. The key is revoked on the spot, the entitlement
+  records the reason `full_refund` (a new `revoke_reason` column,
+  migrated in place), and the refund email states the ending and
+  directs the buyer to cancel the subscription in the Stripe
+  Customer Portal to stop the next charge — the bridge holds no
+  Stripe secret key and cannot cancel it for them. Partial
+  refunds change no state, exactly as before, and a full refund
+  against an entitlement that already stands revoked moves
+  nothing and overwrites no reason. One renewal edge, Wright's
+  call under the ruling, named for the Director's correction: a
+  subscription a full refund ended is still alive in Stripe, and
+  if it is charged again, the payment re-activates the
+  entitlement with a replacement key — money taken is service
+  owed; no other revocation is undone by a payment.
+
 - **codetopo-bridge — refund emails.** The lifecycle set the
   previous change shipped named its own gap: refunds got no bridge
   email, because the webhook endpoint was not subscribed to
