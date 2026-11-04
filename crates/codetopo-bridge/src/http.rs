@@ -240,12 +240,9 @@ fn claim_success_page(key_id: &str, secret: &str) -> String {
          then add this to your client's MCP settings:</p>\
          <pre><code>{MCP_CONFIG_SNIPPET}</code></pre>\
          <p>{manage_line}</p>\
-         <!-- Manage/cancel direct link: PLACEHOLDER. Stripe's \
-         Customer Portal is not yet activated for this product and \
-         no portal URL exists in this repo, so the line above names \
-         the Stripe receipt route. When the portal is activated \
-         Stripe-side, set MANAGE_SUBSCRIPTION_URL in crate::mail \
-         and the line prints the direct link. -->\
+         <!-- Manage/cancel direct link: the line above prints the \
+         live Stripe Customer Portal URL from MANAGE_SUBSCRIPTION_URL \
+         in crate::mail (portal activated Stripe-side 2026-11-03). -->\
          <p>Questions, or a lost key: contact support at \
          <a href=\"mailto:{SUPPORT_EMAIL}\">{SUPPORT_EMAIL}</a> with \
          your Stripe receipt.</p>\
@@ -381,8 +378,8 @@ mod tests {
             "the manage-or-cancel line is on the page"
         );
         assert!(
-            page.contains("PLACEHOLDER") && page.contains("Customer Portal"),
-            "the portal placeholder comment marks where the direct link goes"
+            page.contains("billing.stripe.com/p/login/") && !page.contains("PLACEHOLDER"),
+            "the manage line prints the live Customer Portal link, not a placeholder"
         );
         assert!(
             page.contains("info@aimlds.org"),

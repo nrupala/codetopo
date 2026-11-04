@@ -83,23 +83,22 @@ pub const SUPPORT_EMAIL: &str = "info@aimlds.org";
 pub const MCP_CONFIG_SNIPPET: &str =
     "{ \"mcpServers\": { \"codetopo\": { \"command\": \"codetopo-mcp\" } } }";
 
-/// PLACEHOLDER — the direct manage/cancel link. Stripe's Customer
-/// Portal is not activated for this product and no portal URL
-/// exists anywhere in this repository, so there is no direct link
-/// to print yet; inventing one would send buyers to a dead end.
-/// Until the portal is activated on the Stripe side and its URL is
-/// set here, [`manage_subscription_line`] points the buyer at the
-/// manage link in their Stripe receipt email — the route the
-/// README already publishes. When a portal URL exists, set it here
-/// and both surfaces print it; the placeholder comments beside the
-/// line's two call sites mark the spot.
-pub const MANAGE_SUBSCRIPTION_URL: Option<&str> = None;
+/// The direct manage/cancel link: Stripe's Customer Portal for
+/// this product, activated on the Stripe side on 2026-11-03 (cancel
+/// at period end, invoice history). Both buyer surfaces print it
+/// via [`manage_subscription_line`]. The `None` arm of the line
+/// remains as the honest fallback — it points the buyer at the
+/// manage link in their Stripe receipt email — should the portal
+/// ever be deactivated and this constant cleared.
+pub const MANAGE_SUBSCRIPTION_URL: Option<&str> =
+    Some("https://billing.stripe.com/p/login/5kQ6oH9SydMQ6yPav49Zm00");
 
 /// The manage-or-cancel line both buyer surfaces (the key email and
 /// the claim page) carry, so cancelling never requires hunting
-/// through a dashboard. With no Customer Portal configured (see
-/// [`MANAGE_SUBSCRIPTION_URL`]) the line names the receipt-email
-/// route; the end-of-period behaviour is the README's published
+/// through a dashboard. The line prints the Customer Portal link
+/// (see [`MANAGE_SUBSCRIPTION_URL`]); were that constant ever
+/// cleared, the line would name the receipt-email route instead.
+/// The end-of-period behaviour is the README's published
 /// term: the key stays active until the end of the paid period and
 /// is then revoked.
 pub fn manage_subscription_line() -> String {
@@ -205,9 +204,9 @@ pub fn compose_key_email(to: &str, key_id: &str, secret: &str, limits: &PlanLimi
         _ => "Your plan carries no fixed cap on active indexes or monthly queries.".to_string(),
     };
     let first_call = first_call_example(key_id, secret);
-    // PLACEHOLDER: while MANAGE_SUBSCRIPTION_URL is None this line
-    // names the Stripe receipt route; when the Customer Portal is
-    // activated Stripe-side and the URL is set, it prints the link.
+    // The manage line prints the live Customer Portal link (see
+    // MANAGE_SUBSCRIPTION_URL); it would name the Stripe receipt
+    // route only if that constant were ever cleared.
     let manage_line = manage_subscription_line();
     let text = format!(
         "Your codetopo Hosted subscription is active, and your API key is ready.\n\
