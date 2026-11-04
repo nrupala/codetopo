@@ -113,7 +113,18 @@
 //! | `customer.subscription.deleted` | revoke now |
 //! | `invoice.payment_failed` | mark past due: the same 7-day grace |
 //! | `invoice.payment_succeeded` | clear the grace when the entitlement is in it |
+//! | `charge.refunded` | **not delivered to this endpoint** — it is not in the subscription list below, and a charge payload names an invoice, not a subscription; refunds carry no bridge state and no bridge email (the buyer's refund notification is Stripe's own refund email, an account setting switched on 2026-11-03) |
 //! | anything else, or another product's price | recorded, no state change |
+//!
+//! Three applied transitions also email the buyer, on the same
+//! mailer seam and failure rules as the key email (see
+//! [`service::apply_event`]): a cancellation scheduled for the
+//! period end (the email states the date the key stops), a
+//! subscription ended (the `deleted` event, or an update whose
+//! cancellation is already effective), and the first entry into
+//! past-due (the email states the grace end and how to fix the
+//! payment method). A failed lifecycle send is logged and never
+//! fails the webhook.
 //!
 //! The webhook endpoint must be subscribed to all of the event types
 //! above — in particular `customer.subscription.created`: without it,

@@ -32,6 +32,34 @@
 //! A failed send is a logged disappointment, never a failed
 //! purchase: the webhook has already succeeded by the time a send is
 //! attempted, and the claim page still holds the key.
+//!
+//! ## Lifecycle emails
+//!
+//! The key email opens the relationship; three transactional
+//! messages maintain it, composed here and offered by
+//! [`crate::service`] when the events they describe apply: a
+//! cancellation that is scheduled (the key works until the paid
+//! period ends, and the email says the date), a subscription that
+//! has ended (the key no longer works), and a failed payment (the
+//! key keeps working through the grace while Stripe retries, and
+//! the email says how to fix the payment method). Each states what
+//! happened, what it means for the buyer's key, and the one next
+//! action — plain words, facts only, no marketing. They carry no
+//! credential, so nothing in them needs the delivery machinery the
+//! key email uses; they ride the same [`KeyMailer`] seam and the
+//! same failure rules (a failed send is logged, never a failed
+//! webhook).
+//!
+//! One lifecycle event is deliberately absent: the refund. The
+//! webhook endpoint is not subscribed to `charge.refunded` (see
+//! the event list in the crate docs), and a charge payload names
+//! an invoice, not the subscription the entitlement keys on, so
+//! the bridge has no honest way to address a refund email. The
+//! buyer's refund notification today is Stripe's own refund email
+//! (an account-level setting, switched on 2026-11-03). Closing
+//! this gap needs the endpoint subscription plus a
+//! charge-to-subscription resolution; it is named here so the
+//! absence is a decision on record, not an oversight.
 
 use std::time::Duration;
 
@@ -127,6 +155,20 @@ pub struct KeyEmail {
     pub text: String,
 }
 
+/// One composed lifecycle message: a cancellation scheduled, a
+/// subscription ended, a payment failed. No credential is ever part
+/// of one — these say what happened to the subscription, never what
+/// the key is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecycleEmail {
+    /// The buyer's address, recorded at checkout.
+    pub to: String,
+    /// The subject line.
+    pub subject: String,
+    /// The plain-text body.
+    pub text: String,
+}
+
 /// A send failure. The message is safe to log on the bridge host: it
 /// carries transport detail (server responses, OS errors) and never
 /// a credential — neither the API key nor the SMTP password is part
@@ -142,6 +184,10 @@ pub trait KeyMailer: Send + Sync {
     /// Sends one composed key email. Called at most once per issued
     /// key (the service tracks the send on the delivery row).
     fn send_key_email(&self, email: &KeyEmail) -> Result<(), MailError>;
+    /// Sends one composed lifecycle email. Called at most once per
+    /// applied event that carries the news (the service derives the
+    /// news from the event and the entitlement it produced).
+    fn send_lifecycle_email(&self, email: &LifecycleEmail) -> Result<(), MailError>;
 }
 
 /// Composes the key email for one issued key. The limits are read
@@ -231,6 +277,138 @@ pub fn compose_key_email(to: &str, key_id: &str, secret: &str, limits: &PlanLimi
     }
 }
 
+/// The undo line for the cancellation-scheduled email, on the same
+/// seam as [`manage_subscription_line`]: the Customer Portal URL
+/// when one is configured, the Stripe receipt route until then.
+fn undo_cancellation_line() -> String {
+    match MANAGE_SUBSCRIPTION_URL {
+        Some(url) => format!(
+            "If you cancelled by mistake, you can undo the cancellation here: {url}"
+        ),
+        None => "If you cancelled by mistake, you can undo the cancellation \
+                 from the link in your Stripe receipt email."
+            .to_string(),
+    }
+}
+
+/// The fix-your-payment line for the payment-failed email, on the
+/// same seam again: the hosted invoice/receipt route is the one
+/// that exists today; the portal URL replaces it when set.
+fn fix_payment_line() -> String {
+    match MANAGE_SUBSCRIPTION_URL {
+        Some(url) => format!("Update your payment method here: {url}"),
+        None => "Update your payment method from the link in the invoice \
+                 email Stripe sent for this payment."
+            .to_string(),
+    }
+}
+
+/// Composes the cancellation-scheduled email: the buyer cancelled,
+/// no further charges will be made, and the key keeps working until
+/// `ends_at` — the end of the period already paid for, which is
+/// when the entitlement's own revocation falls due.
+pub fn compose_cancellation_scheduled_email(to: &str, ends_at: i64) -> LifecycleEmail {
+    let ends = date_line(ends_at);
+    let undo_line = undo_cancellation_line();
+    let text = format!(
+        "Your codetopo subscription is cancelled.\n\
+         \n\
+         No further charges will be made.\n\
+         \n\
+         Your API key keeps working until {ends} — the end of the period\n\
+         you have already paid for. When that day comes, the key stops\n\
+         working.\n\
+         \n\
+         {undo_line}\n\
+         \n\
+         Questions: contact support at {SUPPORT_EMAIL}.\n"
+    );
+    LifecycleEmail {
+        to: to.to_string(),
+        subject: "Your codetopo subscription is cancelled".to_string(),
+        text,
+    }
+}
+
+/// Composes the subscription-ended email: the subscription is over
+/// (an immediate cancellation, or the deleted event that closes a
+/// scheduled one), and the key no longer works.
+pub fn compose_subscription_ended_email(to: &str) -> LifecycleEmail {
+    let text = format!(
+        "Your codetopo subscription has ended.\n\
+         \n\
+         Your API key no longer works: requests sent with it are refused.\n\
+         No further charges will be made.\n\
+         \n\
+         If this was a mistake, or you want to use codetopo again, contact\n\
+         support at {SUPPORT_EMAIL}.\n"
+    );
+    LifecycleEmail {
+        to: to.to_string(),
+        subject: "Your codetopo subscription has ended".to_string(),
+        text,
+    }
+}
+
+/// Composes the payment-failed email: the latest payment did not go
+/// through, Stripe will retry it, and the key keeps working through
+/// the bridge's past-due grace, which ends at `grace_ends_at`. If
+/// the payment has not succeeded by then, the key stops working.
+pub fn compose_payment_failed_email(to: &str, grace_ends_at: i64) -> LifecycleEmail {
+    let grace_ends = date_line(grace_ends_at);
+    let fix_line = fix_payment_line();
+    let text = format!(
+        "Your latest codetopo subscription payment did not go through.\n\
+         \n\
+         Stripe will try the payment again. Your API key keeps working\n\
+         while the payment is retried, and until {grace_ends}. If the\n\
+         payment has not succeeded by then, the key stops working.\n\
+         \n\
+         {fix_line}\n\
+         \n\
+         Questions: contact support at {SUPPORT_EMAIL}.\n"
+    );
+    LifecycleEmail {
+        to: to.to_string(),
+        subject: "Your codetopo payment failed".to_string(),
+        text,
+    }
+}
+
+/// A Unix timestamp as a plain date — `15 January 2027` — in UTC.
+/// The bridge speaks Unix seconds everywhere; a buyer reads a date.
+/// The civil-from-days conversion is Howard Hinnant's algorithm,
+/// exact for any date the timestamps here can name.
+pub fn date_line(unix: i64) -> String {
+    const MONTHS: [&str; 12] = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    let days = unix.div_euclid(86_400);
+    // Shift the epoch to 0000-03-01, so leap days end each era-year.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097); // day of era, [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // year of era, [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // day of year (Mar 1 = 0), [0, 365]
+    let mp = (5 * doy + 2) / 153; // month index (Mar = 0), [0, 11]
+    let day = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let month = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let year = if month <= 2 { y + 1 } else { y };
+    format!("{day} {} {year}", MONTHS[(month - 1) as usize])
+}
+
 /// `10000` as `10,000`, for the plan line.
 fn thousands(value: u64) -> String {
     let digits = value.to_string();
@@ -266,18 +444,20 @@ impl SmtpMailer {
     }
 }
 
-impl KeyMailer for SmtpMailer {
-    fn send_key_email(&self, email: &KeyEmail) -> Result<(), MailError> {
-        let to: Mailbox = email
-            .to
+impl SmtpMailer {
+    /// One plain-text send, shared by every message this module
+    /// composes: the envelope differs per message, the transport
+    /// never does.
+    fn send_message(&self, to: &str, subject: &str, text: &str) -> Result<(), MailError> {
+        let to: Mailbox = to
             .parse()
             .map_err(|err| MailError(format!("buyer address is unusable: {err}")))?;
         let message = Message::builder()
             .from(self.from.clone())
             .to(to)
-            .subject(email.subject.clone())
+            .subject(subject)
             .header(ContentType::TEXT_PLAIN)
-            .body(email.text.clone())
+            .body(text.to_string())
             .map_err(|err| MailError(format!("cannot compose message: {err}")))?;
 
         let config = &self.config;
@@ -297,6 +477,16 @@ impl KeyMailer for SmtpMailer {
             .send(&message)
             .map_err(|err| MailError(format!("SMTP send failed: {err}")))?;
         Ok(())
+    }
+}
+
+impl KeyMailer for SmtpMailer {
+    fn send_key_email(&self, email: &KeyEmail) -> Result<(), MailError> {
+        self.send_message(&email.to, &email.subject, &email.text)
+    }
+
+    fn send_lifecycle_email(&self, email: &LifecycleEmail) -> Result<(), MailError> {
+        self.send_message(&email.to, &email.subject, &email.text)
     }
 }
 
@@ -397,6 +587,80 @@ mod tests {
         assert_eq!(thousands(1_234_567), "1,234,567");
     }
 
+    #[test]
+    fn date_line_names_real_dates() {
+        assert_eq!(date_line(0), "1 January 1970");
+        // The leap day of a leap year, and the day after it.
+        assert_eq!(date_line(1_709_164_800), "29 February 2024");
+        assert_eq!(date_line(1_709_251_200), "1 March 2024");
+        // A timestamp mid-day names that day (UTC), not the next.
+        assert_eq!(date_line(1_800_000_000), "15 January 2027");
+    }
+
+    #[test]
+    fn the_cancellation_email_states_the_period_end_and_the_key_keeps_working() {
+        // NOW = 1_800_000_000 (15 January 2027); the paid period
+        // ends twenty days later.
+        let ends = 1_800_000_000 + 20 * 86_400;
+        let email = compose_cancellation_scheduled_email("buyer@example.com", ends);
+        assert_eq!(email.to, "buyer@example.com");
+        assert!(email.subject.contains("cancelled"), "the subject carries the news");
+        assert!(
+            email.text.contains("No further charges"),
+            "the money fact is stated"
+        );
+        assert!(
+            email.text.contains("keeps working until 4 February 2027"),
+            "the key's fate is stated with the period-end date"
+        );
+        assert!(
+            email.text.contains("undo the cancellation"),
+            "the one next action for a mistaken cancel is named"
+        );
+        assert!(email.text.contains(SUPPORT_EMAIL), "the support route is stated");
+    }
+
+    #[test]
+    fn the_ended_email_states_the_key_no_longer_works() {
+        let email = compose_subscription_ended_email("buyer@example.com");
+        assert!(email.subject.contains("ended"), "the subject carries the news");
+        assert!(
+            email.text.contains("no longer works"),
+            "the key's fate is stated plainly"
+        );
+        assert!(
+            email.text.contains("No further charges"),
+            "the money fact is stated"
+        );
+        assert!(email.text.contains(SUPPORT_EMAIL), "the next action is support");
+    }
+
+    #[test]
+    fn the_payment_failed_email_states_the_grace_and_the_fix_route() {
+        let grace_ends = 1_800_000_000 + 7 * 86_400;
+        let email = compose_payment_failed_email("buyer@example.com", grace_ends);
+        assert!(email.subject.contains("payment failed"), "the subject carries the news");
+        assert!(
+            email.text.contains("keeps working"),
+            "the key's fate during the grace is stated"
+        );
+        assert!(
+            email.text.contains("until 22 January 2027"),
+            "the grace end is stated as a date"
+        );
+        assert!(
+            email.text.contains("stops working"),
+            "what happens if the payment never lands is stated"
+        );
+        // With no Customer Portal configured, the fix route is the
+        // invoice email Stripe sent — a URL is never invented.
+        assert!(
+            email.text.contains("invoice email Stripe sent"),
+            "the fix route is the route that exists today"
+        );
+        assert!(email.text.contains(SUPPORT_EMAIL), "the support route is stated");
+    }
+
     /// A one-shot plaintext SMTP sink on loopback: speaks just
     /// enough SMTP for a real lettre conversation and reports the
     /// transcript, so the production transport is proven end to end
@@ -489,6 +753,33 @@ mod tests {
         assert!(
             transcript.contains("Subject: Your codetopo API key"),
             "the subject line crosses the wire"
+        );
+    }
+
+    #[test]
+    fn the_smtp_mailer_delivers_a_lifecycle_email_to_a_local_sink() {
+        let (port, rx) = smtp_sink();
+        let mailer = SmtpMailer::new(MailConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            username: None,
+            password: None,
+            from: "codetopo@aimlds.org".to_string(),
+            tls: MailTls::None,
+        })
+        .expect("mailer");
+        let email = compose_subscription_ended_email("buyer@example.com");
+        mailer.send_lifecycle_email(&email).expect("send to sink");
+        let transcript = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("sink transcript");
+        assert!(
+            transcript.contains("RCPT TO:<buyer@example.com>"),
+            "the envelope recipient is the buyer"
+        );
+        assert!(
+            transcript.contains("Subject: Your codetopo subscription has ended"),
+            "the lifecycle subject crosses the wire"
         );
     }
 
