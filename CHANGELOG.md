@@ -20,12 +20,13 @@ All notable changes to this project are documented here.
   line. The credential's appearances stay enumerated: in the email
   it now appears twice — as the key, and inside the worked
   example — and the composition and service tests assert exactly
-  that. The manage-or-cancel line names the Stripe receipt route
-  for now: Stripe's Customer Portal is not activated for this
-  product and no portal URL exists in the repo, so the direct link
-  waits on that Stripe-side activation — the placeholder is marked
-  in `mail.rs` (`MANAGE_SUBSCRIPTION_URL`) and beside the claim
-  page's line.
+  that. The manage-or-cancel line first named the Stripe receipt
+  route; Stripe's Customer Portal was then activated for this
+  product (2026-11-03, cancel at period end, invoice history), and
+  the line now prints the direct portal link —
+  `MANAGE_SUBSCRIPTION_URL` in `mail.rs` carries it, with the
+  receipt route kept as the fallback should the constant ever be
+  cleared.
 
 ## [0.9.0] — 2026-11-02
 
