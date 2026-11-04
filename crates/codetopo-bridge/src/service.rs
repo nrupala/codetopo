@@ -54,13 +54,22 @@
 //! entry into past-due. The trigger is derived from the event and
 //! the entitlement it produced, once, after the event is recorded —
 //! the same best-effort discipline as the key email: a failed send
-//! is logged and never fails the webhook. One event family is
-//! absent by decision: `charge.refunded` is not delivered to this
-//! endpoint (it is not in the endpoint's subscription list) and a
-//! charge payload names an invoice, not a subscription, so refunds
-//! get no bridge email; the buyer's refund notification is Stripe's
-//! own refund email. The gap is named in the crate docs and the
-//! changelog.
+//! is logged and never fails the webhook.
+//!
+//! A fourth email rides the same seam (see [`maybe_email_refund`]):
+//! when a charge against a codetopo subscription is refunded, the
+//! buyer hears the amount, the plan, and what the refund does to
+//! the key. A refund changes no bridge state — it is not a
+//! cancellation, and the entitlement keeps exactly the status the
+//! subscription's own events gave it (the Director's ruling,
+//! 2026-11-03: a refund and a cancellation are separate acts, as
+//! his own proof purchase performed them) — so the refund handler
+//! only resolves and reports. The charge payload names an invoice,
+//! not a subscription, so resolution runs charge → invoice → the
+//! subscription recorded for that invoice when its invoice event
+//! applied → entitlement. A charge that cannot be resolved to a
+//! codetopo entitlement is ignored with a log line; for those
+//! buyers, Stripe's own refund email remains the notice.
 
 use codetopo_server::keys::KeyStore;
 use codetopo_server::limits::plan_limits;
@@ -68,13 +77,15 @@ use codetopo_server::limits::plan_limits;
 use crate::crypto;
 use crate::mail::{
     compose_cancellation_scheduled_email, compose_key_email, compose_payment_failed_email,
-    compose_subscription_ended_email, KeyMailer,
+    compose_refund_email, compose_subscription_ended_email, KeyMailer, RefundKeyFate,
 };
 use crate::store::{
     BridgeStore, Entitlement, STATUS_ACTIVE, STATUS_CANCEL_SCHEDULED, STATUS_PAST_DUE,
     STATUS_REVOKED,
 };
-use crate::stripe::{CheckoutSessionData, InvoiceData, LineItem, SubscriptionData, WebhookEvent};
+use crate::stripe::{
+    ChargeData, CheckoutSessionData, InvoiceData, LineItem, SubscriptionData, WebhookEvent,
+};
 use crate::BridgeError;
 
 /// How long a buyer has to claim a key after issuance: 7 days.
@@ -199,16 +210,18 @@ pub fn apply_event(
                 Ok(EventOutcome::Applied)
             })?
         }
-        // Refunds get no bridge handling, by decision: the endpoint
-        // is not subscribed to `charge.refunded`, and a charge
-        // payload names an invoice, not the subscription the
-        // entitlement keys on, so there is no honest way to address
-        // a refund email from it. The buyer's refund notification is
-        // Stripe's own refund email. The arm exists so the absence
-        // is read here, not discovered.
-        "charge.refunded" => EventOutcome::Ignored,
+        // A refund moves no state (see [`apply_refund`]): the
+        // handler resolves the charge to its entitlement, and the
+        // refund email hook below carries the news. An unresolvable
+        // charge — another product's, or an invoice this bridge
+        // never saw — is ignored with a log line.
+        "charge.refunded" => {
+            let data = parse_data::<ChargeData>(event)?;
+            apply_refund(store, &data, &event.event_id)?
+        }
         "invoice.payment_failed" => {
             let data = parse_data::<InvoiceData>(event)?;
+            record_invoice_link(store, &data, now)?;
             match data.subscription_id() {
                 Some(subscription_id) => {
                     with_entitlement(store, subscription_id, occurred, now, |ent| {
@@ -221,6 +234,7 @@ pub fn apply_event(
         }
         "invoice.payment_succeeded" => {
             let data = parse_data::<InvoiceData>(event)?;
+            record_invoice_link(store, &data, now)?;
             match data.subscription_id() {
                 Some(subscription_id) => {
                     with_entitlement(store, subscription_id, occurred, now, |ent| {
@@ -243,6 +257,7 @@ pub fn apply_event(
         // a duplicate and the hook below never runs twice for it.
         maybe_email_key(store, policy, mailer, event, now);
         maybe_email_lifecycle(store, mailer, event, now);
+        maybe_email_refund(store, mailer, event);
     }
     Ok(outcome)
 }
@@ -458,6 +473,149 @@ fn maybe_email_lifecycle(
         eprintln!(
             "codetopo-bridge: lifecycle email not sent for event {} \
              (subscription {subscription_id}): {err}",
+            event.event_id
+        );
+    }
+}
+
+/// Records the invoice → subscription link an invoice event
+/// carries, so a later charge against that invoice can resolve.
+/// The link is a fact about Stripe's objects, not about the
+/// entitlement: it is recorded whether or not the subscription is
+/// one the bridge has entitled (a refund for an unentitled
+/// subscription still has to be able to resolve — to the
+/// entitlement check that then ignores it).
+fn record_invoice_link(
+    store: &BridgeStore,
+    data: &InvoiceData,
+    now: i64,
+) -> Result<(), BridgeError> {
+    if let Some(subscription_id) = data.subscription_id() {
+        store.record_invoice_subscription(&data.id, subscription_id, now)?;
+    }
+    Ok(())
+}
+
+/// Resolves a charge to the codetopo subscription it concerns:
+/// charge → its invoice → the subscription recorded for that
+/// invoice → an entitlement must exist for it. Any break in the
+/// chain resolves to `None` — the charge is not this bridge's
+/// business (another product's charge on the shared account, an
+/// invoice no invoice event ever named, or a subscription the
+/// bridge never entitled).
+fn resolve_refund_subscription(
+    store: &BridgeStore,
+    data: &ChargeData,
+) -> Result<Option<String>, BridgeError> {
+    let Some(invoice_id) = data.invoice_id() else {
+        return Ok(None);
+    };
+    let Some(subscription_id) = store.subscription_for_invoice(invoice_id)? else {
+        return Ok(None);
+    };
+    if store.entitlement(&subscription_id)?.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(subscription_id))
+}
+
+/// Applies a `charge.refunded` event. No state changes: a refund
+/// is not a cancellation and moves no entitlement — the key's
+/// position after a refund is whatever the subscription's own
+/// events made it, and [`maybe_email_refund`] states exactly that.
+/// The handler only decides whether the refund concerns a codetopo
+/// entitlement; an unresolvable charge is a quiet
+/// [`EventOutcome::Ignored`] with a log line (the account is
+/// shared, and other products' refunds are not an error here).
+fn apply_refund(
+    store: &BridgeStore,
+    data: &ChargeData,
+    event_id: &str,
+) -> Result<EventOutcome, BridgeError> {
+    match resolve_refund_subscription(store, data)? {
+        Some(_) => Ok(EventOutcome::Applied),
+        None => {
+            eprintln!(
+                "codetopo-bridge: charge.refunded for charge {} (event {event_id}) \
+                 does not resolve to a codetopo entitlement; no refund email",
+                data.id
+            );
+            Ok(EventOutcome::Ignored)
+        }
+    }
+}
+
+/// Offers the refund email for an applied `charge.refunded` event.
+///
+/// The news is the refund itself; everything the email states is
+/// re-read at send time — the entitlement's plan, and the key's
+/// fate under the entitlement's *current* status (a refund that
+/// lands after the subscription ended says the key has stopped;
+/// one that lands on a live subscription says the refund changed
+/// nothing). Dedup is the event-id guard, exactly as for the
+/// lifecycle emails: the event is recorded before this hook runs,
+/// so a redelivery is a duplicate and never reaches it, while a
+/// second, distinct refund against the same charge is a second
+/// event and earns its own email stating its own amount. Failure
+/// rules match the other sends: a missing buyer address or a
+/// transport error is a log line, never a failed webhook.
+fn maybe_email_refund(store: &BridgeStore, mailer: Option<&dyn KeyMailer>, event: &WebhookEvent) {
+    if event.event_type != "charge.refunded" {
+        return;
+    }
+    let Some(mailer) = mailer else {
+        return;
+    };
+    let attempt = |store: &BridgeStore| -> Result<bool, String> {
+        let fail = |err: BridgeError| err.to_string();
+        let data = parse_data::<ChargeData>(event).map_err(|err| err.to_string())?;
+        let Some(subscription_id) = resolve_refund_subscription(store, &data).map_err(fail)?
+        else {
+            return Ok(false);
+        };
+        let Some(ent) = store.entitlement(&subscription_id).map_err(fail)? else {
+            return Ok(false);
+        };
+        let Some(to) = store.buyer_email(&subscription_id).map_err(fail)? else {
+            eprintln!(
+                "codetopo-bridge: no buyer email recorded for subscription \
+                 {subscription_id} (event {}); no refund email sent",
+                event.event_id
+            );
+            return Ok(false);
+        };
+        let fate = if ent.status == STATUS_REVOKED {
+            RefundKeyFate::AlreadyStopped
+        } else if ent.status == STATUS_CANCEL_SCHEDULED || ent.status == STATUS_PAST_DUE {
+            match ent.revoke_at {
+                Some(ends_at) => RefundKeyFate::WorksUntil(ends_at),
+                None => RefundKeyFate::Unaffected,
+            }
+        } else {
+            RefundKeyFate::Unaffected
+        };
+        let email = compose_refund_email(
+            &to,
+            &ent.plan,
+            data.refunded_amount(),
+            data.amount,
+            &data.currency,
+            data.is_partial(),
+            fate,
+        );
+        mailer
+            .send_lifecycle_email(&email)
+            .map_err(|err| err.to_string())?;
+        eprintln!(
+            "codetopo-bridge: refund email sent for subscription \
+             {subscription_id} (event {})",
+            event.event_id
+        );
+        Ok(true)
+    };
+    if let Err(err) = attempt(store) {
+        eprintln!(
+            "codetopo-bridge: refund email not sent for event {}: {err}",
             event.event_id
         );
     }
@@ -1191,6 +1349,78 @@ mod tests {
         now: i64,
     ) -> EventOutcome {
         apply_event(store, keys, &policy(), None, event, now).expect("apply event")
+    }
+
+    /// An invoice event naming its invoice id explicitly (the
+    /// shared [`invoice_event`] helper derives the id from the
+    /// event id; refund resolution tests need to name it).
+    fn invoice_event_for(
+        event_id: &str,
+        event_type: &str,
+        invoice: &str,
+        sub: &str,
+        created: i64,
+    ) -> WebhookEvent {
+        WebhookEvent {
+            event_id: event_id.to_string(),
+            event_type: event_type.to_string(),
+            created,
+            data: serde_json::json!({
+                "id": invoice,
+                "subscription": sub,
+            }),
+        }
+    }
+
+    /// A `charge.refunded` event: the charge, the invoice it
+    /// settled, its full amount, the cumulative refunded total,
+    /// and the refund list as Stripe nests it.
+    fn refund_event(
+        event_id: &str,
+        charge: &str,
+        invoice: Option<&str>,
+        amount: i64,
+        amount_refunded: i64,
+        refunds: serde_json::Value,
+        created: i64,
+    ) -> WebhookEvent {
+        WebhookEvent {
+            event_id: event_id.to_string(),
+            event_type: "charge.refunded".to_string(),
+            created,
+            data: serde_json::json!({
+                "id": charge,
+                "amount": amount,
+                "amount_refunded": amount_refunded,
+                "currency": "usd",
+                "invoice": invoice,
+                "refunds": { "object": "list", "data": refunds },
+            }),
+        }
+    }
+
+    /// A purchase whose checkout carried a buyer address, with the
+    /// mailer watching: entitlement, key, key email, and the
+    /// recorded address a refund email would write to.
+    fn purchase_with_email(
+        store: &BridgeStore,
+        keys: &KeyStore,
+        mailer: &RecordingMailer,
+        sub: &str,
+        session: &str,
+        email: &str,
+    ) {
+        let created = created_event(&format!("evt_c_{sub}"), sub, NOW);
+        assert_eq!(
+            apply_with_mailer(store, keys, mailer, &created, NOW),
+            EventOutcome::Applied
+        );
+        let checkout =
+            checkout_event_with_email(&format!("evt_k_{sub}"), session, sub, NOW + 30, email);
+        assert_eq!(
+            apply_with_mailer(store, keys, mailer, &checkout, NOW + 30),
+            EventOutcome::Applied
+        );
     }
 
     /// A completed purchase, subscription event first: entitlement,
@@ -2238,5 +2468,226 @@ mod tests {
         );
         assert!(mailer.lifecycle().is_empty());
         assert!(mailer.sent().is_empty());
+    }
+
+    #[test]
+    fn a_refund_emails_the_buyer_and_moves_no_state() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        purchase_with_email(&store, &keys, &mailer, "sub_RF1", "cs_RF1", "buyer@example.com");
+        // The settled invoice is what links the coming charge to
+        // this subscription.
+        let invoice = invoice_event_for(
+            "evt_i_rf1",
+            "invoice.payment_succeeded",
+            "in_RF1",
+            "sub_RF1",
+            NOW + 60,
+        );
+        assert_eq!(apply(&store, &keys, &invoice, NOW + 60), EventOutcome::Applied);
+        let refund = refund_event(
+            "evt_r_rf1",
+            "ch_RF1",
+            Some("in_RF1"),
+            1900,
+            1900,
+            serde_json::json!([
+                { "id": "re_RF1", "amount": 1900, "created": NOW + 120, "status": "succeeded" },
+            ]),
+            NOW + 120,
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &refund, NOW + 120),
+            EventOutcome::Applied
+        );
+        let lifecycle = mailer.lifecycle();
+        assert_eq!(lifecycle.len(), 1, "exactly the refund email");
+        let email = &lifecycle[0];
+        assert_eq!(email.to, "buyer@example.com");
+        assert!(email.subject.contains("refund"), "the subject carries the news");
+        assert!(email.text.contains("19.00 USD"), "the amount: {}", email.text);
+        assert!(
+            email.text.contains("codetopo Team (US$19/month)"),
+            "the plan the charge was for"
+        );
+        assert!(
+            email.text.contains("does not change your API key"),
+            "a refund is not a cancellation, stated plainly"
+        );
+        assert!(email.text.contains("info@aimlds.org"), "the support route is stated");
+        // No state moved: the entitlement stands active and the key
+        // still claims and verifies.
+        let ent = store.entitlement("sub_RF1").expect("read").expect("entitlement");
+        assert_eq!(ent.status, STATUS_ACTIVE);
+        let (key_id, secret) = claim_key(&store, &policy(), "sub_RF1", NOW + 180).expect("claim");
+        assert!(keys.verify(&key_id, &secret).is_ok(), "the refunded key still works");
+        // A redelivery of the same event is a duplicate and never
+        // re-emails.
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &refund, NOW + 240),
+            EventOutcome::Duplicate
+        );
+        assert_eq!(mailer.lifecycle().len(), 1, "the replay sent nothing");
+    }
+
+    #[test]
+    fn a_refund_after_the_subscription_ended_says_the_key_has_stopped() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        purchase_with_email(&store, &keys, &mailer, "sub_RF2", "cs_RF2", "buyer@example.com");
+        let invoice = invoice_event_for(
+            "evt_i_rf2",
+            "invoice.payment_succeeded",
+            "in_RF2",
+            "sub_RF2",
+            NOW + 60,
+        );
+        assert_eq!(apply(&store, &keys, &invoice, NOW + 60), EventOutcome::Applied);
+        // The Director's own order of acts: cancel first (the
+        // subscription ends, the ended email goes out), refund after.
+        let deleted = subscription_event(
+            "evt_d_rf2",
+            "customer.subscription.deleted",
+            "sub_RF2",
+            NOW + 90,
+            serde_json::json!({ "status": "canceled" }),
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &deleted, NOW + 90),
+            EventOutcome::Applied
+        );
+        let refund = refund_event(
+            "evt_r_rf2",
+            "ch_RF2",
+            Some("in_RF2"),
+            1900,
+            1900,
+            serde_json::json!([
+                { "id": "re_RF2", "amount": 1900, "created": NOW + 120, "status": "succeeded" },
+            ]),
+            NOW + 120,
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &refund, NOW + 120),
+            EventOutcome::Applied
+        );
+        let lifecycle = mailer.lifecycle();
+        assert_eq!(lifecycle.len(), 2, "the ended email, then the refund email");
+        let email = &lifecycle[1];
+        assert!(email.subject.contains("refund"));
+        assert!(
+            email.text.contains("already stopped working"),
+            "the key's fate is the ended subscription's truth: {}",
+            email.text
+        );
+    }
+
+    #[test]
+    fn a_refund_that_resolves_nowhere_is_ignored_quietly() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        let one_refund = serde_json::json!([
+            { "id": "re_X", "amount": 500, "created": NOW, "status": "succeeded" },
+        ]);
+        // An invoice this bridge has never seen (another product's
+        // charge on the shared account).
+        let stray = refund_event("evt_r_stray", "ch_X1", Some("in_theirs"), 500, 500, one_refund.clone(), NOW);
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &stray, NOW),
+            EventOutcome::Ignored
+        );
+        // An invoice link exists — an invoice event named it — but
+        // the subscription was never entitled.
+        let failed = invoice_event_for("evt_i_ghost", "invoice.payment_failed", "in_ghost", "sub_ghost", NOW);
+        assert_eq!(apply(&store, &keys, &failed, NOW), EventOutcome::Ignored);
+        let ghost = refund_event("evt_r_ghost", "ch_X2", Some("in_ghost"), 500, 500, one_refund.clone(), NOW + 10);
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &ghost, NOW + 10),
+            EventOutcome::Ignored
+        );
+        // A charge that settled no invoice at all.
+        let bare = refund_event("evt_r_bare", "ch_X3", None, 500, 500, one_refund, NOW + 20);
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &bare, NOW + 20),
+            EventOutcome::Ignored
+        );
+        assert!(mailer.lifecycle().is_empty(), "no email for any of them");
+        assert!(mailer.sent().is_empty());
+    }
+
+    #[test]
+    fn a_partial_refund_states_its_amount_and_a_second_refund_emails_its_own() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        let created = created_event_priced("evt_c_rf4", "sub_RF4", NOW, GUARDRAILS_PRICE);
+        assert_eq!(
+            apply_p(&policy_two_tier(), &store, &keys, &created, NOW),
+            EventOutcome::Applied
+        );
+        let checkout =
+            checkout_event_with_email("evt_k_rf4", "cs_RF4", "sub_RF4", NOW + 30, "pro@example.com");
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &checkout, NOW + 30),
+            EventOutcome::Applied
+        );
+        let invoice = invoice_event_for(
+            "evt_i_rf4",
+            "invoice.payment_succeeded",
+            "in_RF4",
+            "sub_RF4",
+            NOW + 60,
+        );
+        assert_eq!(apply(&store, &keys, &invoice, NOW + 60), EventOutcome::Applied);
+        let first = refund_event(
+            "evt_r1_rf4",
+            "ch_RF4",
+            Some("in_RF4"),
+            4900,
+            2000,
+            serde_json::json!([
+                { "id": "re_1", "amount": 2000, "created": NOW + 120, "status": "succeeded" },
+            ]),
+            NOW + 120,
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &first, NOW + 120),
+            EventOutcome::Applied
+        );
+        // A second, distinct refund against the same charge: the
+        // cumulative total moves to 3000, and the newest refund —
+        // the one this event announces — is 1000.
+        let second = refund_event(
+            "evt_r2_rf4",
+            "ch_RF4",
+            Some("in_RF4"),
+            4900,
+            3000,
+            serde_json::json!([
+                { "id": "re_2", "amount": 1000, "created": NOW + 200, "status": "succeeded" },
+                { "id": "re_1", "amount": 2000, "created": NOW + 120, "status": "succeeded" },
+            ]),
+            NOW + 200,
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &second, NOW + 200),
+            EventOutcome::Applied
+        );
+        let lifecycle = mailer.lifecycle();
+        assert_eq!(lifecycle.len(), 2, "one email per refund event");
+        assert_eq!(lifecycle[0].to, "pro@example.com");
+        assert!(
+            lifecycle[0].text.contains("20.00 USD of the 49.00 USD charge"),
+            "the partial amount and the whole charge: {}",
+            lifecycle[0].text
+        );
+        assert!(lifecycle[0].text.contains("partial refund"));
+        assert!(
+            lifecycle[0].text.contains("codetopo Guardrails (US$49/month)"),
+            "the Guardrails plan is named"
+        );
+        assert!(
+            lifecycle[1].text.contains("10.00 USD of the 49.00 USD charge"),
+            "the second email states its own refund's amount, not the cumulative total"
+        );
     }
 }

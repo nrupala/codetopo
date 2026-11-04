@@ -277,6 +277,93 @@ impl InvoiceData {
     }
 }
 
+/// The charge fields the bridge acts on (the `charge.refunded`
+/// payload). A charge names the invoice it settled, never the
+/// subscription; resolving one to an entitlement runs through the
+/// store's invoice link (see [`crate::store::BridgeStore`]).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ChargeData {
+    /// `ch_…`.
+    pub id: String,
+    /// The charge's full amount, in the currency's minor unit.
+    pub amount: i64,
+    /// The total refunded against this charge as of the event, in
+    /// the currency's minor unit: equal to `amount` when the charge
+    /// stands fully refunded.
+    #[serde(default)]
+    pub amount_refunded: i64,
+    /// ISO currency code, lower-case as Stripe sends it (`usd`).
+    pub currency: String,
+    /// The invoice this charge settled (`in_…`), when it settled one.
+    pub invoice: Option<String>,
+    /// The refunds recorded against the charge.
+    #[serde(default)]
+    pub refunds: RefundList,
+}
+
+impl ChargeData {
+    /// The invoice this charge settled, if it settled one.
+    pub fn invoice_id(&self) -> Option<&str> {
+        self.invoice.as_deref()
+    }
+
+    /// The refund this event reports: the most recently created one
+    /// on the charge. Several refunds can share a creation second;
+    /// among those, a succeeded one is the news (a same-second
+    /// pending refund is not what a `charge.refunded` event is
+    /// announcing).
+    pub fn reported_refund(&self) -> Option<&RefundData> {
+        let newest = self.refunds.data.iter().map(|refund| refund.created).max()?;
+        self.refunds
+            .data
+            .iter()
+            .filter(|refund| refund.created == newest)
+            .find(|refund| refund.status.as_deref() == Some("succeeded"))
+            .or_else(|| {
+                self.refunds
+                    .data
+                    .iter()
+                    .find(|refund| refund.created == newest)
+            })
+    }
+
+    /// The amount this event refunded, in minor units: the reported
+    /// refund's own amount. When the payload carries no refund list,
+    /// the cumulative refunded total is the only figure it offers,
+    /// and is what the email states.
+    pub fn refunded_amount(&self) -> i64 {
+        self.reported_refund()
+            .map(|refund| refund.amount)
+            .unwrap_or(self.amount_refunded)
+    }
+
+    /// True when this event leaves part of the charge standing.
+    pub fn is_partial(&self) -> bool {
+        self.amount_refunded < self.amount
+    }
+}
+
+/// A charge's refund list, as Stripe nests it.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RefundList {
+    /// The refunds themselves.
+    #[serde(default)]
+    pub data: Vec<RefundData>,
+}
+
+/// One refund recorded against a charge.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RefundData {
+    /// `re_…`.
+    pub id: String,
+    /// The refund's amount, in the currency's minor unit.
+    pub amount: i64,
+    /// Unix seconds the refund was created.
+    pub created: i64,
+    /// `succeeded`, `pending`, `failed`, or `canceled`.
+    pub status: Option<String>,
+}
+
 /// An invoice's parentage block (newer API versions).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct InvoiceParent {
@@ -475,5 +562,49 @@ mod tests {
         let none: InvoiceData =
             serde_json::from_value(serde_json::json!({ "id": "in_3" })).expect("invoice parses");
         assert_eq!(none.subscription_id(), None);
+    }
+
+    #[test]
+    fn a_refunded_charge_reports_its_newest_refund() {
+        let charge: ChargeData = serde_json::from_value(serde_json::json!({
+            "id": "ch_1",
+            "amount": 4900,
+            "amount_refunded": 3000,
+            "currency": "usd",
+            "invoice": "in_1",
+            "refunds": { "data": [
+                { "id": "re_2", "amount": 1000, "created": 200, "status": "succeeded" },
+                { "id": "re_1", "amount": 2000, "created": 100, "status": "succeeded" },
+            ]},
+        }))
+        .expect("charge parses");
+        assert_eq!(charge.invoice_id(), Some("in_1"));
+        // The event's own refund is the newest one, not the total.
+        assert_eq!(charge.refunded_amount(), 1000);
+        assert!(charge.is_partial(), "3000 of 4900 refunded leaves part standing");
+    }
+
+    #[test]
+    fn a_fully_refunded_charge_without_a_refund_list_falls_back_to_the_total() {
+        let charge: ChargeData = serde_json::from_value(serde_json::json!({
+            "id": "ch_2",
+            "amount": 1900,
+            "amount_refunded": 1900,
+            "currency": "usd",
+            "invoice": "in_2",
+        }))
+        .expect("charge parses");
+        assert_eq!(charge.refunded_amount(), 1900);
+        assert!(!charge.is_partial());
+        // A charge that settled no invoice resolves nowhere.
+        let orphan: ChargeData = serde_json::from_value(serde_json::json!({
+            "id": "ch_3",
+            "amount": 500,
+            "amount_refunded": 500,
+            "currency": "usd",
+            "invoice": null,
+        }))
+        .expect("charge parses");
+        assert_eq!(orphan.invoice_id(), None);
     }
 }

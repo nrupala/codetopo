@@ -113,7 +113,7 @@
 //! | `customer.subscription.deleted` | revoke now |
 //! | `invoice.payment_failed` | mark past due: the same 7-day grace |
 //! | `invoice.payment_succeeded` | clear the grace when the entitlement is in it |
-//! | `charge.refunded` | **not delivered to this endpoint** — it is not in the subscription list below, and a charge payload names an invoice, not a subscription; refunds carry no bridge state and no bridge email (the buyer's refund notification is Stripe's own refund email, an account setting switched on 2026-11-03) |
+//! | `charge.refunded` | resolve the charge to its entitlement (charge → invoice → the subscription recorded for that invoice → entitlement) and email the buyer the refund notice; no state change — a refund is not a cancellation, and the entitlement keeps the status its own events gave it. A charge that resolves nowhere (another product's, an unseen invoice) is recorded and ignored with a log line |
 //! | anything else, or another product's price | recorded, no state change |
 //!
 //! Three applied transitions also email the buyer, on the same
@@ -123,12 +123,39 @@
 //! subscription ended (the `deleted` event, or an update whose
 //! cancellation is already effective), and the first entry into
 //! past-due (the email states the grace end and how to fix the
-//! payment method). A failed lifecycle send is logged and never
+//! payment method). A fourth email completes the set: a refund
+//! against a codetopo charge (the email states the amount this
+//! refund returned, the plan, and what the refund does to the key —
+//! under the lifecycle rules, nothing by itself: the email reads
+//! the key's fate from the entitlement's status, so a refund that
+//! lands after the subscription ended says the key has stopped,
+//! and one that lands on a live subscription says the refund
+//! changed nothing). A failed lifecycle send is logged and never
 //! fails the webhook.
 //!
 //! The webhook endpoint must be subscribed to all of the event types
 //! above — in particular `customer.subscription.created`: without it,
 //! checkouts record claim tokens and no entitlement is ever created.
+//! The endpoint's subscription list is managed in the Stripe
+//! Dashboard (the endpoint was created there; no code in this repo
+//! provisions it). `charge.refunded` is the one event this list
+//! gained after the endpoint was created: until it is added there
+//! (Developers → Webhooks → the codetopo-billing endpoint → Add
+//! events → `charge.refunded`), Stripe never delivers refund events
+//! and the refund machinery above simply never runs — silently,
+//! which is why the step is written here and in the changelog.
+//!
+//! Two limits of the refund resolution, stated plainly: the
+//! invoice → subscription link is recorded from invoice events as
+//! they are applied, so a refund against an invoice from before
+//! this recording existed (or whose invoice events the endpoint
+//! never received) cannot resolve and gets no bridge email —
+//! Stripe's own refund email remains that buyer's notice; and a
+//! refund does not revoke anything, by the standing rule that a
+//! refund and a cancellation are separate acts — whether a full
+//! refund *should* also end an entitlement is a policy question
+//! this code deliberately does not decide (it is named as an open
+//! question in the change that introduced refund email).
 //!
 //! Replays are no-ops (processed event ids), and an event older than
 //! the last one applied to its subscription is stale and skipped, so
