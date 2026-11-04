@@ -22,7 +22,13 @@
 //! - `bridge_buyer_emails` — one row per subscription: the buyer
 //!   address its checkout session carried (key-delivery email, see
 //!   [`crate::mail`]), and the record a support resend would work
-//!   from. Delivery rows themselves gain `emailed_at`, claimed
+//!   from.
+//! - `bridge_invoice_subscriptions` — one row per invoice: the
+//!   subscription it bills, recorded from the invoice events the
+//!   bridge already applies. It is the link a `charge.refunded`
+//!   event resolves through — a charge names an invoice, never a
+//!   subscription — to the entitlement its refund concerns.
+//!   Delivery rows themselves gain `emailed_at`, claimed
 //!   atomically before the send (see
 //!   [`BridgeStore::claim_delivery_email`]), so a replay, a second
 //!   triggering event, or two events processed concurrently can
@@ -171,6 +177,11 @@ impl BridgeStore {
              CREATE TABLE IF NOT EXISTS bridge_buyer_emails (
                  subscription_id TEXT PRIMARY KEY,
                  email           TEXT NOT NULL,
+                 updated_at      INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS bridge_invoice_subscriptions (
+                 invoice_id      TEXT PRIMARY KEY,
+                 subscription_id TEXT NOT NULL,
                  updated_at      INTEGER NOT NULL
              );",
         )
@@ -521,6 +532,50 @@ impl BridgeStore {
         .map_err(|err| BridgeError::Store(format!("cannot read buyer email: {err}")))
     }
 
+    // -- invoice links (charge → invoice → subscription) ------------
+
+    /// Records which subscription an invoice bills, from an invoice
+    /// event the bridge applied. An invoice bills exactly one
+    /// subscription for its whole life, so the upsert only ever
+    /// re-states the same fact; it exists so a re-delivered or
+    /// re-ordered invoice event cannot fail on its own first record.
+    pub fn record_invoice_subscription(
+        &self,
+        invoice_id: &str,
+        subscription_id: &str,
+        now: i64,
+    ) -> Result<(), BridgeError> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO bridge_invoice_subscriptions (invoice_id, subscription_id, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(invoice_id) DO UPDATE SET
+                 subscription_id = excluded.subscription_id,
+                 updated_at = excluded.updated_at",
+            rusqlite::params![invoice_id, subscription_id, now],
+        )
+        .map_err(|err| BridgeError::Store(format!("cannot record invoice link: {err}")))?;
+        Ok(())
+    }
+
+    /// The subscription an invoice bills, if an invoice event for it
+    /// has ever been applied. This is the middle hop of refund
+    /// resolution: a charge names its invoice, and this record names
+    /// the invoice's subscription.
+    pub fn subscription_for_invoice(
+        &self,
+        invoice_id: &str,
+    ) -> Result<Option<String>, BridgeError> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT subscription_id FROM bridge_invoice_subscriptions WHERE invoice_id = ?1",
+            rusqlite::params![invoice_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|err| BridgeError::Store(format!("cannot read invoice link: {err}")))
+    }
+
     /// Registers a claim token for a key. Idempotent: a token already
     /// pointing at this key is left as it is; a token pointing at a
     /// *different* key is left untouched too (tokens are Stripe ids —
@@ -847,6 +902,35 @@ mod tests {
         assert_eq!(
             store.delivery("k1").expect("read").expect("present").emailed_at,
             Some(150)
+        );
+    }
+
+    #[test]
+    fn invoice_links_round_trip_and_restate() {
+        let store = store();
+        assert!(store.subscription_for_invoice("in_1").expect("read").is_none());
+        store
+            .record_invoice_subscription("in_1", "sub_1", 100)
+            .expect("record");
+        assert_eq!(
+            store.subscription_for_invoice("in_1").expect("read").as_deref(),
+            Some("sub_1")
+        );
+        // Re-recording (a re-delivered invoice event) re-states the
+        // same fact without error, and links stay scoped per invoice.
+        store
+            .record_invoice_subscription("in_1", "sub_1", 200)
+            .expect("restate");
+        store
+            .record_invoice_subscription("in_2", "sub_2", 200)
+            .expect("record second");
+        assert_eq!(
+            store.subscription_for_invoice("in_1").expect("read").as_deref(),
+            Some("sub_1")
+        );
+        assert_eq!(
+            store.subscription_for_invoice("in_2").expect("read").as_deref(),
+            Some("sub_2")
         );
     }
 

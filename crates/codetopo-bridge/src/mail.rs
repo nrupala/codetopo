@@ -50,16 +50,18 @@
 //! same failure rules (a failed send is logged, never a failed
 //! webhook).
 //!
-//! One lifecycle event is deliberately absent: the refund. The
-//! webhook endpoint is not subscribed to `charge.refunded` (see
-//! the event list in the crate docs), and a charge payload names
-//! an invoice, not the subscription the entitlement keys on, so
-//! the bridge has no honest way to address a refund email. The
-//! buyer's refund notification today is Stripe's own refund email
-//! (an account-level setting, switched on 2026-11-03). Closing
-//! this gap needs the endpoint subscription plus a
-//! charge-to-subscription resolution; it is named here so the
-//! absence is a decision on record, not an oversight.
+//! A fourth message completes the set: the refund. When a charge
+//! against a codetopo subscription is refunded, the bridge resolves
+//! the charge to the entitlement (charge → invoice → the
+//! subscription recorded for that invoice → entitlement) and emails
+//! the buyer the amount refunded, the plan it was for, and what the
+//! refund does to the key — which, under the lifecycle rules, is
+//! nothing by itself: a refund is not a cancellation, so the email
+//! states the key's position under the entitlement's own status
+//! (unchanged, working until its already-scheduled end, or already
+//! stopped). Stripe's own refund email (an account-level setting,
+//! switched on 2026-11-03) still fires as well; this message is the
+//! one that explains what the refund means for the key.
 
 use std::time::Duration;
 
@@ -375,6 +377,122 @@ pub fn compose_payment_failed_email(to: &str, grace_ends_at: i64) -> LifecycleEm
     }
 }
 
+/// What a refund does to the buyer's key, read from the
+/// entitlement's status at the moment the refund lands. A refund
+/// moves no bridge state — it is not a cancellation — so every arm
+/// is a statement about state other events created.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefundKeyFate {
+    /// The subscription stands as it was: the key keeps working and
+    /// the subscription renews as before unless the buyer cancels.
+    Unaffected,
+    /// A revocation was already scheduled (a cancellation's period
+    /// end, or the past-due grace end): the key works until then.
+    WorksUntil(i64),
+    /// The subscription had already ended: the key no longer works,
+    /// and the refund changes nothing about that.
+    AlreadyStopped,
+}
+
+/// A minor-unit amount as a buyer reads it — `49.00 USD`. The
+/// bridge's currencies are two-decimal (USD, CAD, EUR); the code is
+/// printed rather than a symbol so any currency states itself
+/// truthfully.
+pub fn format_money(amount_minor: i64, currency: &str) -> String {
+    let amount = amount_minor.max(0);
+    format!("{}.{:02} {}", amount / 100, amount % 100, currency.to_uppercase())
+}
+
+/// The public name of a plan stamp, for buyer-facing copy. The
+/// bridge sells two tiers; an unrecognised stamp (an operator's
+/// custom plan name) is printed as-is rather than dressed as a
+/// tier it is not.
+pub fn plan_display_name(plan: &str) -> String {
+    match plan {
+        // `service::GUARDRAILS_PLAN`'s stamp, named here because
+        // this module owns buyer copy.
+        "guardrails" => "codetopo Guardrails (US$49/month)".to_string(),
+        "hosted" => "codetopo Team (US$19/month)".to_string(),
+        other => format!("codetopo plan {other}"),
+    }
+}
+
+/// Composes the refund email: a charge against the buyer's
+/// subscription was refunded. States the amount this refund
+/// returned (and, for a partial refund, the charge it was part of
+/// and that the rest stands), the plan the charge was for, and
+/// what the refund does to the key — per [`RefundKeyFate`], always
+/// a statement about the subscription's own state, because the
+/// refund itself changes none of it.
+pub fn compose_refund_email(
+    to: &str,
+    plan: &str,
+    refunded_minor: i64,
+    charge_minor: i64,
+    currency: &str,
+    partial: bool,
+    fate: RefundKeyFate,
+) -> LifecycleEmail {
+    let plan_name = plan_display_name(plan);
+    let amount_line = if partial {
+        format!(
+            "Refunded: {} of the {} charge — a partial refund, for your\n\
+             {plan_name} plan. The rest of the charge stands.",
+            format_money(refunded_minor, currency),
+            format_money(charge_minor, currency),
+        )
+    } else {
+        format!(
+            "Refunded: {} — the full amount of the charge — for your\n\
+             {plan_name} plan.",
+            format_money(refunded_minor, currency),
+        )
+    };
+    let fate_line = match fate {
+        RefundKeyFate::Unaffected => {
+            let manage_line = manage_subscription_line();
+            format!(
+                "This refund does not change your API key. A refund is not\n\
+                 a cancellation: your key keeps working, and your subscription\n\
+                 is unchanged — it renews as before unless you cancel it.\n\
+                 \n\
+                 {manage_line}"
+            )
+        }
+        RefundKeyFate::WorksUntil(ends_at) => {
+            let ends = date_line(ends_at);
+            format!(
+                "This refund does not change your API key's dates. Your key\n\
+                 keeps working until {ends} — the end already in effect for\n\
+                 your subscription — and then stops."
+            )
+        }
+        RefundKeyFate::AlreadyStopped => {
+            "Your API key has already stopped working — your subscription\n\
+             had ended before this refund — and the refund does not\n\
+             change that."
+                .to_string()
+        }
+    };
+    let text = format!(
+        "A refund has been issued for your codetopo subscription.\n\
+         \n\
+         {amount_line}\n\
+         \n\
+         The money returns to the card you paid with; how long it takes\n\
+         to appear is your bank's timing, not ours.\n\
+         \n\
+         {fate_line}\n\
+         \n\
+         Questions: contact support at {SUPPORT_EMAIL}.\n"
+    );
+    LifecycleEmail {
+        to: to.to_string(),
+        subject: "Your codetopo refund".to_string(),
+        text,
+    }
+}
+
 /// A Unix timestamp as a plain date — `15 January 2027` — in UTC.
 /// The bridge speaks Unix seconds everywhere; a buyer reads a date.
 /// The civil-from-days conversion is Howard Hinnant's algorithm,
@@ -663,6 +781,98 @@ mod tests {
             "the fix route is the configured Customer Portal link"
         );
         assert!(email.text.contains(SUPPORT_EMAIL), "the support route is stated");
+    }
+
+    #[test]
+    fn money_formats_in_minor_units_with_its_currency() {
+        assert_eq!(format_money(4900, "usd"), "49.00 USD");
+        assert_eq!(format_money(1905, "usd"), "19.05 USD");
+        assert_eq!(format_money(2000, "cad"), "20.00 CAD");
+        assert_eq!(format_money(0, "usd"), "0.00 USD");
+    }
+
+    #[test]
+    fn the_refund_email_states_the_full_amount_the_plan_and_the_untouched_key() {
+        let email = compose_refund_email(
+            "buyer@example.com",
+            "hosted",
+            1900,
+            1900,
+            "usd",
+            false,
+            RefundKeyFate::Unaffected,
+        );
+        assert!(email.subject.contains("refund"), "the subject carries the news");
+        assert!(email.text.contains("19.00 USD"), "the refunded amount is stated");
+        assert!(
+            email.text.contains("codetopo Team (US$19/month)"),
+            "the plan the charge was for is named"
+        );
+        assert!(
+            email.text.contains("does not change your API key"),
+            "the refund is not a cancellation, stated plainly"
+        );
+        assert!(email.text.contains(SUPPORT_EMAIL), "the support route is stated");
+    }
+
+    #[test]
+    fn the_partial_refund_email_states_the_partial_amount_truthfully() {
+        let email = compose_refund_email(
+            "buyer@example.com",
+            "guardrails",
+            2000,
+            4900,
+            "usd",
+            true,
+            RefundKeyFate::Unaffected,
+        );
+        assert!(
+            email.text.contains("20.00 USD of the 49.00 USD charge"),
+            "the partial amount and the whole charge are both stated"
+        );
+        assert!(
+            email.text.contains("partial refund"),
+            "the refund is called partial, not dressed as full"
+        );
+        assert!(
+            email.text.contains("codetopo Guardrails (US$49/month)"),
+            "the Guardrails plan is named"
+        );
+        assert!(
+            email.text.contains("The rest of the charge stands"),
+            "what happens to the un-refunded part is stated"
+        );
+    }
+
+    #[test]
+    fn the_refund_email_reads_the_key_fate_from_the_subscription_state() {
+        let ends = 1_800_000_000 + 30 * 86_400;
+        let scheduled = compose_refund_email(
+            "buyer@example.com",
+            "hosted",
+            1900,
+            1900,
+            "usd",
+            false,
+            RefundKeyFate::WorksUntil(ends),
+        );
+        assert!(
+            scheduled.text.contains("keeps working until 14 February 2027"),
+            "a scheduled end is stated as its date"
+        );
+        let stopped = compose_refund_email(
+            "buyer@example.com",
+            "hosted",
+            1900,
+            1900,
+            "usd",
+            false,
+            RefundKeyFate::AlreadyStopped,
+        );
+        assert!(
+            stopped.text.contains("already stopped working"),
+            "an ended subscription's key is stated as stopped"
+        );
     }
 
     /// A one-shot plaintext SMTP sink on loopback: speaks just

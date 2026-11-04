@@ -4,6 +4,42 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **codetopo-bridge — refund emails.** The lifecycle set the
+  previous change shipped named its own gap: refunds got no bridge
+  email, because the webhook endpoint was not subscribed to
+  `charge.refunded` and a charge payload names an invoice, not the
+  subscription. The bridge now closes the second half and is ready
+  for the first: invoice events record an invoice → subscription
+  link as they are applied, and a `charge.refunded` event resolves
+  charge → invoice → subscription → entitlement and emails the
+  buyer the amount this refund returned (a partial refund states
+  its amount against the whole charge, and that the rest stands),
+  the plan the charge was for, and what the refund does to the key
+  — which, under the lifecycle rules, is nothing by itself: a
+  refund is not a cancellation, so the email reads the key's fate
+  from the entitlement's own status (unchanged; working until its
+  already-scheduled end; or already stopped, when the refund
+  follows the ending, as the Director's own cancel-then-refund
+  purchase did). Charges that resolve nowhere — another product's,
+  or an invoice no invoice event ever named — are ignored with a
+  log line. Sends are best-effort and deduped by the event-id
+  guard, like the other lifecycle emails; a second, distinct
+  refund against the same charge earns its own email stating its
+  own amount. **The one step this change cannot do in code:** the
+  endpoint's event list is managed in the Stripe Dashboard — add
+  `charge.refunded` there (Developers → Webhooks → the
+  codetopo-billing endpoint → Add events) or Stripe never delivers
+  a refund event and none of this runs. Until a given invoice's
+  link exists, Stripe's own refund email (switched on 2026-11-03)
+  remains the buyer's only notice — and while both are on, a buyer
+  whose refund the bridge does resolve receives both messages:
+  Stripe's receipt and the bridge's explanation. Named open
+  question, for the Director rather than this change: a refund
+  revokes nothing today, so a buyer refunded in full without
+  cancelling keeps a working key and a renewing subscription —
+  whether a full refund should also end the entitlement is a
+  policy call, not a code fact.
+
 - **codetopo-bridge — lifecycle emails.** The bridge emailed the
   buyer once, at purchase, and then never again: a customer who
   cancelled, or whose payment failed, heard nothing from us (the
