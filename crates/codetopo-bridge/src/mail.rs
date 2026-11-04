@@ -291,8 +291,9 @@ fn undo_cancellation_line() -> String {
 }
 
 /// The fix-your-payment line for the payment-failed email, on the
-/// same seam again: the hosted invoice/receipt route is the one
-/// that exists today; the portal URL replaces it when set.
+/// same seam again: the Customer Portal URL (configured — see
+/// [`MANAGE_SUBSCRIPTION_URL`]); the invoice-email route remains
+/// only as the fallback should the constant ever be cleared.
 fn fix_payment_line() -> String {
     match MANAGE_SUBSCRIPTION_URL {
         Some(url) => format!("Update your payment method here: {url}"),
@@ -651,11 +652,15 @@ mod tests {
             email.text.contains("stops working"),
             "what happens if the payment never lands is stated"
         );
-        // With no Customer Portal configured, the fix route is the
-        // invoice email Stripe sent — a URL is never invented.
+        // The Customer Portal is configured (MANAGE_SUBSCRIPTION_URL
+        // carries its live link since PR #112 shipped), so the fix
+        // route is the portal: the buyer updates the payment method
+        // there. (Before the portal was activated, this assertion
+        // pinned the invoice-email fallback route.)
         assert!(
-            email.text.contains("invoice email Stripe sent"),
-            "the fix route is the route that exists today"
+            email.text.contains("Update your payment method here:")
+                && email.text.contains("billing.stripe.com/p/login/"),
+            "the fix route is the configured Customer Portal link"
         );
         assert!(email.text.contains(SUPPORT_EMAIL), "the support route is stated");
     }
