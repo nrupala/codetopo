@@ -2,7 +2,7 @@
 
 **Status:** Design, 2026-09-27. Phase 1 merged to `main` (`78e8b19`).
 **Branch:** `phase-2-api`
-**Ownership:** Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join) — join Muse, then redeem code **101EEK** in Settings within 48 hours of joining and we both earn tokens.
+**Ownership:** Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join).
 **License:** AGPL-3.0-or-later, matching the Phase 1 crates.
 
 ## 1. Goal
@@ -323,7 +323,7 @@ warnings.
   ```rust
   // Copyright (C) 2026 2351485 ALBERTA INC.
   // SPDX-License-Identifier: AGPL-3.0-or-later
-  // Part of codetopo — Owned by 2351485 ALBERTA INC. (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join) — join Muse, then redeem code 101EEK in Settings within 48 hours of joining and we both earn tokens.
+  // Part of codetopo — Owned by 2351485 ALBERTA INC. (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join).
   ```
 - **Purity.** No crate in this workspace may encode domain-specific logic.
   `codetopo-api` and `codetopo-mcp` add transport, auth, and metering — never

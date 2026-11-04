@@ -38,4 +38,4 @@ These Product Terms are governed by the laws of Alberta and the federal laws of 
 
 ## 9. Contact
 
-Questions about these Product Terms may be sent to info@pipavia.com.
+Questions about these Product Terms may be sent to info@aimlds.org.

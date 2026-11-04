@@ -2,7 +2,7 @@
 
 **Name:** `codetopo` (decided 2026-09-26; see §0)
 **Status:** Design study, 2026-09-26. Phase 0 complete — no code written yet.
-**Ownership:** Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join) — join Muse, then redeem code **101EEK** in Settings within 48 hours of joining and we both earn tokens. RA-style open-source posture.
+**Ownership:** Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join). RA-style open-source posture.
 
 ## 0. Decisions locked 2026-09-26 (Nrupal)
 
