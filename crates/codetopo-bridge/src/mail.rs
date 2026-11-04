@@ -377,10 +377,13 @@ pub fn compose_payment_failed_email(to: &str, grace_ends_at: i64) -> LifecycleEm
     }
 }
 
-/// What a refund does to the buyer's key, read from the
-/// entitlement's status at the moment the refund lands. A refund
-/// moves no bridge state — it is not a cancellation — so every arm
-/// is a statement about state other events created.
+/// What a refund does to the buyer's key. A partial refund moves
+/// no bridge state — it is not a cancellation — so its fates are
+/// statements about state other events created, read from the
+/// entitlement's status at the moment the refund lands. A full
+/// refund is the one refund that acts: it ends the entitlement
+/// (the Director's ruling, 2026-11-03), and the
+/// [`RefundKeyFate::EndedByRefund`] arm states that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefundKeyFate {
     /// The subscription stands as it was: the key keeps working and
@@ -392,6 +395,13 @@ pub enum RefundKeyFate {
     /// The subscription had already ended: the key no longer works,
     /// and the refund changes nothing about that.
     AlreadyStopped,
+    /// This refund was a full refund, and a full refund ends the
+    /// entitlement (the Director's ruling, 2026-11-03): the key
+    /// has stopped working, and the buyer is directed to cancel
+    /// the subscription in the Customer Portal to stop the next
+    /// charge — the bridge holds no Stripe secret key and cannot
+    /// cancel it for them.
+    EndedByRefund,
 }
 
 /// A minor-unit amount as a buyer reads it — `49.00 USD`. The
@@ -417,13 +427,32 @@ pub fn plan_display_name(plan: &str) -> String {
     }
 }
 
+/// The cancel direction the full-refund email carries. It cannot
+/// reuse [`manage_subscription_line`]: that line promises the key
+/// stays active until the end of the paid period, which a full
+/// refund has just made false. This line promises only what is
+/// true — the portal (or the receipt link) stops the next charge.
+fn refund_end_cancel_line() -> String {
+    match MANAGE_SUBSCRIPTION_URL {
+        Some(url) => format!(
+            "A refund is not a cancellation, and we cannot cancel your\n\
+             subscription for you. To stop the next charge, cancel it in\n\
+             the Stripe Customer Portal: {url}"
+        ),
+        None => "A refund is not a cancellation, and we cannot cancel your\n\
+             subscription for you. To stop the next charge, cancel it from\n\
+             the manage link in your Stripe receipt email."
+            .to_string(),
+    }
+}
+
 /// Composes the refund email: a charge against the buyer's
 /// subscription was refunded. States the amount this refund
 /// returned (and, for a partial refund, the charge it was part of
 /// and that the rest stands), the plan the charge was for, and
-/// what the refund does to the key — per [`RefundKeyFate`], always
-/// a statement about the subscription's own state, because the
-/// refund itself changes none of it.
+/// what the refund does to the key — per [`RefundKeyFate`]: for a
+/// partial refund, a statement about the subscription's own
+/// state; for a full refund, the ending the refund itself caused.
 pub fn compose_refund_email(
     to: &str,
     plan: &str,
@@ -472,6 +501,15 @@ pub fn compose_refund_email(
              had ended before this refund — and the refund does not\n\
              change that."
                 .to_string()
+        }
+        RefundKeyFate::EndedByRefund => {
+            let cancel_line = refund_end_cancel_line();
+            format!(
+                "This refund ends your entitlement: your API key has\n\
+                 stopped working.\n\
+                 \n\
+                 {cancel_line}"
+            )
         }
     };
     let text = format!(
@@ -873,6 +911,45 @@ mod tests {
             stopped.text.contains("already stopped working"),
             "an ended subscription's key is stated as stopped"
         );
+    }
+
+    #[test]
+    fn the_full_refund_email_states_the_entitlement_has_ended() {
+        let email = compose_refund_email(
+            "buyer@example.com",
+            "hosted",
+            1900,
+            1900,
+            "usd",
+            false,
+            RefundKeyFate::EndedByRefund,
+        );
+        assert!(
+            email.text.contains("ends your entitlement"),
+            "the ending is the headline: {}",
+            email.text
+        );
+        assert!(
+            email.text.contains("stopped working"),
+            "the key's fate is stated as stopped"
+        );
+        assert!(
+            email.text.contains("stop the next charge"),
+            "the buyer is told the subscription still bills"
+        );
+        assert!(
+            email.text.contains("billing.stripe.com/p/login/"),
+            "the cancel route is the configured Customer Portal link"
+        );
+        assert!(
+            !email.text.contains("does not change your API key"),
+            "none of the partial-refund wording survives"
+        );
+        assert!(
+            !email.text.contains("stays active until the end"),
+            "the manage line's period-end promise would be false here"
+        );
+        assert!(email.text.contains(SUPPORT_EMAIL), "the support route is stated");
     }
 
     /// A one-shot plaintext SMTP sink on loopback: speaks just

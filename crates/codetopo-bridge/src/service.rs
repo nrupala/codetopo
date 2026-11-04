@@ -59,17 +59,26 @@
 //! A fourth email rides the same seam (see [`maybe_email_refund`]):
 //! when a charge against a codetopo subscription is refunded, the
 //! buyer hears the amount, the plan, and what the refund does to
-//! the key. A refund changes no bridge state — it is not a
-//! cancellation, and the entitlement keeps exactly the status the
-//! subscription's own events gave it (the Director's ruling,
-//! 2026-11-03: a refund and a cancellation are separate acts, as
-//! his own proof purchase performed them) — so the refund handler
-//! only resolves and reports. The charge payload names an invoice,
-//! not a subscription, so resolution runs charge → invoice → the
-//! subscription recorded for that invoice when its invoice event
-//! applied → entitlement. A charge that cannot be resolved to a
-//! codetopo entitlement is ignored with a log line; for those
-//! buyers, Stripe's own refund email remains the notice.
+//! the key. A partial refund changes no bridge state — it is not
+//! a cancellation, and the entitlement keeps exactly the status
+//! the subscription's own events gave it (a refund and a
+//! cancellation remain separate acts, as the Director's own proof
+//! purchase performed them). A FULL refund ends the entitlement
+//! (the Director's ruling, 2026-11-03): the key is revoked on the
+//! spot, the reason `full_refund` is recorded on the row, and the
+//! email directs the buyer to cancel the subscription in the
+//! Customer Portal to stop the next charge — the bridge holds no
+//! Stripe secret key and cannot cancel it for them. One renewal
+//! edge follows from that (Wright's call under the ruling, named
+//! in [`apply_payment_succeeded`] for the Director's correction):
+//! a later payment for a subscription a full refund ended
+//! re-activates the entitlement — money taken is service owed.
+//! The charge payload names an invoice, not a subscription, so
+//! resolution runs charge → invoice → the subscription recorded
+//! for that invoice when its invoice event applied →
+//! entitlement. A charge that cannot be resolved to a codetopo
+//! entitlement is ignored with a log line; for those buyers,
+//! Stripe's own refund email remains the notice.
 
 use codetopo_server::keys::KeyStore;
 use codetopo_server::limits::plan_limits;
@@ -80,8 +89,8 @@ use crate::mail::{
     compose_refund_email, compose_subscription_ended_email, KeyMailer, RefundKeyFate,
 };
 use crate::store::{
-    BridgeStore, Entitlement, STATUS_ACTIVE, STATUS_CANCEL_SCHEDULED, STATUS_PAST_DUE,
-    STATUS_REVOKED,
+    BridgeStore, Entitlement, REVOKE_REASON_FULL_REFUND, STATUS_ACTIVE, STATUS_CANCEL_SCHEDULED,
+    STATUS_PAST_DUE, STATUS_REVOKED,
 };
 use crate::stripe::{
     ChargeData, CheckoutSessionData, InvoiceData, LineItem, SubscriptionData, WebhookEvent,
@@ -207,17 +216,19 @@ pub fn apply_event(
                 keys.revoke(&ent.key_id)?;
                 ent.status = STATUS_REVOKED.to_string();
                 ent.revoke_at = None;
+                ent.revoke_reason = None;
                 Ok(EventOutcome::Applied)
             })?
         }
-        // A refund moves no state (see [`apply_refund`]): the
+        // A partial refund moves no state; a full refund ends the
+        // entitlement (see [`apply_refund`]). Either way the
         // handler resolves the charge to its entitlement, and the
         // refund email hook below carries the news. An unresolvable
         // charge — another product's, or an invoice this bridge
         // never saw — is ignored with a log line.
         "charge.refunded" => {
             let data = parse_data::<ChargeData>(event)?;
-            apply_refund(store, &data, &event.event_id)?
+            apply_refund(store, keys, &data, &event.event_id, now)?
         }
         "invoice.payment_failed" => {
             let data = parse_data::<InvoiceData>(event)?;
@@ -235,18 +246,7 @@ pub fn apply_event(
         "invoice.payment_succeeded" => {
             let data = parse_data::<InvoiceData>(event)?;
             record_invoice_link(store, &data, now)?;
-            match data.subscription_id() {
-                Some(subscription_id) => {
-                    with_entitlement(store, subscription_id, occurred, now, |ent| {
-                        if ent.status == STATUS_PAST_DUE {
-                            ent.status = STATUS_ACTIVE.to_string();
-                            ent.revoke_at = None;
-                        }
-                        Ok(EventOutcome::Applied)
-                    })?
-                }
-                None => EventOutcome::Ignored,
-            }
+            apply_payment_succeeded(store, keys, policy, &data, occurred, now)?
         }
         _ => EventOutcome::Ignored,
     };
@@ -519,37 +519,136 @@ fn resolve_refund_subscription(
     Ok(Some(subscription_id))
 }
 
-/// Applies a `charge.refunded` event. No state changes: a refund
-/// is not a cancellation and moves no entitlement — the key's
-/// position after a refund is whatever the subscription's own
-/// events made it, and [`maybe_email_refund`] states exactly that.
-/// The handler only decides whether the refund concerns a codetopo
-/// entitlement; an unresolvable charge is a quiet
-/// [`EventOutcome::Ignored`] with a log line (the account is
-/// shared, and other products' refunds are not an error here).
+/// Applies a `charge.refunded` event.
+///
+/// A partial refund moves no bridge state: it is not a
+/// cancellation, the entitlement keeps exactly the status the
+/// subscription's own events gave it, and [`maybe_email_refund`]
+/// states exactly that.
+///
+/// A FULL refund — the cumulative refunded total stands at the
+/// charge's whole amount, per [`ChargeData::is_partial`] — ends
+/// the entitlement (the Director's ruling, 2026-11-03: a full
+/// refund also ends the entitlement). The key is revoked on the
+/// spot, with the same immediacy as
+/// `customer.subscription.deleted`, and the row records the
+/// reason ([`REVOKE_REASON_FULL_REFUND`]) so a later payment can
+/// undo exactly this ending (see [`apply_payment_succeeded`]).
+/// The refund does NOT cancel the subscription in Stripe — the
+/// bridge holds no Stripe secret key and cannot — so the email
+/// directs the buyer to cancel in the Customer Portal to stop
+/// the next charge. A full refund against an entitlement that
+/// already stands revoked moves nothing: whatever ended it
+/// stands, and its recorded reason is not overwritten.
+///
+/// An unresolvable charge is a quiet [`EventOutcome::Ignored`]
+/// with a log line (the account is shared, and other products'
+/// refunds are not an error here).
 fn apply_refund(
     store: &BridgeStore,
+    keys: &KeyStore,
     data: &ChargeData,
     event_id: &str,
+    now: i64,
 ) -> Result<EventOutcome, BridgeError> {
-    match resolve_refund_subscription(store, data)? {
-        Some(_) => Ok(EventOutcome::Applied),
-        None => {
+    let Some(subscription_id) = resolve_refund_subscription(store, data)? else {
+        eprintln!(
+            "codetopo-bridge: charge.refunded for charge {} (event {event_id}) \
+             does not resolve to a codetopo entitlement; no refund email",
+            data.id
+        );
+        return Ok(EventOutcome::Ignored);
+    };
+    if data.is_partial() {
+        return Ok(EventOutcome::Applied);
+    }
+    // Resolution proved the entitlement exists.
+    if let Some(mut ent) = store.entitlement(&subscription_id)? {
+        if ent.status != STATUS_REVOKED {
+            keys.revoke(&ent.key_id)?;
+            ent.status = STATUS_REVOKED.to_string();
+            ent.revoke_at = None;
+            ent.revoke_reason = Some(REVOKE_REASON_FULL_REFUND.to_string());
+            store.save_entitlement(&ent, now)?;
             eprintln!(
-                "codetopo-bridge: charge.refunded for charge {} (event {event_id}) \
-                 does not resolve to a codetopo entitlement; no refund email",
-                data.id
+                "codetopo-bridge: full refund for subscription {subscription_id} \
+                 (event {event_id}) ends the entitlement; key {} revoked \
+                 (reason {REVOKE_REASON_FULL_REFUND})",
+                ent.key_id
             );
-            Ok(EventOutcome::Ignored)
         }
     }
+    Ok(EventOutcome::Applied)
+}
+
+/// Applies `invoice.payment_succeeded` (the invoice link is
+/// recorded by the caller): the payment clears a past-due grace —
+/// and, on the renewal edge, undoes a full-refund ending.
+///
+/// The renewal edge (Wright's call under the Director's
+/// full-refund ruling, 2026-11-03, named for his correction): a
+/// subscription whose entitlement a full refund ended is still
+/// alive in Stripe — the refund could not cancel it — and a buyer
+/// who does not cancel in the portal is charged again at
+/// renewal. Money taken is service owed: the bridge never holds
+/// a paying customer's money without service, so the payment
+/// re-activates the entitlement through the same [`ensure_key`]
+/// restore a subscription event performs (the revoked key is
+/// replaced, never resurrected, and the replacement is delivered
+/// and emailed like any issuance). The reactivation is logged
+/// distinctly, and the row keeps the `full_refund` reason as the
+/// record of the ending it undid; the processed-events ledger
+/// holds both events.
+///
+/// A revocation recorded for any other cause — a deletion, an
+/// effective cancellation, a fallen grace deadline — is NOT
+/// undone by a payment: only the refund ending is, because only
+/// it left the subscription itself alive in Stripe.
+fn apply_payment_succeeded(
+    store: &BridgeStore,
+    keys: &KeyStore,
+    policy: &Policy,
+    data: &InvoiceData,
+    occurred: i64,
+    now: i64,
+) -> Result<EventOutcome, BridgeError> {
+    let Some(subscription_id) = data.subscription_id() else {
+        return Ok(EventOutcome::Ignored);
+    };
+    let Some(ent) = store.entitlement(subscription_id)? else {
+        return Ok(EventOutcome::Ignored);
+    };
+    if ent.status == STATUS_REVOKED
+        && ent.revoke_reason.as_deref() == Some(REVOKE_REASON_FULL_REFUND)
+    {
+        eprintln!(
+            "codetopo-bridge: subscription {subscription_id} paid invoice {} \
+             after a full refund ended its entitlement; reactivating with a \
+             replacement key (renewal edge: money taken is service owed)",
+            data.id
+        );
+        ensure_key(store, keys, policy, subscription_id, None, occurred, now)?;
+        return Ok(EventOutcome::Applied);
+    }
+    with_entitlement(store, subscription_id, occurred, now, |ent| {
+        if ent.status == STATUS_PAST_DUE {
+            ent.status = STATUS_ACTIVE.to_string();
+            ent.revoke_at = None;
+        }
+        Ok(EventOutcome::Applied)
+    })
 }
 
 /// Offers the refund email for an applied `charge.refunded` event.
 ///
 /// The news is the refund itself; everything the email states is
 /// re-read at send time — the entitlement's plan, and the key's
-/// fate under the entitlement's *current* status (a refund that
+/// fate: for a full refund, the ending [`apply_refund`] just
+/// recorded (the entitlement stands revoked with the
+/// `full_refund` reason — this refund ended it — unless it
+/// already stood revoked for that same reason, in which case the
+/// ending is still the refund's truth to state); for any other
+/// refund, the entitlement's *current* status (a refund that
 /// lands after the subscription ended says the key has stopped;
 /// one that lands on a live subscription says the refund changed
 /// nothing). Dedup is the event-id guard, exactly as for the
@@ -584,7 +683,12 @@ fn maybe_email_refund(store: &BridgeStore, mailer: Option<&dyn KeyMailer>, event
             );
             return Ok(false);
         };
-        let fate = if ent.status == STATUS_REVOKED {
+        let fate = if !data.is_partial()
+            && ent.status == STATUS_REVOKED
+            && ent.revoke_reason.as_deref() == Some(REVOKE_REASON_FULL_REFUND)
+        {
+            RefundKeyFate::EndedByRefund
+        } else if ent.status == STATUS_REVOKED {
             RefundKeyFate::AlreadyStopped
         } else if ent.status == STATUS_CANCEL_SCHEDULED || ent.status == STATUS_PAST_DUE {
             match ent.revoke_at {
@@ -676,6 +780,7 @@ pub fn sweep(store: &BridgeStore, keys: &KeyStore, now: i64) -> Result<SweepRepo
         keys.revoke(&ent.key_id)?;
         ent.status = STATUS_REVOKED.to_string();
         ent.revoke_at = None;
+        ent.revoke_reason = None;
         store.save_entitlement(&ent, now)?;
         report.revoked += 1;
     }
@@ -793,6 +898,7 @@ fn apply_update(
                 keys.revoke(&ent.key_id)?;
                 ent.status = STATUS_REVOKED.to_string();
                 ent.revoke_at = None;
+                ent.revoke_reason = None;
             } else {
                 schedule_revocation(ent, STATUS_CANCEL_SCHEDULED, effective);
             }
@@ -833,6 +939,7 @@ fn apply_update(
                     keys.revoke(&ent.key_id)?;
                     ent.status = STATUS_REVOKED.to_string();
                     ent.revoke_at = None;
+                    ent.revoke_reason = None;
                 } else {
                     schedule_revocation(ent, STATUS_CANCEL_SCHEDULED, effective);
                 }
@@ -887,6 +994,7 @@ fn ensure_key(
                     plan,
                     status: STATUS_ACTIVE.to_string(),
                     revoke_at: None,
+                    revoke_reason: None,
                     last_event_at: occurred,
                 },
                 now,
@@ -2471,7 +2579,7 @@ mod tests {
     }
 
     #[test]
-    fn a_refund_emails_the_buyer_and_moves_no_state() {
+    fn a_partial_refund_emails_the_buyer_and_moves_no_state() {
         let (store, keys) = stores();
         let mailer = RecordingMailer::new();
         purchase_with_email(&store, &keys, &mailer, "sub_RF1", "cs_RF1", "buyer@example.com");
@@ -2485,14 +2593,19 @@ mod tests {
             NOW + 60,
         );
         assert_eq!(apply(&store, &keys, &invoice, NOW + 60), EventOutcome::Applied);
+        // A partial refund: 1000 of the 1900 charge. (This test's
+        // full-refund predecessor asserted the same no-state-move
+        // behaviour for a full refund; the Director's ruling of
+        // 2026-11-03 moved full refunds into
+        // `a_full_refund_ends_the_entitlement_and_the_email_says_so`.)
         let refund = refund_event(
             "evt_r_rf1",
             "ch_RF1",
             Some("in_RF1"),
             1900,
-            1900,
+            1000,
             serde_json::json!([
-                { "id": "re_RF1", "amount": 1900, "created": NOW + 120, "status": "succeeded" },
+                { "id": "re_RF1", "amount": 1000, "created": NOW + 120, "status": "succeeded" },
             ]),
             NOW + 120,
         );
@@ -2505,20 +2618,25 @@ mod tests {
         let email = &lifecycle[0];
         assert_eq!(email.to, "buyer@example.com");
         assert!(email.subject.contains("refund"), "the subject carries the news");
-        assert!(email.text.contains("19.00 USD"), "the amount: {}", email.text);
+        assert!(
+            email.text.contains("10.00 USD of the 19.00 USD charge"),
+            "the partial amount against the whole charge: {}",
+            email.text
+        );
         assert!(
             email.text.contains("codetopo Team (US$19/month)"),
             "the plan the charge was for"
         );
         assert!(
             email.text.contains("does not change your API key"),
-            "a refund is not a cancellation, stated plainly"
+            "a partial refund is not a cancellation, stated plainly"
         );
         assert!(email.text.contains("info@aimlds.org"), "the support route is stated");
-        // No state moved: the entitlement stands active and the key
-        // still claims and verifies.
+        // No state moved: the entitlement stands active, no reason
+        // is recorded, and the key still claims and verifies.
         let ent = store.entitlement("sub_RF1").expect("read").expect("entitlement");
         assert_eq!(ent.status, STATUS_ACTIVE);
+        assert_eq!(ent.revoke_reason, None);
         let (key_id, secret) = claim_key(&store, &policy(), "sub_RF1", NOW + 180).expect("claim");
         assert!(keys.verify(&key_id, &secret).is_ok(), "the refunded key still works");
         // A redelivery of the same event is a duplicate and never
@@ -2528,6 +2646,158 @@ mod tests {
             EventOutcome::Duplicate
         );
         assert_eq!(mailer.lifecycle().len(), 1, "the replay sent nothing");
+    }
+
+    #[test]
+    fn a_full_refund_ends_the_entitlement_and_the_email_says_so() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        purchase_with_email(&store, &keys, &mailer, "sub_RF6", "cs_RF6", "buyer@example.com");
+        // The buyer holds their key before the refund lands, so
+        // the revocation is proven against a live credential.
+        let (key_id, secret) = claim_key(&store, &policy(), "sub_RF6", NOW + 45).expect("claim");
+        assert!(keys.verify(&key_id, &secret).is_ok(), "the key works before the refund");
+        let invoice = invoice_event_for(
+            "evt_i_rf6",
+            "invoice.payment_succeeded",
+            "in_RF6",
+            "sub_RF6",
+            NOW + 60,
+        );
+        assert_eq!(apply(&store, &keys, &invoice, NOW + 60), EventOutcome::Applied);
+        // A full refund: the cumulative total stands at the whole
+        // charge (the Director's ruling, 2026-11-03: a full refund
+        // also ends the entitlement).
+        let refund = refund_event(
+            "evt_r_rf6",
+            "ch_RF6",
+            Some("in_RF6"),
+            1900,
+            1900,
+            serde_json::json!([
+                { "id": "re_RF6", "amount": 1900, "created": NOW + 120, "status": "succeeded" },
+            ]),
+            NOW + 120,
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &refund, NOW + 120),
+            EventOutcome::Applied
+        );
+        // The entitlement stands revoked, with the reason recorded.
+        let ent = store.entitlement("sub_RF6").expect("read").expect("entitlement");
+        assert_eq!(ent.status, STATUS_REVOKED);
+        assert_eq!(
+            ent.revoke_reason.as_deref(),
+            Some(REVOKE_REASON_FULL_REFUND),
+            "the ending's cause is on the row"
+        );
+        assert_eq!(ent.revoke_at, None, "the revocation is immediate, not scheduled");
+        // The key stopped: the same credential that verified a
+        // moment ago is refused now.
+        assert!(
+            keys.verify(&key_id, &secret).is_err(),
+            "the refunded buyer's key no longer verifies"
+        );
+        // The email states the new truth: the ending, the stopped
+        // key, and the portal cancel route for the next charge.
+        let lifecycle = mailer.lifecycle();
+        assert_eq!(lifecycle.len(), 1, "exactly the refund email");
+        let email = &lifecycle[0];
+        assert_eq!(email.to, "buyer@example.com");
+        assert!(email.subject.contains("refund"));
+        assert!(email.text.contains("19.00 USD"), "the full amount: {}", email.text);
+        assert!(
+            email.text.contains("ends your entitlement"),
+            "the ending is stated: {}",
+            email.text
+        );
+        assert!(email.text.contains("stopped working"), "the key's fate is stated");
+        assert!(
+            email.text.contains("stop the next charge"),
+            "the subscription itself still bills in Stripe"
+        );
+        assert!(
+            email.text.contains("billing.stripe.com/p/login/"),
+            "the cancel route is the Customer Portal"
+        );
+        assert!(
+            !email.text.contains("does not change your API key"),
+            "the partial-refund wording does not survive into a full refund"
+        );
+        // A redelivery is a duplicate: no second email, no change.
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &refund, NOW + 240),
+            EventOutcome::Duplicate
+        );
+        assert_eq!(mailer.lifecycle().len(), 1, "the replay sent nothing");
+        let ent = store.entitlement("sub_RF6").expect("read").expect("entitlement");
+        assert_eq!(ent.status, STATUS_REVOKED);
+    }
+
+    #[test]
+    fn a_second_full_refund_event_on_an_ended_entitlement_moves_nothing() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        purchase_with_email(&store, &keys, &mailer, "sub_RF8", "cs_RF8", "buyer@example.com");
+        let invoice = invoice_event_for(
+            "evt_i_rf8",
+            "invoice.payment_succeeded",
+            "in_RF8",
+            "sub_RF8",
+            NOW + 60,
+        );
+        assert_eq!(apply(&store, &keys, &invoice, NOW + 60), EventOutcome::Applied);
+        let refunds = serde_json::json!([
+            { "id": "re_RF8", "amount": 1900, "created": NOW + 120, "status": "succeeded" },
+        ]);
+        let first = refund_event(
+            "evt_r1_rf8",
+            "ch_RF8",
+            Some("in_RF8"),
+            1900,
+            1900,
+            refunds.clone(),
+            NOW + 120,
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &first, NOW + 120),
+            EventOutcome::Applied
+        );
+        let ended = store.entitlement("sub_RF8").expect("read").expect("entitlement");
+        assert_eq!(ended.status, STATUS_REVOKED);
+        // A second, distinct charge.refunded event for the same
+        // charge (Stripe also fires these on refund updates): the
+        // entitlement already stands revoked by the first, so
+        // nothing moves — same key, same sequence, same reason —
+        // and the email restates the refund's ending truth.
+        let second = refund_event(
+            "evt_r2_rf8",
+            "ch_RF8",
+            Some("in_RF8"),
+            1900,
+            1900,
+            refunds,
+            NOW + 200,
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &second, NOW + 200),
+            EventOutcome::Applied
+        );
+        let ent = store.entitlement("sub_RF8").expect("read").expect("entitlement");
+        assert_eq!(ent, ended, "the second full refund changed no state at all");
+        let lifecycle = mailer.lifecycle();
+        assert_eq!(lifecycle.len(), 2, "one email per distinct refund event");
+        assert!(
+            lifecycle[1].text.contains("ends your entitlement"),
+            "the second email states the same ending: {}",
+            lifecycle[1].text
+        );
+        // And its replay is a duplicate under the event-id guard.
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &second, NOW + 260),
+            EventOutcome::Duplicate
+        );
+        assert_eq!(mailer.lifecycle().len(), 2, "the replay sent nothing");
     }
 
     #[test]
@@ -2579,6 +2849,129 @@ mod tests {
             email.text.contains("already stopped working"),
             "the key's fate is the ended subscription's truth: {}",
             email.text
+        );
+        // Even though this refund is a full one, it ended nothing:
+        // the deletion had already ended the entitlement, so no
+        // full-refund reason is recorded over it.
+        let ent = store.entitlement("sub_RF2").expect("read").expect("entitlement");
+        assert_eq!(ent.status, STATUS_REVOKED);
+        assert_eq!(
+            ent.revoke_reason, None,
+            "the refund did not end this entitlement — the deletion did"
+        );
+    }
+
+    #[test]
+    fn a_payment_after_a_full_refund_ending_reactivates_with_a_replacement_key() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        purchase_with_email(&store, &keys, &mailer, "sub_RF7", "cs_RF7", "buyer@example.com");
+        let (old_key_id, old_secret) =
+            claim_key(&store, &policy(), "sub_RF7", NOW + 45).expect("claim");
+        assert!(keys.verify(&old_key_id, &old_secret).is_ok());
+        let invoice = invoice_event_for(
+            "evt_i_rf7",
+            "invoice.payment_succeeded",
+            "in_RF7",
+            "sub_RF7",
+            NOW + 60,
+        );
+        assert_eq!(apply(&store, &keys, &invoice, NOW + 60), EventOutcome::Applied);
+        let refund = refund_event(
+            "evt_r_rf7",
+            "ch_RF7",
+            Some("in_RF7"),
+            1900,
+            1900,
+            serde_json::json!([
+                { "id": "re_RF7", "amount": 1900, "created": NOW + 120, "status": "succeeded" },
+            ]),
+            NOW + 120,
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &refund, NOW + 120),
+            EventOutcome::Applied
+        );
+        let ent = store.entitlement("sub_RF7").expect("read").expect("entitlement");
+        assert_eq!(ent.status, STATUS_REVOKED, "the full refund ended it");
+        assert!(keys.verify(&old_key_id, &old_secret).is_err());
+        // The renewal edge (Wright's call under the ruling): the
+        // subscription was never cancelled in Stripe, the buyer is
+        // charged again, and money taken is service owed — the
+        // payment re-activates the entitlement.
+        let renewal = invoice_event_for(
+            "evt_i2_rf7",
+            "invoice.payment_succeeded",
+            "in_RF7B",
+            "sub_RF7",
+            NOW + 300,
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &renewal, NOW + 300),
+            EventOutcome::Applied
+        );
+        let ent = store.entitlement("sub_RF7").expect("read").expect("entitlement");
+        assert_eq!(ent.status, STATUS_ACTIVE, "the payment re-activated the entitlement");
+        assert_eq!(ent.key_id, "sub_RF7~2", "the revoked key is replaced, never resurrected");
+        assert_eq!(ent.key_seq, 2);
+        assert_eq!(
+            ent.revoke_reason.as_deref(),
+            Some(REVOKE_REASON_FULL_REFUND),
+            "the refund-ended history stays on the row"
+        );
+        // The old secret stays dead; the replacement claims and
+        // verifies, and was emailed as its own issuance.
+        assert!(keys.verify(&old_key_id, &old_secret).is_err(), "the old key stays revoked");
+        let (key_id, new_secret) =
+            claim_key(&store, &policy(), "sub_RF7", NOW + 330).expect("claim replacement");
+        assert_eq!(key_id, "sub_RF7~2");
+        assert!(keys.verify(&key_id, &new_secret).is_ok(), "the replacement key works");
+        assert_eq!(
+            mailer.sent().len(),
+            2,
+            "the purchase key email and the replacement key email"
+        );
+    }
+
+    #[test]
+    fn a_payment_does_not_reactivate_an_entitlement_ended_any_other_way() {
+        let (store, keys) = stores();
+        let mailer = RecordingMailer::new();
+        purchase_with_email(&store, &keys, &mailer, "sub_RF9", "cs_RF9", "buyer@example.com");
+        let deleted = subscription_event(
+            "evt_d_rf9",
+            "customer.subscription.deleted",
+            "sub_RF9",
+            NOW + 90,
+            serde_json::json!({ "status": "canceled" }),
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &deleted, NOW + 90),
+            EventOutcome::Applied
+        );
+        // A payment arriving after a deletion ends nothing and
+        // undoes nothing: only a full-refund ending is a payment
+        // away from service, because only it left the subscription
+        // alive in Stripe.
+        let payment = invoice_event_for(
+            "evt_i_rf9",
+            "invoice.payment_succeeded",
+            "in_RF9",
+            "sub_RF9",
+            NOW + 180,
+        );
+        assert_eq!(
+            apply_with_mailer(&store, &keys, &mailer, &payment, NOW + 180),
+            EventOutcome::Applied
+        );
+        let ent = store.entitlement("sub_RF9").expect("read").expect("entitlement");
+        assert_eq!(ent.status, STATUS_REVOKED, "a deletion is not undone by a payment");
+        assert_eq!(ent.key_id, "sub_RF9", "no replacement key was issued");
+        assert_eq!(ent.key_seq, 1);
+        assert_eq!(
+            mailer.sent().len(),
+            1,
+            "only the purchase key email was ever sent"
         );
     }
 

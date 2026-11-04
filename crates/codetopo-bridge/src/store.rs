@@ -62,6 +62,17 @@ pub const STATUS_CANCEL_SCHEDULED: &str = "cancel_scheduled";
 /// restore event replaces the key.
 pub const STATUS_REVOKED: &str = "revoked";
 
+/// Why an entitlement came to be revoked: a full refund ended it
+/// (the Director's ruling, 2026-11-03 — a full refund also ends
+/// the entitlement). The reason is recorded on the row because a
+/// later payment must be able to undo exactly this ending and no
+/// other (the renewal edge in [`crate::service`]): every
+/// revocation writes it — `full_refund` for a full refund, `None`
+/// for every other cause — and it is acted on only while the
+/// status is [`STATUS_REVOKED`]. A reactivation does not clear
+/// it: it stays as the record of the most recent revocation.
+pub const REVOKE_REASON_FULL_REFUND: &str = "full_refund";
+
 /// One subscription's entitlement row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entitlement {
@@ -85,6 +96,11 @@ pub struct Entitlement {
     /// Unix seconds when a pending revocation falls due, if one is
     /// pending (`past_due` grace end or cancellation effective end).
     pub revoke_at: Option<i64>,
+    /// Why the entitlement most recently came to be revoked, when
+    /// the cause is one the machine must remember (see
+    /// [`REVOKE_REASON_FULL_REFUND`]); `None` for every other
+    /// revocation, and on rows that have never been revoked.
+    pub revoke_reason: Option<String>,
     /// `occurred_at` of the last event applied to this subscription.
     pub last_event_at: i64,
 }
@@ -245,6 +261,34 @@ impl BridgeStore {
             )
             .map_err(|err| BridgeError::Store(format!("cannot migrate entitlements: {err}")))?;
         }
+        // Migration for stores created before the full-refund
+        // ruling: `bridge_entitlements` gains the revocation reason
+        // a later payment may need to undo. Pre-ruling rows were
+        // revoked by other causes (or never), so NULL is the truth.
+        let has_revoke_reason = {
+            let mut statement = conn
+                .prepare("PRAGMA table_info(bridge_entitlements)")
+                .map_err(|err| BridgeError::Store(format!("cannot inspect entitlements: {err}")))?;
+            let columns = statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|err| BridgeError::Store(format!("cannot inspect entitlements: {err}")))?;
+            let mut found = false;
+            for column in columns {
+                let column = column
+                    .map_err(|err| BridgeError::Store(format!("cannot inspect entitlements: {err}")))?;
+                if column == "revoke_reason" {
+                    found = true;
+                }
+            }
+            found
+        };
+        if !has_revoke_reason {
+            conn.execute(
+                "ALTER TABLE bridge_entitlements ADD COLUMN revoke_reason TEXT",
+                [],
+            )
+            .map_err(|err| BridgeError::Store(format!("cannot migrate entitlements: {err}")))?;
+        }
         Ok(BridgeStore {
             conn: Mutex::new(conn),
         })
@@ -293,7 +337,8 @@ impl BridgeStore {
     pub fn entitlement(&self, subscription_id: &str) -> Result<Option<Entitlement>, BridgeError> {
         let conn = self.lock()?;
         conn.query_row(
-            "SELECT subscription_id, key_id, key_seq, plan, status, revoke_at, last_event_at
+            "SELECT subscription_id, key_id, key_seq, plan, status, revoke_at, last_event_at,
+                    revoke_reason
              FROM bridge_entitlements WHERE subscription_id = ?1",
             rusqlite::params![subscription_id],
             |row| {
@@ -305,6 +350,7 @@ impl BridgeStore {
                     status: row.get(4)?,
                     revoke_at: row.get(5)?,
                     last_event_at: row.get(6)?,
+                    revoke_reason: row.get(7)?,
                 })
             },
         )
@@ -317,8 +363,9 @@ impl BridgeStore {
         let conn = self.lock()?;
         conn.execute(
             "INSERT INTO bridge_entitlements
-                 (subscription_id, key_id, key_seq, plan, status, revoke_at, last_event_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 (subscription_id, key_id, key_seq, plan, status, revoke_at, last_event_at, updated_at,
+                  revoke_reason)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(subscription_id) DO UPDATE SET
                  key_id = excluded.key_id,
                  key_seq = excluded.key_seq,
@@ -326,7 +373,8 @@ impl BridgeStore {
                  status = excluded.status,
                  revoke_at = excluded.revoke_at,
                  last_event_at = excluded.last_event_at,
-                 updated_at = excluded.updated_at",
+                 updated_at = excluded.updated_at,
+                 revoke_reason = excluded.revoke_reason",
             rusqlite::params![
                 ent.subscription_id,
                 ent.key_id,
@@ -335,7 +383,8 @@ impl BridgeStore {
                 ent.status,
                 ent.revoke_at,
                 ent.last_event_at,
-                now
+                now,
+                ent.revoke_reason
             ],
         )
         .map_err(|err| BridgeError::Store(format!("cannot save entitlement: {err}")))?;
@@ -347,7 +396,8 @@ impl BridgeStore {
         let conn = self.lock()?;
         let mut statement = conn
             .prepare(
-                "SELECT subscription_id, key_id, key_seq, plan, status, revoke_at, last_event_at
+                "SELECT subscription_id, key_id, key_seq, plan, status, revoke_at, last_event_at,
+                        revoke_reason
                  FROM bridge_entitlements
                  WHERE revoke_at IS NOT NULL AND revoke_at <= ?1
                    AND status IN (?2, ?3)
@@ -364,6 +414,7 @@ impl BridgeStore {
                     status: row.get(4)?,
                     revoke_at: row.get(5)?,
                     last_event_at: row.get(6)?,
+                    revoke_reason: row.get(7)?,
                 })
             })
             .map_err(|err| BridgeError::Store(format!("cannot read entitlements: {err}")))?;
@@ -755,6 +806,7 @@ mod tests {
             plan: "hosted".to_string(),
             status: status.to_string(),
             revoke_at,
+            revoke_reason: None,
             last_event_at: 100,
         }
     }
@@ -776,11 +828,23 @@ mod tests {
         assert_eq!(read.status, STATUS_PAST_DUE);
         assert_eq!(read.plan, "hosted", "the tier stamp round-trips");
         assert_eq!(read.revoke_at, Some(500));
+        assert_eq!(read.revoke_reason, None, "no revocation has a reason yet");
         assert!(store.due_revocations(499).expect("due").is_empty());
         assert_eq!(store.due_revocations(500).expect("due").len(), 1);
         // A revoked entitlement is not "due" — it is done.
         store.save_entitlement(&ent(STATUS_REVOKED, Some(400)), 100).expect("save");
         assert!(store.due_revocations(600).expect("due").is_empty());
+        // The revocation reason round-trips: it is the record a
+        // later payment reads to undo a full-refund ending.
+        let mut ended = ent(STATUS_REVOKED, None);
+        ended.revoke_reason = Some(REVOKE_REASON_FULL_REFUND.to_string());
+        store.save_entitlement(&ended, 200).expect("save");
+        let read = store.entitlement("sub_1").expect("read").expect("present");
+        assert_eq!(
+            read.revoke_reason.as_deref(),
+            Some(REVOKE_REASON_FULL_REFUND),
+            "the full-refund reason round-trips"
+        );
     }
 
     #[test]
