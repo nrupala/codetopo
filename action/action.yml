@@ -1,0 +1,137 @@
+# Copyright (C) 2026 2351485 ALBERTA INC.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: codetopo PR impact
+description: >
+  Comment on each pull request with its structural change impact: symbols
+  and call/import edges added, removed or changed, and each touched
+  symbol's blast radius before and after. Free for public repositories.
+author: AIMLDS (2351485 ALBERTA INC.)
+branding:
+  icon: git-pull-request
+  color: green
+
+inputs:
+  github-token:
+    description: Token used to post or update the PR comment (needs pull-requests:write).
+    default: ${{ github.token }}
+  max-rows:
+    description: Maximum touched symbols listed in the comment (worst blast-radius change first).
+    default: "10"
+  fail-above:
+    description: >
+      Guardrail. Fail the check when any touched symbol's blast radius after
+      the change exceeds this number. 0 turns the guardrail off.
+    default: "0"
+  codetopo-key:
+    description: >
+      codetopo Team key (key_id:secret). Required on PRIVATE repositories;
+      public repositories need none.
+    default: ""
+  codetopo-ref:
+    description: Git ref of codetopo to install the CLI from.
+    default: main
+
+runs:
+  using: composite
+  steps:
+    - name: Check plan (public repos are free; private repos need a Team key)
+      id: plan
+      shell: bash
+      env:
+        PRIVATE: ${{ github.event.repository.private }}
+        KEY: ${{ inputs.codetopo-key }}
+      run: |
+        set -euo pipefail
+        if [ "$PRIVATE" != "true" ]; then echo "allowed=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+        if [ -z "$KEY" ]; then echo "allowed=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+        code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" \
+          https://codetopo-api.aimlds.org/v1/entitlement/pr-impact || echo 000)
+        if [ "$code" = "200" ]; then echo "allowed=true" >> "$GITHUB_OUTPUT"; else echo "allowed=false" >> "$GITHUB_OUTPUT"; fi
+
+    - name: Explain plan requirement
+      if: steps.plan.outputs.allowed != 'true'
+      shell: bash
+      run: |
+        echo "::notice::codetopo PR impact on private repositories is part of codetopo Team (US\$19 per repo per month): https://github.com/nrupala/codetopo#hosted-api-codetopo-hosted. Skipping."
+
+    - name: Cache codetopo CLI
+      if: steps.plan.outputs.allowed == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.cargo/bin/codetopo
+        key: codetopo-cli-${{ runner.os }}-${{ inputs.codetopo-ref }}
+
+    - name: Install codetopo CLI
+      if: steps.plan.outputs.allowed == 'true'
+      shell: bash
+      env:
+        REF: ${{ inputs.codetopo-ref }}
+      run: |
+        set -euo pipefail
+        if ! command -v codetopo >/dev/null 2>&1; then
+          cargo install --locked --git https://github.com/nrupala/codetopo --branch "$REF" codetopo-cli
+        fi
+        codetopo --version || true
+
+    - name: Index base and head, diff
+      if: steps.plan.outputs.allowed == 'true'
+      shell: bash
+      env:
+        BASE: ${{ github.event.pull_request.base.sha }}
+        HEAD: ${{ github.event.pull_request.head.sha }}
+      run: |
+        set -euo pipefail
+        work="$RUNNER_TEMP/codetopo"
+        mkdir -p "$work"
+        git fetch --no-tags --depth=1 origin "$BASE"
+        git worktree add --detach "$work/base" "$BASE"
+        codetopo index "$work/base" --db "$work/base.db" --snapshot "$work/base.json"
+        codetopo index "$GITHUB_WORKSPACE" --db "$work/head.db" --snapshot "$work/head.json"
+        codetopo diff --before-snapshot "$work/base.json" --after-snapshot "$work/head.json" --json > "$work/diff.json"
+        git worktree remove --force "$work/base"
+        echo "HEAD_SHA=$HEAD" >> "$GITHUB_ENV"
+
+    - name: Render comment
+      if: steps.plan.outputs.allowed == 'true'
+      id: render
+      shell: bash
+      env:
+        MAX_ROWS: ${{ inputs.max-rows }}
+        FAIL_ABOVE: ${{ inputs.fail-above }}
+      run: |
+        set +e
+        python3 "$GITHUB_ACTION_PATH/render_comment.py" "$RUNNER_TEMP/codetopo/diff.json" \
+          --max-rows "$MAX_ROWS" --fail-above "$FAIL_ABOVE" --sha "$HEAD_SHA" > "$RUNNER_TEMP/codetopo/comment.md"
+        echo "guardrail_exit=$?" >> "$GITHUB_OUTPUT"
+
+    - name: Post or update the PR comment
+      if: steps.plan.outputs.allowed == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        body="$RUNNER_TEMP/codetopo/comment.md"
+        existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+          --jq '.[] | select(.body | startswith("<!-- codetopo-pr-impact -->")) | .id' | head -n1)
+        if [ -n "$existing" ]; then
+          gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@"$body" >/dev/null
+        else
+          gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@"$body" >/dev/null
+        fi
+
+    - name: Upload full diff
+      if: steps.plan.outputs.allowed == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: codetopo-pr-impact
+        path: ${{ runner.temp }}/codetopo/diff.json
+
+    - name: Guardrail verdict
+      if: steps.plan.outputs.allowed == 'true' && steps.render.outputs.guardrail_exit == '2'
+      shell: bash
+      run: |
+        echo "::error::codetopo guardrail: a touched symbol's blast radius exceeds fail-above=${{ inputs.fail-above }}"
+        exit 1
