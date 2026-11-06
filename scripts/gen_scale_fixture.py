@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Generate the deterministic codetopo scale-gate fixture.
 
 Usage: gen_scale_fixture.py <output-dir> [file-count]
