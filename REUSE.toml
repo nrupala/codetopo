@@ -1,0 +1,27 @@
+version = 1
+
+# Test fixtures and generated snapshot data — part of the AGPL test suites;
+# declared in bulk because generated/golden files should not be hand-edited.
+[[annotations]]
+path = [
+    "crates/codetopo-core/tests/fixtures/**",
+    "crates/codetopo-extract/tests/fixture-py/**",
+    "space-static/data/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 2351485 ALBERTA INC."
+SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+# Project artwork (logo, demo graphic, icon).
+[[annotations]]
+path = "assets/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 2351485 ALBERTA INC."
+SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+# Generated lockfile — produced from the workspace Cargo.toml manifests.
+[[annotations]]
+path = "Cargo.lock"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 2351485 ALBERTA INC."
+SPDX-License-Identifier = "AGPL-3.0-or-later"
