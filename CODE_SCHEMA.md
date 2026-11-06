@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # CODE_SCHEMA — codetopo typed code-entity ontology
 
 **Version:** 1.2 (2026-11-02)
