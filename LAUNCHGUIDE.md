@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # codetopo — Launch Guide
 
 Structured metadata for MCP directories and marketplace submissions. Fields below mirror the published Official MCP Registry record for `io.github.nrupala/codetopo` and the project README.
