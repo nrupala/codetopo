@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Build-context hygiene for the assembled Space repository (the whole
 # codetopo tree with space/ overlaid at the root — see hf-sync.yml).
 # The Dockerfile also prunes target/ and .git from the runtime corpus;
