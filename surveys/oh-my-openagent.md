@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # code-yeongyu/oh-my-openagent (OmO) — survey for agent-optimized code-viz library
 
 Repo: https://github.com/code-yeongyu/oh-my-openagent · ~69.5k stars · default branch `dev` · TUI coding-agent harness ("Just type `mass ulw` — now you are the master of graph engineering")
