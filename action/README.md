@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # codetopo PR impact (GitHub Action)
 
 Posts one comment on each pull request showing its **structural change impact**:
