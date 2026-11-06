@@ -16,14 +16,14 @@
 #
 # Quick start: see docker-compose.yml.
 
-FROM rust:1-bookworm AS build
+FROM rust:1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS build
 WORKDIR /src
 COPY . .
 RUN cargo build --release --locked \
     && strip target/release/codetopo target/release/codetopo-server \
              target/release/codetopo-mcp target/release/codetopo-acp
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 RUN useradd --system --home-dir /data --shell /usr/sbin/nologin codetopo \
     && mkdir -p /data && chown codetopo:codetopo /data
 COPY --from=build /src/target/release/codetopo /usr/local/bin/codetopo

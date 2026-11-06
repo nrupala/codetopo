@@ -17,7 +17,7 @@
 # endpoints through a small front door. The key never leaves the container.
 
 # ---- Stage 1: build the API server and prepare the pristine demo corpus ----
-FROM rust:1-bookworm AS builder
+FROM rust:1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS builder
 WORKDIR /build
 COPY . .
 # Only the server binary is needed at runtime; the CLI/MCP/ACP binaries are
@@ -30,7 +30,7 @@ RUN mkdir -p /srv/codetopo-src \
  && tar --exclude='./target' --exclude='./.git' -cf - . | tar -xf - -C /srv/codetopo-src
 
 # ---- Stage 2: runtime ----
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 # Spaces run the container as UID 1000; create that user up front so file
 # ownership is right without recursive chowns.
 RUN useradd -m -u 1000 user \

@@ -39,8 +39,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  actions: write # dispatch hf-sync after the data commit (see header)
+  contents: read
 
 concurrency:
   group: space-recapture
@@ -48,18 +47,21 @@ concurrency:
 
 jobs:
   recapture:
+    permissions:
+      contents: write # commits the refreshed data bundle (see header)
+      actions: write # dispatch hf-sync after the data commit (see header)
     if: "${{ !startsWith(github.event.head_commit.message, 'data(space): recapture bundle') }}"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Full history: the recorded source_commit is the newest
           # non-recapture commit, found by walking the log.
           fetch-depth: 0
           ref: main
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Build codetopo-server from this tree
         run: cargo build --release --locked -p codetopo-server

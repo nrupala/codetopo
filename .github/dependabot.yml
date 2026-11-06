@@ -1,0 +1,13 @@
+# Dependency update tool (OpenSSF Scorecard DependencyUpdateTool).
+# Cargo covers the workspace crates; github-actions covers the
+# hash-pinned workflows (Dependabot proposes the pin bumps).
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

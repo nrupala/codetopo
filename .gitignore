@@ -6,3 +6,7 @@ target/
 dist/
 .env*
 !.env.example
+
+# Python bytecode caches (never commit; Scorecard BinaryArtifacts)
+__pycache__/
+*.pyc
