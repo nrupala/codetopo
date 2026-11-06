@@ -13,6 +13,7 @@ repository into a queryable code graph — symbols, calls, references, and
 structure — with JSON answers an AI coding agent can act on directly.
 
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15421/badge)](https://www.bestpractices.dev/projects/15421)
+[![REUSE status](https://api.reuse.software/badge/github.com/nrupala/codetopo)](https://api.reuse.software/info/github.com/nrupala/codetopo)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/nrupala/codetopo/badge)](https://scorecard.dev/viewer/?uri=github.com/nrupala/codetopo)
 
 codetopo holds the [OpenSSF Best Practices Passing badge](https://www.bestpractices.dev/en/projects/15421) — 100% of 67 criteria.
