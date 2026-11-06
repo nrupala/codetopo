@@ -1,4 +1,8 @@
 ---
+# SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 name: Feature request
 about: Suggest an idea or improvement
 title: ''
