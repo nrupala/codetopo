@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # codetopo MCP Server — Installation Guide for AI Agents
 
 This file is written for AI coding agents (Cline, Cursor, Claude Code, and
