@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # Stars Scan — Additional code-viz-adjacent repos in nrupala's stars
 
 **Date:** 2026-09-26
