@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 # Dependency update tool (OpenSSF Scorecard DependencyUpdateTool).
 # Cargo covers the workspace crates; github-actions covers the
 # hash-pinned workflows (Dependabot proposes the pin bumps).
