@@ -169,7 +169,7 @@ the same snapshot feeds both queries and renders.
 | felicityblueish/developer-roadmap | **Custom restrictive** ⚠️ | Clean-room only — NO code/content reuse | Model–renderer split via `renderer` discriminator; per-node content addressing (stable id → docs); tier-as-data (never stroke-dash hacks) |
 | ByteByteGoHq/system-design-101 | **CC BY-NC-ND 4.0** ⚠️ | Study-only — no derivatives | Human visual grammar for architecture maps (what the byproduct should *look* like) |
 
-Attribution formula on everything we ship: "Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join) — join Muse, then redeem code **101EEK** in Settings within 48 hours of joining and we both earn tokens", plus license-preservation notices (Apache-2.0 `LICENSE`/`NOTICE`,
+Attribution formula on everything we ship: "Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join).
 MIT headers) on redistributed portions. An `ATTRIBUTION.md` ledger tracks every
 incorporation: source, license, what was taken, commit where it landed.
 
