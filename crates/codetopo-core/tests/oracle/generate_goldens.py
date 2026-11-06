@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Oracle golden generator for the Rust analytics engine (SPEC §6).
 
 Reads a fixture graph (snapshot JSON) from ../fixtures/oracle/, builds
