@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # Survey: felicityblueish/developer-roadmap (fork of kamranahmedse/developer-roadmap — roadmap.sh)
 
 Surveyed 2026-09-26 via GitHub pages/READMEs/docs + third-party architecture analyses (openSkilTree analysis, DeepWiki, fork AGENTS.md). No live-browser interaction.
