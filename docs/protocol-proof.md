@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # Protocol proof — MCP and ACP conformance evidence
 
 Recorded 2026-10-10 for the 0.2.7 protocol-proof workstream. The
