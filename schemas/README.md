@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # codetopo schemas
 
 Machine-readable contracts for the two agent-facing surfaces of `codetopo`,
