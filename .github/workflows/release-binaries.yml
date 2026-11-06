@@ -57,6 +57,9 @@ jobs:
     needs: preflight
     permissions:
       contents: write # this job uploads the packaged binaries to the release
+      # Build-provenance attestation (SLSA L2 via Sigstore) for release artifacts
+      id-token: write
+      attestations: write
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -129,6 +132,16 @@ jobs:
             Remove-Item "dist/$bin.exe"
           }
 
+      - name: Attest build provenance (unix)
+        if: runner.os != 'Windows'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'codetopo-*-${{ matrix.platform }}.tar.gz'
+      - name: Attest build provenance (windows)
+        if: runner.os == 'Windows'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'codetopo-*-${{ matrix.platform }}.zip'
       - name: Upload to the release
         shell: bash
         env:
