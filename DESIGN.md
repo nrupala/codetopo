@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # Agent-Optimized Code Visualization Library — Design
 
 **Name:** `codetopo` (decided 2026-09-26; see §0)
@@ -169,7 +175,7 @@ the same snapshot feeds both queries and renders.
 | felicityblueish/developer-roadmap | **Custom restrictive** ⚠️ | Clean-room only — NO code/content reuse | Model–renderer split via `renderer` discriminator; per-node content addressing (stable id → docs); tier-as-data (never stroke-dash hacks) |
 | ByteByteGoHq/system-design-101 | **CC BY-NC-ND 4.0** ⚠️ | Study-only — no derivatives | Human visual grammar for architecture maps (what the byproduct should *look* like) |
 
-Attribution formula on everything we ship: "Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join).
+Attribution formula on everything we ship: "Owned by [Nrupal Akolkar](https://nrupalakolkar.com) · Built with [Muse by Meta](https://muse.ai/join) — join Muse, then redeem code **101EEK** in Settings within 48 hours of joining and we both earn tokens", plus license-preservation notices (Apache-2.0 `LICENSE`/`NOTICE`,
 MIT headers) on redistributed portions. An `ATTRIBUTION.md` ledger tracks every
 incorporation: source, license, what was taken, commit where it landed.
 
