@@ -124,12 +124,12 @@ jobs:
 
       - name: Attest build provenance (unix)
         if: runner.os != 'Windows'
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: 'codetopo-*-${{ matrix.platform }}.tar.gz'
       - name: Attest build provenance (windows)
         if: runner.os == 'Windows'
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: 'codetopo-*-${{ matrix.platform }}.zip'
       - name: Upload to the release
