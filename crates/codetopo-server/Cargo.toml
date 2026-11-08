@@ -32,7 +32,7 @@ subtle = "2"
 tar = "0.4"
 thiserror = "2"
 tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
-tower = { version = "0.4", features = ["util"] }
+tower = { version = "0.5", features = ["util"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 # Ingest reads archives entry by entry and never bulk-extracts; only the
@@ -43,5 +43,5 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 flate2 = "1"
 tar = "0.4"
 tempfile = "3"
-tower = { version = "0.4", features = ["util"] }
+tower = { version = "0.5", features = ["util"] }
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
