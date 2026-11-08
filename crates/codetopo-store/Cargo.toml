@@ -16,7 +16,7 @@ categories = ["development-tools", "database-implementations"]
 
 [dependencies]
 codetopo-core = { version = "0.9.0", path = "../codetopo-core" }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 sha2 = "0.10"
 hmac = "0.12"
 hex = "0.4"

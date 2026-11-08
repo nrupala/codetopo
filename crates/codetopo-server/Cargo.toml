@@ -24,7 +24,7 @@ codetopo-core = { version = "0.9.0", path = "../codetopo-core" }
 codetopo-store = { version = "0.9.0", path = "../codetopo-store" }
 axum = "0.7"
 flate2 = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 serde_json = { version = "1", features = ["float_roundtrip"] }
