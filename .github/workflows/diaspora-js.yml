@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: diaspora-js
+
+# The JavaScript surface's own gate: build the napi addon and run the
+# known-answer conformance battery (F1–F5, dossier §2.3) on every PR
+# that touches the crate. A surface failing conformance is not done,
+# whatever its unit tests say.
+
+on:
+  pull_request:
+    paths:
+      - "crates/codetopo-napi/**"
+      - ".github/workflows/diaspora-js.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/codetopo-napi/**"
+      - ".github/workflows/diaspora-js.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Install the napi-rs CLI
+        working-directory: crates/codetopo-napi
+        run: npm install --ignore-scripts
+      - name: Build the addon and run the conformance battery (F1–F5)
+        working-directory: crates/codetopo-napi
+        run: npm test
