@@ -1,0 +1,40 @@
+# Copyright (C) 2026 2351485 ALBERTA INC.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: diaspora-cpp
+
+# The C/C++ face's own gate: build the codetopo-c cdylib, then
+# prove the shipped C header standalone, the C consumer smoke
+# program, and the C++ conformance battery (the F1-F5 known-answer
+# fixtures through the C++ wrapper) on every PR that touches the
+# face or the foundation it stands on. The workspace-wide ci.yml
+# still runs the full Rust test + clippy suite.
+
+on:
+  pull_request:
+    paths:
+      - "surfaces/cpp/**"
+      - "crates/codetopo-c/**"
+      - ".github/workflows/diaspora-cpp.yml"
+  push:
+    branches: [main]
+    paths:
+      - "surfaces/cpp/**"
+      - "crates/codetopo-c/**"
+      - ".github/workflows/diaspora-cpp.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cpp-face:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Build the codetopo-c cdylib (release)
+        run: cargo build -p codetopo-c --release
+      - name: Compile the face with -Werror and run consumer + conformance
+        env:
+          CODETOPO_C_LIB: ${{ github.workspace }}/target/release
+        run: sh surfaces/cpp/run-tests.sh "${{ runner.temp }}/codetopo-cpp-work"
