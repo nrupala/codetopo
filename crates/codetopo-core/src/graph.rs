@@ -350,7 +350,16 @@ impl GraphBuilder {
     /// 1. The target verbatim, when it is a module id.
     /// 2. The longest module prefix of the target — `use a::b::Item`
     ///    links to module `a::b`, not to an external stub.
-    /// 3. A workspace-package target: the first segment names a package
+    /// 3. A bare-name sibling: a single-segment target that names a
+    ///    module in the importing module's own directory resolves to
+    ///    that sibling module (Python `import b` written beside the
+    ///    importing file; flat layouts generally). Extractors classify
+    ///    a bare name by package name alone, so `import b` inside
+    ///    package `repo` arrives as `external::b` even when `repo::b`
+    ///    is in this graph — the builder is the first point where
+    ///    every module is known. Only a bare name qualifies; a
+    ///    qualified path keeps the package reading at (4).
+    /// 4. A workspace-package target: the first segment names a package
     ///    present in this graph (hyphen/underscore-insensitive — Cargo
     ///    names use `-`, Rust paths use `_`; `@scope/name` counts as
     ///    one name). A deeper path retargets through the real package
@@ -358,7 +367,7 @@ impl GraphBuilder {
     ///    through the imported bindings to the module that defines one
     ///    of them in that package, else the package's root module,
     ///    else the package node itself.
-    /// 4. Otherwise an `external::` stub id (the caller materializes
+    /// 5. Otherwise an `external::` stub id (the caller materializes
     ///    it). An extractor's pre-applied `external::` marker means
     ///    "unresolved", never a doubled prefix: `external::std`
     ///    resolves to the stub `external::std`, and a workspace package
@@ -372,6 +381,15 @@ impl GraphBuilder {
         let path = stripped.replace('/', "::");
         if let Some(m) = self.longest_module_prefix(&path) {
             return m;
+        }
+        // (3) the bare-name sibling, per the doc list above.
+        if !path.contains("::") {
+            if let Some((parent, _)) = imp.from_module_id.rsplit_once("::") {
+                let candidate = format!("{parent}::{path}");
+                if self.is_module(&candidate) {
+                    return candidate;
+                }
+            }
         }
         // Split off the would-be package name (`@scope/name` spans two
         // segments); the remainder is "" or starts with "::".
@@ -427,7 +445,8 @@ impl GraphBuilder {
     ///
     /// - Imports: `to_module_id` resolves via
     ///   [`GraphBuilder::import_target`] — an exact module, the longest
-    ///   module prefix of the target path, or a workspace package
+    ///   module prefix of the target path, a bare-name sibling module
+    ///   in the importing module's own directory, or a workspace package
     ///   present in the graph; otherwise an `external::` stub is
     ///   created — no diagnostic (external dependencies are normal).
     ///   Duplicate (from, to) imports merge: bindings union (sorted),
@@ -589,12 +608,17 @@ impl GraphBuilder {
 
     /// Resolve a call/ref name to a node id:
     /// 1. exact symbol-id match;
-    /// 2. `::{name}` suffix match — deterministic ranking: same module first,
+    /// 2. qualified-name match — a name that carries its module as a
+    ///    qualifier (`b.work` as Python records it, `net::dial` as a
+    ///    Rust path) resolves to a candidate whose hosting module the
+    ///    qualifier names, ahead of every suffix tier: the caller
+    ///    named the module, so no heuristic may overrule it;
+    /// 3. `::{name}` suffix match — deterministic ranking: same module first,
     ///    then same package, then the rest; within each tier symbol kinds
     ///    (Function, Method, Class, Interface, Variable) beat container kinds
     ///    (Module, File, Package), which beat External/Doc nodes; the
     ///    lexicographic id breaks any remaining tie;
-    /// 3. `None` (caller decides: stub + diagnostic, or silent).
+    /// 4. `None` (caller decides: stub + diagnostic, or silent).
     fn resolve(&self, from_id: &str, name: &str) -> Option<String> {
         if self.nodes.contains_key(name) {
             return Some(name.to_string());
@@ -618,6 +642,15 @@ impl GraphBuilder {
                 }
                 lookup = &substituted;
             }
+        }
+        // Step 2 (see the doc list): the qualified-name match. Before
+        // this step existed, a dot-qualified name was looked up whole
+        // against an index keyed by last segment, matched nothing, and
+        // landed on an external stub even when the named module and
+        // symbol were both in the graph (Python `b.work()` beside
+        // `b.py`).
+        if let Some(resolved) = self.resolve_qualified(lookup) {
+            return Some(resolved);
         }
         if lookup.contains("::") {
             lookup = lookup.rsplit("::").next().unwrap_or(lookup);
@@ -650,6 +683,40 @@ impl GraphBuilder {
             t.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(b.0)));
             t.first().map(|(id, _)| (*id).clone())
         })
+    }
+
+    /// The qualified-name step of [`GraphBuilder::resolve`]: split a
+    /// qualified callee name into its module qualifier and final
+    /// segment (`b.work` → (`b`, `work`); `a::b::work` → (`a::b`,
+    /// `work`); mixed separators normalize to `::`), then choose
+    /// among the symbols carrying the final name whose hosting module
+    /// the qualifier names — the module id equals the qualifier path
+    /// or ends with it as whole trailing segments. `None` when the
+    /// name is bare or no candidate's module matches, leaving the
+    /// suffix tiers to decide.
+    fn resolve_qualified(&self, name: &str) -> Option<String> {
+        let (qualifier, last) = if name.contains("::") {
+            let (q, l) = name.rsplit_once("::")?;
+            (q.replace('.', "::"), l)
+        } else if name.contains('.') {
+            let (q, l) = name.rsplit_once('.')?;
+            (q.replace('.', "::"), l)
+        } else {
+            return None;
+        };
+        let candidates = self.name_index.get(last)?;
+        let suffix = format!("::{qualifier}");
+        let mut hits: Vec<(&String, u8)> = candidates
+            .iter()
+            .filter(|id| {
+                self.symbol_module
+                    .get(*id)
+                    .is_some_and(|m| m == &qualifier || m.ends_with(&suffix))
+            })
+            .map(|id| (id, Self::node_kind_rank(self.nodes[id].kind)))
+            .collect();
+        hits.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(b.0)));
+        hits.first().map(|(id, _)| (*id).clone())
     }
 
     /// Rank of a node kind for suffix-match tie-breaking in
@@ -1833,5 +1900,99 @@ mod tests {
         assert!(g.search_symbols("", 20).is_empty(), "empty query finds nothing");
         assert!(g.search_symbols("parse", 0).is_empty(), "zero limit finds nothing");
         assert!(g.search_symbols("zzz", 20).is_empty(), "no match, no results");
+    }
+
+    /// 0.9.0 T1 (Aarona's fixture, reduced to the builder): the Python
+    /// extractor emits `import b` inside package `repo` as the stub
+    /// candidate `external::b`, and the call as the written name
+    /// `b.work`. Both must land on the real nodes — `repo::b` and
+    /// `repo::b::work` — with no external stub and no UnresolvedCall:
+    /// the builder is the first point where every module is known, so
+    /// a bare name naming a sibling module resolves as a sibling, and
+    /// a dot-qualified call resolves through its module qualifier.
+    #[test]
+    fn bare_sibling_import_and_dotted_call_resolve_internally() {
+        let mut b = GraphBuilder::new();
+        b.add_file(file(
+            "repo",
+            "a.py",
+            "repo::a",
+            vec![sym("repo::a::run", NodeKind::Function, 3)],
+            vec![RawImport {
+                from_module_id: "repo::a".to_string(),
+                to_module_id: "external::b".to_string(),
+                bindings: vec![],
+                line: 1,
+            }],
+            vec![call("repo::a::run", "b.work", 4)],
+        ));
+        b.add_file(file(
+            "repo",
+            "b.py",
+            "repo::b",
+            vec![sym("repo::b::work", NodeKind::Function, 1)],
+            vec![],
+            vec![],
+        ));
+        let (g, diags) = b.build();
+        assert!(
+            diags.iter().all(|d| !matches!(d, crate::Diagnostic::UnresolvedCall { .. })),
+            "no unresolved call: {diags:?}"
+        );
+        assert!(g.get("external::b").is_none(), "no sibling import stub");
+        assert!(g.get("external::b.work").is_none(), "no dotted call stub");
+        assert!(
+            g.edges().any(|e| e.kind == EdgeKind::Imports
+                && e.from == "repo::a"
+                && e.to == "repo::b"),
+            "imports edge lands on the sibling module"
+        );
+        assert!(
+            g.edges().any(|e| e.kind == EdgeKind::Calls
+                && e.from == "repo::a::run"
+                && e.to == "repo::b::work"),
+            "calls edge lands on the qualified symbol"
+        );
+    }
+
+    /// The module qualifier decides, not the suffix tiers: `work`
+    /// exists in two sibling modules and the bare-name tiers would
+    /// pick the lexicographically first (`repo::b::work`); a call
+    /// written `c.work` must land on `repo::c::work`.
+    #[test]
+    fn dotted_call_qualifier_beats_suffix_order() {
+        let mut b = GraphBuilder::new();
+        b.add_file(file(
+            "repo",
+            "a.py",
+            "repo::a",
+            vec![sym("repo::a::run", NodeKind::Function, 1)],
+            vec![],
+            vec![call("repo::a::run", "c.work", 2)],
+        ));
+        b.add_file(file(
+            "repo",
+            "b.py",
+            "repo::b",
+            vec![sym("repo::b::work", NodeKind::Function, 1)],
+            vec![],
+            vec![],
+        ));
+        b.add_file(file(
+            "repo",
+            "c.py",
+            "repo::c",
+            vec![sym("repo::c::work", NodeKind::Function, 1)],
+            vec![],
+            vec![],
+        ));
+        let (g, diags) = b.build();
+        assert!(diags.is_empty(), "{diags:?}");
+        assert!(
+            g.edges().any(|e| e.kind == EdgeKind::Calls
+                && e.from == "repo::a::run"
+                && e.to == "repo::c::work"),
+            "the qualifier names the module"
+        );
     }
 }
