@@ -114,14 +114,15 @@ pub fn describe_schema() -> Result<String> {
 /// Snapshot-born handles have no database; their audit entries are the
 /// snapshot's own.
 #[napi]
-// codeql[rust/access-invalid-pointer] -- False positive (alert #74,
-// diaspora program 2026-11-09): the flagged dereference is in the
-// object-wrap code napi-derive generates for this type -- casting the
-// JS object's internal pointer back to the Rust struct, the standard
-// napi-rs class pattern. The struct itself holds only Arc, Option and
-// Vec; no pointer is dereferenced in code written here. Suppression
-// recorded in-tree so the reasoning travels with the code; the
-// release gate can audit it in the code-scanning UI.
+// False positive (CodeQL alert #74, diaspora program 2026-11-09):
+// the flagged dereference is in the object-wrap code napi-derive
+// generates for this type -- casting the JS object's internal
+// pointer back to the Rust struct, the standard napi-rs class
+// pattern. The struct itself holds only Arc, Option and Vec; no
+// pointer is dereferenced in code written here. Suppression recorded
+// in-tree so the reasoning travels with the code; the release gate
+// can audit it in the code-scanning UI.
+// codeql[rust/access-invalid-pointer]
 pub struct GraphHandle {
     graph: Arc<Graph>,
     db_path: Option<String>,
