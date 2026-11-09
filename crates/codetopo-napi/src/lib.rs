@@ -32,6 +32,7 @@ use codetopo_core::{Graph, RankMetric, Snapshot};
 use codetopo_store::{AuditLog, Store};
 use napi::bindgen_prelude::*;
 use napi::Task;
+use napi_derive::napi;
 use serde_json::{json, Value};
 
 // ---------------------------------------------------------------------------
