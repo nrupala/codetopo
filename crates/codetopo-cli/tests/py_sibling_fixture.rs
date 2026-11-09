@@ -35,9 +35,12 @@ const FILES: [(&str, &str); 5] = [
     ("e.py", "import a\nimport c\n\n\ndef work():\n    a.run()\n    c.work()\n"),
 ];
 
-fn write_fixture() -> PathBuf {
+fn write_fixture(tag: &str) -> PathBuf {
+    // One workdir per test: the tests in this file run in parallel
+    // threads in one process, so a shared dir would race (one test's
+    // cleanup deleting another's fixture mid-write).
     let dir = std::env::temp_dir().join(format!(
-        "codetopo-cli-test-{}-py-sibling-fixture",
+        "codetopo-cli-test-{}-py-sibling-fixture-{tag}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&dir);
@@ -49,8 +52,8 @@ fn write_fixture() -> PathBuf {
     repo
 }
 
-fn indexed_graph() -> Graph {
-    let repo = write_fixture();
+fn indexed_graph(tag: &str) -> Graph {
+    let repo = write_fixture(tag);
     let db = repo.parent().expect("workdir").join("fixture.db");
     let report = index_repo(&repo, &db, "repo", None, None).expect("index succeeds");
     assert_eq!(report.files_indexed, 5);
@@ -72,7 +75,7 @@ fn expected(edges: &[(&str, &str)]) -> BTreeSet<(String, String)> {
 
 #[test]
 fn sibling_imports_and_qualified_calls_are_internal() {
-    let graph = indexed_graph();
+    let graph = indexed_graph("edges");
     // Nothing in the fixture is external: no stub nodes at all.
     let externals: Vec<&str> = graph
         .nodes()
@@ -111,7 +114,7 @@ fn sibling_imports_and_qualified_calls_are_internal() {
 
 #[test]
 fn topo_sort_reports_the_fixtures_cycles() {
-    let graph = indexed_graph();
+    let graph = indexed_graph("topo");
     let value = topo_sort_value(&graph);
     // The absence-honesty pin: a cyclic fixture must not come back as
     // a complete acyclic order. The two ground-truth cycles — the
@@ -155,7 +158,7 @@ fn topo_sort_reports_the_fixtures_cycles() {
 
 #[test]
 fn blast_radius_counts_the_whole_cycle() {
-    let graph = indexed_graph();
+    let graph = indexed_graph("blast");
     // §6 blast radius counts function dependents (calls + references),
     // transitively: inside the call cycle every function depends on
     // every module's function, so each module's set is all five.
