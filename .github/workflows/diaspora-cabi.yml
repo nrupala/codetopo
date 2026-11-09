@@ -1,0 +1,51 @@
+# Copyright (C) 2026 2351485 ALBERTA INC.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: diaspora-cabi
+
+# The C ABI foundation's own gate: build the codetopo-c cdylib and
+# run the C conformance program (the F1-F5 known-answer battery
+# exercised through the actual C ABI) on every PR that touches the
+# crate. The workspace-wide ci.yml still runs the full Rust test +
+# clippy suite; this workflow exists so a C-ABI change is proven at
+# the C boundary itself, in the shape its Wave-2 consumers (R, Julia,
+# C/C++) will link against.
+
+on:
+  pull_request:
+    paths:
+      - "crates/codetopo-c/**"
+      - ".github/workflows/diaspora-cabi.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/codetopo-c/**"
+      - ".github/workflows/diaspora-cabi.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cabi-conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Build the cdylib
+        run: cargo build -p codetopo-c
+      - name: Crate tests (unit + header pin)
+        run: cargo test -p codetopo-c --lib
+      - name: Clippy the crate (warnings are errors)
+        run: cargo clippy -p codetopo-c --all-targets -- -D warnings
+      - name: Compile the C conformance program against the cdylib
+        run: |
+          cc -std=c11 -Wall -Wextra \
+            -I crates/codetopo-c/include \
+            crates/codetopo-c/tests/conformance.c \
+            -o /tmp/codetopo-conformance \
+            -L target/debug -lcodetopo_c -lm \
+            -Wl,-rpath,"$PWD/target/debug"
+      - name: Run the C conformance battery (F1-F5 through the C ABI)
+        run: /tmp/codetopo-conformance "$PWD" /tmp/codetopo-conformance-work

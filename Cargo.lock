@@ -339,6 +339,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "codetopo-c"
+version = "0.1.0"
+dependencies = [
+ "codetopo-cli",
+ "codetopo-core",
+ "codetopo-store",
+ "libc",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "codetopo-cli"
 version = "0.9.0"
 dependencies = [
