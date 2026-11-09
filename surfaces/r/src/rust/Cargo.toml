@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 2351485 ALBERTA INC.
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[package]
+name = "codetopo"
+version = "0.1.0"
+edition = "2021"
+description = "R surface for codetopo (extendr): the CODE_SCHEMA operations over the Rust core, in-process, as JSON"
+license = "AGPL-3.0-or-later"
+authors = ["Nrupal Akolkar"]
+homepage = "https://aimlds.org/codetopo"
+repository = "https://github.com/nrupala/codetopo"
+
+[lib]
+crate-type = ["staticlib"]
+name = "codetopo"
+
+[dependencies]
+extendr-api = "0.9.0"
+codetopo-core = { version = "0.9.0", path = "../../../../crates/codetopo-core" }
+codetopo-cli = { version = "0.9.0", path = "../../../../crates/codetopo-cli" }
+codetopo-store = { version = "0.9.0", path = "../../../../crates/codetopo-store" }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+# This crate is the R package's private Rust crate. It lives under
+# surfaces/r/ precisely so it stays OUT of the repository's Rust
+# workspace (root Cargo.toml members = ["crates/*"]); the empty
+# [workspace] table makes it its own workspace root so the main
+# workspace's `cargo test --workspace` is unaffected by its presence.
+[workspace]
