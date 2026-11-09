@@ -13,6 +13,7 @@ use std::path::PathBuf;
 
 /// Every route the router serves, in OpenAPI path form (`{id}`).
 const EXPECTED_ROUTES: &[&str] = &[
+    "/",
     "/v1/graphs/{id}/ancestors",
     "/v1/graphs/{id}/blast-radius",
     "/v1/graphs/{id}/descendants",
