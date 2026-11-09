@@ -1,0 +1,22 @@
+name = "Codetopo"
+uuid = "7ea3a546-4333-41c8-bb80-404ab43a3b00"
+version = "0.1.0"
+authors = ["2351485 ALBERTA INC."]
+
+# Stdlib only. The intended JSON.jl dependency is NOT declared: the Julia
+# General registry was unreachable from the build sandbox (see the package
+# README, "JSON handling — the fallback in effect"), so this surface returns
+# raw CODE_SCHEMA JSON strings instead of parsed values. No external
+# dependency also means `Pkg.instantiate` needs no network at all.
+[deps]
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+
+[compat]
+julia = "1.10"
+Libdl = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

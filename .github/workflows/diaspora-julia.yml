@@ -1,0 +1,46 @@
+# Copyright (C) 2026 2351485 ALBERTA INC.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: diaspora-julia
+
+# The Julia surface (surfaces/julia): Base Julia ccall over the codetopo-c
+# C ABI, conformance battery F1-F5 included. Runs only when the surface
+# or its foundation crate changes.
+#
+# NOTE: the `cargo build -p codetopo-c` step requires the codetopo-c
+# foundation crate (crates/codetopo-c) on the base branch. Until the
+# foundation PR merges to main, this workflow cannot go green on a PR
+# based on main alone — that ordering is the coordinator's merge plan,
+# not a surface defect.
+
+on:
+  pull_request:
+    paths:
+      - "surfaces/julia/**"
+      - "crates/codetopo-c/**"
+      - ".github/workflows/diaspora-julia.yml"
+  push:
+    branches: [main]
+    paths:
+      - "surfaces/julia/**"
+      - "crates/codetopo-c/**"
+      - ".github/workflows/diaspora-julia.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  julia-surface:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Build the C ABI foundation (release)
+        run: cargo build -p codetopo-c --release
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.11"
+      - name: Run the Julia conformance suite (F1-F5, via ccall)
+        env:
+          CODETOPO_C_LIB: ${{ github.workspace }}/target/release/libcodetopo_c.so
+        run: julia --project=surfaces/julia surfaces/julia/test/runtests.jl
