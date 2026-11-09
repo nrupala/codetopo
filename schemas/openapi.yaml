@@ -77,6 +77,28 @@ tags:
 security:
   - bearerAuth: []
 paths:
+  /:
+    get:
+      tags: [meta]
+      operationId: getRoot
+      summary: The service root document — the one route served without a key.
+      description: |
+        A landing document naming the service, its version, and where the
+        contract and keys live, so the API host answers a browser or a
+        bare `GET /` instead of a bare 404. Content-negotiated: HTML for
+        a browser's `Accept`, JSON otherwise. It serves only facts that
+        are already public and touches no state.
+      security: []
+      responses:
+        '200':
+          description: The root document.
+          content:
+            application/json:
+              schema:
+                type: object
+            text/html:
+              schema:
+                type: string
   /v1/index:
     post:
       tags: [index]
