@@ -11,6 +11,15 @@
 //! cdylib, and the cdylib must not export `codetopo_*` symbols the
 //! header does not declare.
 //!
+//! Where the cdylib comes from: `cargo build` emits it into
+//! `target/debug/`, but `cargo test` does NOT (it builds the rlib
+//! the test harness links, not the cdylib artifact) — on a clean
+//! checkout the file simply isn't there. The resolver below first
+//! looks in the usual places, and if the cdylib is absent builds it
+//! with a nested `cargo build` into a SCRATCH target dir (the outer
+//! cargo holds the workspace target dir's lock while tests run, so
+//! a nested build into the same dir would deadlock).
+//!
 //! Unix only: the Windows CI job builds the agent binaries, not this
 //! crate's test suite (the dedicated diaspora-cabi workflow runs this
 //! on Linux).
@@ -19,6 +28,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -31,17 +41,72 @@ fn repo_root() -> PathBuf {
         .expect("repo root resolves")
 }
 
-/// The built cdylib for this crate, in the workspace target dir.
-fn cdylib_path() -> PathBuf {
-    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| repo_root().join("target"));
-    let file = if cfg!(target_os = "macos") {
+fn cdylib_name() -> &'static str {
+    if cfg!(target_os = "macos") {
         "libcodetopo_c.dylib"
     } else {
         "libcodetopo_c.so"
-    };
-    target_dir.join("debug").join(file)
+    }
+}
+
+/// The built cdylib for this crate, resolved once per test process:
+/// found in the workspace target dir if a `cargo build` already
+/// produced it, otherwise built into a scratch target dir.
+fn cdylib_path() -> PathBuf {
+    static PATH: OnceLock<PathBuf> = OnceLock::new();
+    PATH.get_or_init(resolve_cdylib).clone()
+}
+
+fn resolve_cdylib() -> PathBuf {
+    let name = cdylib_name();
+    let root = repo_root();
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(td) = std::env::var_os("CARGO_TARGET_DIR") {
+        candidates.push(PathBuf::from(td).join("debug").join(name));
+    }
+    candidates.push(root.join("target").join("debug").join(name));
+    candidates.push(root.join("target").join("debug").join("deps").join(name));
+    // A hashed copy in deps/ (libcodetopo_c-<hash>.so) also serves.
+    if let Ok(entries) = std::fs::read_dir(root.join("target").join("debug").join("deps")) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.file_name()
+                .map(|n| {
+                    let n = n.to_string_lossy();
+                    n.starts_with("libcodetopo_c") && n.ends_with(name.rsplit('.').next().unwrap_or("so"))
+                        && !n.ends_with(".rlib")
+                })
+                .unwrap_or(false)
+            {
+                candidates.push(p);
+            }
+        }
+    }
+    if let Some(found) = candidates.iter().find(|p| p.is_file()) {
+        return found.clone();
+    }
+
+    // Build it, into a scratch target dir (see the module docs for
+    // why not the workspace's own). Deps come from the warm registry
+    // cache; offline mode keeps the nested build from reaching for
+    // the network the outer build may not have needed.
+    let scratch = std::env::temp_dir().join(format!("codetopo-c-cdylib-{}", std::process::id()));
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let status = Command::new(&cargo)
+        .args(["build", "-p", "codetopo-c", "--target-dir"])
+        .arg(&scratch)
+        .current_dir(&root)
+        .env("CARGO_NET_OFFLINE", "true")
+        .status()
+        .expect("nested cargo build runs");
+    assert!(status.success(), "nested cargo build of the cdylib failed");
+    let built = scratch.join("debug").join(name);
+    assert!(
+        built.is_file(),
+        "nested cargo build did not produce {}",
+        built.display()
+    );
+    built
 }
 
 /// Function names declared in the header (same extraction rule as
@@ -77,11 +142,6 @@ fn header_declared() -> Vec<String> {
 #[test]
 fn header_matches_cdylib_exports() {
     let lib = cdylib_path();
-    assert!(
-        lib.is_file(),
-        "cdylib not found at {} — cargo should have built it with the crate",
-        lib.display()
-    );
     let output = Command::new("nm")
         .args(["-D", "--defined-only"])
         .arg(&lib)
@@ -107,7 +167,6 @@ fn header_matches_cdylib_exports() {
 #[test]
 fn c_conformance_battery() {
     let lib = cdylib_path();
-    assert!(lib.is_file(), "cdylib not found at {}", lib.display());
     let lib_dir = lib.parent().expect("cdylib has a directory");
 
     let work = tempfile::tempdir().expect("temp dir");
@@ -115,7 +174,7 @@ fn c_conformance_battery() {
     let src = manifest_dir().join("tests/conformance.c");
 
     // Compile with cc against the cdylib + header, rpath to the
-    // target dir so the binary runs without LD_LIBRARY_PATH.
+    // cdylib's directory so the binary runs without LD_LIBRARY_PATH.
     let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
     let status = Command::new(&cc)
         .arg("-std=c11")
