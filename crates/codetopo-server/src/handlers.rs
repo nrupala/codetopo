@@ -31,7 +31,9 @@ use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 
 use axum::extract::{Extension, Path as UrlPath, Query, RawQuery, Request, State};
-use axum::http::header::CONTENT_TYPE;
+use axum::http::header::{ACCEPT, CONTENT_TYPE};
+use axum::http::HeaderMap;
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
@@ -194,6 +196,78 @@ pub fn router(state: AppState) -> Router {
         .merge(queries)
         .with_state(state)
 }
+
+/// Build the public route table: exactly one route, `GET /`.
+///
+/// This is the deliberate exception to the rule [`router`] documents.
+/// Every `/v1` path sits behind [`crate::auth::metered`]; the root sits
+/// outside it (merged in [`crate::app`]) so the API host answers a browser
+/// or a bare `GET /` with what this service is and where its contract
+/// lives, instead of the framework's bare 404. The handler serves only
+/// facts that are already public — the service name, its version, and
+/// pointers — and touches no state, so opening this one route widens no
+/// data surface.
+pub fn public_router() -> Router {
+    Router::new().route("/", get(root))
+}
+
+/// The root document, content-negotiated: HTML for a browser's `Accept`,
+/// JSON for anything else (a machine caller, or no `Accept` at all).
+async fn root(headers: HeaderMap) -> Response {
+    let wants_html = headers
+        .get(ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .map(|accept| accept.contains("text/html"))
+        .unwrap_or(false);
+    if wants_html {
+        Html(ROOT_HTML.replace("{version}", env!("CARGO_PKG_VERSION"))).into_response()
+    } else {
+        Json(json!({
+            "service": "codetopo",
+            "version": env!("CARGO_PKG_VERSION"),
+            "description": "Read-only code-graph API: indexes a repository into a deterministic graph of symbols, calls, imports, and heritage, then answers structural questions over it.",
+            "documentation": {
+                "openapi": "https://github.com/nrupala/codetopo/blob/main/schemas/openapi.yaml",
+                "graph_schema": "/v1/schema"
+            },
+            "authentication": {
+                "type": "bearer",
+                "header": "Authorization: Bearer <key_id>:<secret>",
+                "get_a_key": "https://aimlds.org/codetopo"
+            },
+            "website": "https://aimlds.org/codetopo"
+        }))
+        .into_response()
+    }
+}
+
+/// The root document as a page. Plain semantic HTML with no external
+/// assets: it must render identically on any host that serves the API,
+/// including air-gapped ones.
+const ROOT_HTML: &str = r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>codetopo API</title>
+</head>
+<body>
+<h1>codetopo API</h1>
+<p>codetopo turns a repository into a deterministic graph of symbols, calls,
+imports, and heritage, and answers structural questions over it. This host is
+the hosted API (version {version}). Every route under <code>/v1/</code>
+requires an API key.</p>
+<h2>For machines</h2>
+<ul>
+<li>OpenAPI contract: <a href="https://github.com/nrupala/codetopo/blob/main/schemas/openapi.yaml">schemas/openapi.yaml</a></li>
+<li>Graph schema: <a href="/v1/schema">/v1/schema</a> (API key required)</li>
+<li>Authentication: <code>Authorization: Bearer &lt;key_id&gt;:&lt;secret&gt;</code></li>
+</ul>
+<h2>For humans</h2>
+<p>What codetopo does, pricing, and getting a key:
+<a href="https://aimlds.org/codetopo">aimlds.org/codetopo</a></p>
+</body>
+</html>
+"#;
 
 // ---------------------------------------------------------------------------
 // POST /v1/index

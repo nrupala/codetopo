@@ -14,7 +14,7 @@ pub mod limits;
 pub mod metering;
 pub mod tenancy;
 
-pub use handlers::{router, AppState};
+pub use handlers::{public_router, router, AppState};
 
 /// Builds the served application: routes, then auth + metering around them.
 ///
@@ -22,6 +22,11 @@ pub use handlers::{router, AppState};
 /// `route_layer`, so a request is authenticated *before* it can reach a
 /// handler and a rejected one is answered without touching a database or
 /// appending a metering record.
+///
+/// The one exception is merged in *outside* that wrapper:
+/// [`handlers::public_router`] carries only `GET /`, the public root
+/// document (see its own comment for why it exists and why opening it is
+/// safe). Every `/v1` path stays inside the metered wrapper.
 pub fn app(
     config: std::sync::Arc<config::Config>,
     keys: std::sync::Arc<keys::KeyStore>,
@@ -29,5 +34,5 @@ pub fn app(
     tenancy: std::sync::Arc<tenancy::Tenancy>,
 ) -> axum::Router {
     let auth = std::sync::Arc::new(auth::AuthMetering::new(std::sync::Arc::clone(&keys), metering));
-    auth::metered(router(AppState::new(config, keys, tenancy)), auth)
+    auth::metered(router(AppState::new(config, keys, tenancy)), auth).merge(public_router())
 }
