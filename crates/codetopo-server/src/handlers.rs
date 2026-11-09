@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 
-use axum::extract::{Extension, Path as UrlPath, Query, Request, State};
+use axum::extract::{Extension, Path as UrlPath, Query, RawQuery, Request, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -1057,6 +1057,34 @@ struct RankQuery {
     limit: Option<String>,
 }
 
+/// The parameter names `rank` accepts. Serde's query decoding drops
+/// unknown keys silently, so a caller asking `?metric=pagerank`
+/// (a plausible guess; the parameter is `by`) used to receive the
+/// default metric's answer as if the parameter had been honoured —
+/// the failure behind the 0.9.0 T2 filing. The raw query is checked
+/// against this list and anything else is refused with
+/// `invalid_param` naming the key, the same discipline as a bad
+/// value. (The other routes still decode leniently; rank is the
+/// route where a silently-ignored parameter changes the meaning of
+/// the answer, and the one a tester measured.)
+const RANK_PARAMS: [&str; 2] = ["by", "limit"];
+
+fn reject_unknown_rank_params(raw: &str) -> Result<(), ApiError> {
+    for pair in raw.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let key = pair.split('=').next().unwrap_or("");
+        if !RANK_PARAMS.contains(&key) {
+            return Err(ApiError::invalid_param(
+                key,
+                "unknown parameter for /rank; expected 'by' or 'limit'",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// `GET /v1/graphs/{id}/rank?by=&limit=` — the top symbols by a
 /// measurement (a count, or a §4a centrality value), with the
 /// metric's published definition stated in the response. The shared
@@ -1068,8 +1096,12 @@ async fn rank(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
     Query(query): Query<RankQuery>,
 ) -> Result<Json<Value>, ApiError> {
+    if let Some(raw) = raw_query.as_deref() {
+        reject_unknown_rank_params(raw)?;
+    }
     enforce_tenancy(&state, &index_id, &key)?;
     let by = query
         .by

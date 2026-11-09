@@ -1109,6 +1109,46 @@ async fn rank_route_matches_the_cli_value_and_finds_the_hub() {
     assert_eq!(body["error"], "invalid_param");
 }
 
+/// An unknown rank parameter is refused, never silently ignored:
+/// the 0.9.0 T2 filing measured `?metric=pagerank` falling back to
+/// the default metric with a 200, indistinguishable from the
+/// parameter being honoured. The refusal is the API's flat
+/// `invalid_param`, naming the offending key.
+#[tokio::test]
+async fn rank_route_refuses_unknown_parameters() {
+    let harness = Harness::new();
+    let report = harness.index_fixture().await;
+    let index_id = report["index_id"].as_str().expect("index_id").to_string();
+
+    for guessed in ["metric", "method", "measure"] {
+        let (status, body) = harness
+            .get(&format!("/v1/graphs/{index_id}/rank?{guessed}=pagerank"))
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "?{guessed}= must be refused: {body}"
+        );
+        assert_eq!(body["error"], "invalid_param");
+        assert!(
+            body["message"].as_str().expect("message").contains(guessed),
+            "the refusal names the parameter: {body}"
+        );
+    }
+
+    // The documented name keeps working, and an unknown key is
+    // refused even beside a valid one.
+    let (status, body) = harness
+        .get(&format!("/v1/graphs/{index_id}/rank?by=pagerank"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "by=pagerank: {body}");
+    assert_eq!(body["metric"], "pagerank");
+    let (status, _) = harness
+        .get(&format!("/v1/graphs/{index_id}/rank?by=pagerank&metric=pagerank"))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 /// The metrics route returns the shared metrics object (plus
 /// `index_id`) — coupling and cohesion for the fixture's types and
 /// packages, computed by the same core function the CLI serves.
