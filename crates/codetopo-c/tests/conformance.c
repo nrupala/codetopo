@@ -229,6 +229,40 @@ int main(int argc, char **argv) {
             codetopo_free_string(diags);
         }
     }
+    /* F2, second scoping (documented): indexing the fixture
+     * DIRECTORY also indexes README.md as Markdown, so the same
+     * battery at directory scope reads 29 nodes / 36 edges /
+     * 2 diagnostics. Both numbers are correct behaviour of the
+     * core; the headline above is the package scope. */
+    {
+        char dirpath[2048], dbpath[2048];
+        path_join(dirpath, sizeof dirpath, root, "crates/codetopo-extract/tests/fixture-py");
+        path_join(dbpath, sizeof dbpath, work, "quarry-dir.db");
+        char *err = NULL;
+        char *report = codetopo_index(dirpath, dbpath, "quarry", &err);
+        check(report != NULL, "F2-dir: codetopo_index(fixture dir) succeeds");
+        if (report) {
+            check(json_int_after(report, NULL, "\"files_indexed\"") == 4, "F2-dir: files_indexed == 4");
+            check(json_int_after(report, NULL, "\"nodes\"") == 29, "F2-dir: report nodes == 29");
+            check(json_int_after(report, NULL, "\"edges\"") == 36, "F2-dir: report edges == 36");
+            check(json_int_after(report, NULL, "\"diagnostics\"") == 2, "F2-dir: report diagnostics == 2");
+            codetopo_free_string(report);
+        }
+        if (err) codetopo_free_string(err);
+        err = NULL;
+        codetopo_graph *g = codetopo_open_db(dbpath, &err);
+        check(g != NULL, "F2-dir: codetopo_open_db(quarry-dir.db)");
+        if (err) codetopo_free_string(err);
+        if (g) {
+            char *stats = query_ok(g, "stats", "{}", "F2-dir");
+            if (stats) {
+                check(json_int_after(stats, "\"nodes\"", "\"total\"") == 29, "F2-dir: stats nodes == 29");
+                check(json_int_after(stats, "\"edges\"", "\"total\"") == 36, "F2-dir: stats edges == 36");
+                codetopo_free_string(stats);
+            }
+            codetopo_graph_free(g);
+        }
+    }
     printf("F2 quarry: done\n");
 
     /* ---- F1: oracle goldens -------------------------------------- */
@@ -422,9 +456,14 @@ int main(int argc, char **argv) {
             }
             char *snap2 = query_ok(loaded, "snapshot", "{}", "F4");
             if (snap1 && snap2) {
-                check(segment_equal(snap1, snap2, "\"nodes\":", "\"edges\":"),
+                /* serde_json object keys serialize in sorted order
+                 * (the workspace does not enable preserve_order), so
+                 * the document order is audit_head, audit_log, edges,
+                 * nodes, schema_version — the segments are cut on
+                 * that order. */
+                check(segment_equal(snap1, snap2, "\"nodes\":", "\"schema_version\""),
                       "F4: snapshot round-trip — nodes payload identical");
-                check(segment_equal(snap1, snap2, "\"edges\":", "\"audit_head\""),
+                check(segment_equal(snap1, snap2, "\"edges\":", "\"nodes\":"),
                       "F4: snapshot round-trip — edges payload identical");
             }
             if (snap2) codetopo_free_string(snap2);

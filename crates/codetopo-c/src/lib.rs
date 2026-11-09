@@ -22,6 +22,11 @@
 //! No panic unwinds across the boundary: every entry point runs
 //! inside `catch_unwind` and converts a panic into an `internal`
 //! error (or a no-op for the free functions).
+//!
+//! The pointer-taking entry points are declared `unsafe extern "C"`:
+//! a Rust-side marker only (the caller must uphold the header's
+//! pointer contract, as with any C API) — the C ABI, the exported
+//! symbols, and the header are exactly what a C caller links against.
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -225,8 +230,14 @@ pub extern "C" fn codetopo_schema_version() -> *const c_char {
 
 /// Open the index database at `db_path`. See the header for the
 /// ownership and error contract.
+///
+/// # Safety
+/// All pointer arguments must follow the contract in
+/// `include/codetopo.h`: string arguments are valid, NUL-terminated
+/// C strings (or NULL where the header allows it), and `err_out` is
+/// either NULL or a valid writable `char *` slot.
 #[no_mangle]
-pub extern "C" fn codetopo_open_db(
+pub unsafe extern "C" fn codetopo_open_db(
     db_path: *const c_char,
     err_out: *mut *mut c_char,
 ) -> *mut codetopo_graph {
@@ -252,8 +263,14 @@ pub extern "C" fn codetopo_open_db(
 }
 
 /// Load a graph from a Snapshot JSON string. See the header.
+///
+/// # Safety
+/// All pointer arguments must follow the contract in
+/// `include/codetopo.h`: string arguments are valid, NUL-terminated
+/// C strings (or NULL where the header allows it), and `err_out` is
+/// either NULL or a valid writable `char *` slot.
 #[no_mangle]
-pub extern "C" fn codetopo_load_snapshot(
+pub unsafe extern "C" fn codetopo_load_snapshot(
     snapshot_json: *const c_char,
     err_out: *mut *mut c_char,
 ) -> *mut codetopo_graph {
@@ -275,8 +292,13 @@ pub extern "C" fn codetopo_load_snapshot(
 }
 
 /// Release a graph handle. NULL is a no-op.
+///
+/// # Safety
+/// `graph` must be NULL or a handle returned by
+/// `codetopo_open_db` / `codetopo_load_snapshot` that has not
+/// already been freed.
 #[no_mangle]
-pub extern "C" fn codetopo_graph_free(graph: *mut codetopo_graph) {
+pub unsafe extern "C" fn codetopo_graph_free(graph: *mut codetopo_graph) {
     if graph.is_null() {
         return;
     }
@@ -287,8 +309,12 @@ pub extern "C" fn codetopo_graph_free(graph: *mut codetopo_graph) {
 
 /// Release a string returned by this library. NULL is a no-op. Must
 /// not be called on the static version strings.
+///
+/// # Safety
+/// `s` must be NULL or a string returned by this library that has
+/// not already been freed.
 #[no_mangle]
-pub extern "C" fn codetopo_free_string(s: *mut c_char) {
+pub unsafe extern "C" fn codetopo_free_string(s: *mut c_char) {
     if s.is_null() {
         return;
     }
@@ -298,8 +324,14 @@ pub extern "C" fn codetopo_free_string(s: *mut c_char) {
 }
 
 /// Index a repository into a database. See the header.
+///
+/// # Safety
+/// All pointer arguments must follow the contract in
+/// `include/codetopo.h`: string arguments are valid, NUL-terminated
+/// C strings (or NULL where the header allows it), and `err_out` is
+/// either NULL or a valid writable `char *` slot.
 #[no_mangle]
-pub extern "C" fn codetopo_index(
+pub unsafe extern "C" fn codetopo_index(
     repo_path: *const c_char,
     db_path: *const c_char,
     package: *const c_char,
@@ -703,8 +735,14 @@ fn load_other_graph(args: &Value) -> Result<Graph, CError> {
 
 /// Run one query operation against a graph handle. See the header
 /// for the operation list, argument shapes, and error contract.
+///
+/// # Safety
+/// `graph` must be a live handle from `codetopo_open_db` /
+/// `codetopo_load_snapshot`; string arguments must follow the
+/// header's contract, and `err_out` must be NULL or a valid
+/// writable `char *` slot.
 #[no_mangle]
-pub extern "C" fn codetopo_query(
+pub unsafe extern "C" fn codetopo_query(
     graph: *const codetopo_graph,
     op: *const c_char,
     args_json: *const c_char,
@@ -754,62 +792,112 @@ mod tests {
         serde_json::from_str(&text).expect("error is a JSON object")
     }
 
-    fn err_slot() -> *mut c_char {
-        std::ptr::null_mut()
+    // Safe test wrappers over the unsafe FFI entry points: each one
+    // owns the err_out slot discipline (NULL on success, a JSON
+    // error object on failure) so the tests read as assertions about
+    // behaviour, not about pointer plumbing.
+
+    fn call_index(repo: &Path, db: &Path, package: Option<&str>) -> Result<Value, Value> {
+        let mut err: *mut c_char = std::ptr::null_mut();
+        let pkg = package.map(c);
+        let ptr = unsafe {
+            codetopo_index(
+                c(&repo.display().to_string()).as_ptr(),
+                c(&db.display().to_string()).as_ptr(),
+                pkg.as_ref().map_or(std::ptr::null(), |p| p.as_ptr()),
+                &mut err,
+            )
+        };
+        if ptr.is_null() {
+            Err(take_err(err))
+        } else {
+            assert!(err.is_null(), "err_out set on success");
+            Ok(take_json(ptr))
+        }
     }
 
-    /// Index the quarry fixture (F2) into a temp db through the C ABI
-    /// and open the handle. Returns (dir, db path, handle).
-    ///
-    /// The known-answer package is exactly the fixture's three `.py`
-    /// modules — that is what `known_answer_py.rs` feeds the builder.
-    /// Indexing the fixture *directory* wholesale would also index
-    /// its README.md (Markdown is a supported language) and
-    /// pyproject.toml, yielding 29/36 instead of the package's
-    /// 26/33/2 — so the three modules are copied into a clean repo
-    /// dir first, mirroring the extract suite's own fixture set.
-    fn quarry_handle() -> (tempfile::TempDir, PathBuf, *mut codetopo_graph) {
-        let dir = tempfile::tempdir().expect("temp dir");
+    fn call_open_db(db: &Path) -> Result<*mut codetopo_graph, Value> {
+        let mut err: *mut c_char = std::ptr::null_mut();
+        let handle = unsafe {
+            codetopo_open_db(c(&db.display().to_string()).as_ptr(), &mut err)
+        };
+        if handle.is_null() {
+            Err(take_err(err))
+        } else {
+            assert!(err.is_null(), "err_out set on success");
+            Ok(handle)
+        }
+    }
+
+    fn call_load_snapshot(text: &str) -> Result<*mut codetopo_graph, Value> {
+        let mut err: *mut c_char = std::ptr::null_mut();
+        let handle = unsafe { codetopo_load_snapshot(c(text).as_ptr(), &mut err) };
+        if handle.is_null() {
+            Err(take_err(err))
+        } else {
+            assert!(err.is_null(), "err_out set on success");
+            Ok(handle)
+        }
+    }
+
+    fn call_query(handle: *const codetopo_graph, op: &str, args: &str) -> Result<Value, Value> {
+        let mut err: *mut c_char = std::ptr::null_mut();
+        let ptr = unsafe {
+            codetopo_query(handle, c(op).as_ptr(), c(args).as_ptr(), &mut err)
+        };
+        if ptr.is_null() {
+            Err(take_err(err))
+        } else {
+            assert!(err.is_null(), "err_out set on success");
+            Ok(take_json(ptr))
+        }
+    }
+
+    fn query(handle: *const codetopo_graph, op: &str, args: &str) -> Value {
+        call_query(handle, op, args).unwrap_or_else(|e| panic!("{op} failed: {e}"))
+    }
+
+    fn query_err(handle: *const codetopo_graph, op: &str, args: &str) -> Value {
+        call_query(handle, op, args).expect_err("query should fail")
+    }
+
+    fn free_graph(handle: *mut codetopo_graph) {
+        unsafe { codetopo_graph_free(handle) }
+    }
+
+    /// Copy the quarry fixture's three `.py` modules into a clean
+    /// repo dir — the known-answer package scope (see quarry_handle).
+    fn copy_quarry_package(dir: &Path) -> PathBuf {
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../codetopo-extract/tests/fixture-py");
-        let repo = dir.path().join("quarry-pkg");
+        let repo = dir.join("quarry-pkg");
         std::fs::create_dir_all(&repo).expect("create fixture copy dir");
         for name in ["__init__.py", "core.py", "shapes.py"] {
             std::fs::copy(fixture.join(name), repo.join(name)).expect("copy fixture module");
         }
+        repo
+    }
+
+    /// Index the quarry fixture (F2) into a temp db through the C
+    /// ABI and open the handle.
+    ///
+    /// The known-answer package is exactly the fixture's three `.py`
+    /// modules — that is what `known_answer_py.rs` feeds the builder
+    /// (26 nodes / 33 edges / 2 diagnostics). Indexing the fixture
+    /// *directory* wholesale also indexes its README.md (Markdown is
+    /// a supported language), yielding 29/36/2 — correct behaviour at
+    /// a different scope, pinned separately in
+    /// [`directory_scope_counts_the_readme_too`].
+    fn quarry_handle() -> (tempfile::TempDir, PathBuf, *mut codetopo_graph) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let repo = copy_quarry_package(dir.path());
         let db = dir.path().join("quarry.db");
-        let mut err = err_slot();
-        let report_ptr = codetopo_index(
-            c(&repo.display().to_string()).as_ptr(),
-            c(&db.display().to_string()).as_ptr(),
-            c("quarry").as_ptr(),
-            &mut err,
-        );
-        assert!(err.is_null(), "index error slot set on success");
-        let report = take_json(report_ptr);
+        let report = call_index(&repo, &db, Some("quarry")).expect("index succeeds");
         assert_eq!(report["nodes"], 26, "quarry report: {report}");
         assert_eq!(report["edges"], 33, "quarry report: {report}");
         assert_eq!(report["diagnostics"], 2, "quarry report: {report}");
-
-        let mut err = err_slot();
-        let handle = codetopo_open_db(c(&db.display().to_string()).as_ptr(), &mut err);
-        assert!(!handle.is_null(), "open_db returned NULL");
-        assert!(err.is_null());
+        let handle = call_open_db(&db).expect("open succeeds");
         (dir, db, handle)
-    }
-
-    fn query(handle: *const codetopo_graph, op: &str, args: &str) -> Value {
-        let mut err = err_slot();
-        let ptr = codetopo_query(handle, c(op).as_ptr(), c(args).as_ptr(), &mut err);
-        assert!(err.is_null(), "{op} set an error on success");
-        take_json(ptr)
-    }
-
-    fn query_err(handle: *const codetopo_graph, op: &str, args: &str) -> Value {
-        let mut err = err_slot();
-        let ptr = codetopo_query(handle, c(op).as_ptr(), c(args).as_ptr(), &mut err);
-        assert!(ptr.is_null(), "{op} should fail");
-        take_err(err)
     }
 
     #[test]
@@ -853,30 +941,55 @@ mod tests {
         assert_eq!(schema["schema_version"], "1.2");
 
         // F5: repeated queries are byte-identical.
-        let mut err = err_slot();
-        let a = codetopo_query(handle, c("stats").as_ptr(), c("{}").as_ptr(), &mut err);
-        let mut err2 = err_slot();
-        let b = codetopo_query(handle, c("stats").as_ptr(), c("{}").as_ptr(), &mut err2);
+        let mut err: *mut c_char = std::ptr::null_mut();
+        let a = unsafe {
+            codetopo_query(handle, c("stats").as_ptr(), c("{}").as_ptr(), &mut err)
+        };
+        let mut err2: *mut c_char = std::ptr::null_mut();
+        let b = unsafe {
+            codetopo_query(handle, c("stats").as_ptr(), c("{}").as_ptr(), &mut err2)
+        };
         let sa = unsafe { CString::from_raw(a) };
         let sb = unsafe { CString::from_raw(b) };
         assert_eq!(sa, sb, "repeated stats queries must be byte-identical");
 
-        codetopo_graph_free(handle);
-        codetopo_graph_free(std::ptr::null_mut()); // no-op, must not crash
-        codetopo_free_string(std::ptr::null_mut()); // no-op, must not crash
+        free_graph(handle);
+        free_graph(std::ptr::null_mut()); // no-op, must not crash
+        unsafe { codetopo_free_string(std::ptr::null_mut()) }; // no-op, must not crash
+    }
+
+    #[test]
+    fn directory_scope_counts_the_readme_too() {
+        // The documented second F2 scoping (coordinator ruling,
+        // 2026-11-09): indexing the fixture DIRECTORY also indexes
+        // README.md as Markdown, so the same battery at directory
+        // scope reads 29 nodes / 36 edges / 2 diagnostics. Both
+        // numbers are correct behaviour of the core; the F2 headline
+        // (26/33/2) is the package scope above.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../codetopo-extract/tests/fixture-py");
+        let db = dir.path().join("whole-dir.db");
+        let report = call_index(&fixture, &db, Some("quarry")).expect("index succeeds");
+        assert_eq!(report["files_indexed"], 4, "report: {report}");
+        assert_eq!(report["nodes"], 29, "report: {report}");
+        assert_eq!(report["edges"], 36, "report: {report}");
+        assert_eq!(report["diagnostics"], 2, "report: {report}");
+        let handle = call_open_db(&db).expect("open succeeds");
+        let stats = query(handle, "stats", "{}");
+        assert_eq!(stats["nodes"]["total"], 29, "stats: {stats}");
+        assert_eq!(stats["edges"]["total"], 36, "stats: {stats}");
+        free_graph(handle);
     }
 
     #[test]
     fn snapshot_handle_round_trip_and_verify() {
         let (_dir, _db, handle) = quarry_handle();
         let snap = query(handle, "snapshot", "{}");
-        codetopo_graph_free(handle);
+        free_graph(handle);
 
         let snap_text = serde_json::to_string(&snap).expect("snapshot serializes");
-        let mut err = err_slot();
-        let loaded = codetopo_load_snapshot(c(&snap_text).as_ptr(), &mut err);
-        assert!(!loaded.is_null(), "load_snapshot returned NULL");
-        assert!(err.is_null());
+        let loaded = call_load_snapshot(&snap_text).expect("load succeeds");
 
         let stats = query(loaded, "stats", "{}");
         assert_eq!(stats["nodes"]["total"], 26);
@@ -898,7 +1011,7 @@ mod tests {
         assert_eq!(diff["added_nodes"].as_array().map(Vec::len), Some(0), "diff: {diff}");
         assert_eq!(diff["removed_nodes"].as_array().map(Vec::len), Some(0), "diff: {diff}");
 
-        codetopo_graph_free(loaded);
+        free_graph(loaded);
     }
 
     #[test]
@@ -942,42 +1055,23 @@ mod tests {
         let rank = query(handle, "rank", r#"{"by": "pagerank", "limit": 5}"#);
         assert_eq!(rank["metric"], "pagerank", "rank: {rank}");
 
-        codetopo_graph_free(handle);
+        free_graph(handle);
 
         // Missing database.
-        let mut err = err_slot();
-        let missing =
-            codetopo_open_db(c("/nonexistent/definitely-not-here.db").as_ptr(), &mut err);
-        assert!(missing.is_null());
-        let e = take_err(err);
+        let e = call_open_db(Path::new("/nonexistent/definitely-not-here.db"))
+            .expect_err("missing db fails");
         assert_eq!(e["code"], "unknown_index", "err: {e}");
 
         // Bad snapshot JSON / unsupported schema version.
-        let mut err = err_slot();
-        let bad = codetopo_load_snapshot(c("{nope").as_ptr(), &mut err);
-        assert!(bad.is_null());
-        let e = take_err(err);
+        let e = call_load_snapshot("{nope").expect_err("bad snapshot fails");
         assert_eq!(e["code"], "invalid_param", "err: {e}");
 
-        let mut err = err_slot();
-        let future = codetopo_load_snapshot(
-            c(r#"{"schema_version": "9.0", "nodes": [], "edges": []}"#).as_ptr(),
-            &mut err,
-        );
-        assert!(future.is_null());
-        let e = take_err(err);
+        let e = call_load_snapshot(r#"{"schema_version": "9.0", "nodes": [], "edges": []}"#)
+            .expect_err("future schema fails");
         assert_eq!(e["code"], "unsupported_schema_version", "err: {e}");
 
-        // NULL arguments are errors, not crashes.
-        let mut err = err_slot();
-        let null_handle = codetopo_query(
-            std::ptr::null(),
-            c("stats").as_ptr(),
-            c("{}").as_ptr(),
-            &mut err,
-        );
-        assert!(null_handle.is_null());
-        let e = take_err(err);
+        // NULL handle is an error, not a crash.
+        let e = call_query(std::ptr::null(), "stats", "{}").expect_err("NULL handle fails");
         assert_eq!(e["code"], "invalid_param", "err: {e}");
     }
 
