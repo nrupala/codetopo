@@ -1,0 +1,22 @@
+Package: codetopo
+Title: Code Topology Analysis from R
+Version: 0.1.0
+Authors@R: person("Nrupal", "Akolkar",
+    email = "51525601+nrupala@users.noreply.github.com",
+    role = c("aut", "cre"))
+Description: An R surface over the codetopo Rust core, built with extendr.
+  Index a repository into a queryable code graph, then search, trace,
+  rank, and render it — deterministically and read-only. All answers are
+  CODE_SCHEMA (v1.2) JSON produced by the same Rust library the CLI, HTTP,
+  and MCP surfaces serve, so the R face agrees with them by construction.
+  This package lives in the codetopo repository only; it is not published
+  to CRAN.
+License: AGPL-3.0-or-later
+Encoding: UTF-8
+Imports: jsonlite
+Suggests: testthat (>= 3.0.0)
+Config/testthat/edition: 3
+SystemRequirements: Cargo (Rust's package manager) and Rust; the crate
+  'libR-sys' must compile without error
+Config/rextendr/version: 0.5.0
+RoxygenNote: 7.3.3

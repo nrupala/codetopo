@@ -1,0 +1,20 @@
+# Makevars.win following rextendr conventions (hand-written to the
+# same shape rextendr 0.5 generates). Windows builds use the GNU
+# target, as Rtools does. NOTE: the diaspora CI workflow exercises the
+# Linux leg; this file is the standard-shape Windows counterpart.
+TARGET := x86_64-pc-windows-gnu
+TARGET_DIR := rust/target/$(TARGET)
+STATLIB := $(TARGET_DIR)/release/libcodetopo.a
+
+PKG_LIBS = -L$(TARGET_DIR)/release -lcodetopo -lws2_32 -luserenv -lbcrypt -lntdll
+
+all: $(SHLIB)
+
+$(SHLIB): $(STATLIB)
+
+$(STATLIB):
+	export PATH="$$HOME/.cargo/bin:$$PATH" && \
+	cargo build --release --target $(TARGET) --manifest-path rust/Cargo.toml
+
+clean:
+	rm -Rf rust/target $(SHLIB)

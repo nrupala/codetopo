@@ -1,0 +1,32 @@
+# Generated following rextendr conventions: do not edit by hand --
+# regenerate with rextendr::document() when the Rust module changes.
+
+useDynLib(codetopo, .registration = TRUE)
+
+export(codetopo_ancestors)
+export(codetopo_blast_radius)
+export(codetopo_communities)
+export(codetopo_descendants)
+export(codetopo_describe_schema)
+export(codetopo_diagnostics)
+export(codetopo_diff)
+export(codetopo_from_snapshot)
+export(codetopo_get_symbol)
+export(codetopo_history)
+export(codetopo_index)
+export(codetopo_metrics)
+export(codetopo_neighborhood)
+export(codetopo_open)
+export(codetopo_path)
+export(codetopo_rank)
+export(codetopo_render)
+export(codetopo_restore)
+export(codetopo_search_symbols)
+export(codetopo_snapshot)
+export(codetopo_stats)
+export(codetopo_topo_sort)
+export(codetopo_verify)
+export(codetopo_core_version)
+export(codetopo_schema_version)
+
+S3method(print, codetopo_handle)

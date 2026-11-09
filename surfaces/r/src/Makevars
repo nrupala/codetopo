@@ -1,0 +1,20 @@
+# Makevars following rextendr conventions (hand-written to the same
+# shape rextendr 0.5 generates; rextendr itself was not available in
+# the build environment). The Rust crate in rust/ builds a staticlib
+# that the package DLL links.
+TARGET_DIR := rust/target
+STATLIB := $(TARGET_DIR)/release/libcodetopo.a
+
+PKG_LIBS = -L$(TARGET_DIR)/release -lcodetopo -ldl -lpthread
+
+all: $(SHLIB)
+
+$(SHLIB): $(STATLIB)
+
+$(STATLIB):
+	export PATH="$$HOME/.cargo/bin:$$PATH" && \
+	export R_HOME="$(R_HOME)" && \
+	cargo build --release --manifest-path rust/Cargo.toml
+
+clean:
+	rm -Rf $(TARGET_DIR) $(SHLIB)
