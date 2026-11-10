@@ -247,6 +247,7 @@ mod tests {
                 .collect(),
             audit_head: String::new(),
             audit_log: Vec::new(),
+            diagnostics: Vec::new(),
         };
         snap.to_graph()
     }

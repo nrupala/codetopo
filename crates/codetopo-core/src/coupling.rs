@@ -523,6 +523,7 @@ mod tests {
             edges,
             audit_head: String::new(),
             audit_log: Vec::new(),
+            diagnostics: Vec::new(),
         }
         .to_graph()
     }
@@ -642,6 +643,7 @@ mod tests {
             edges,
             audit_head: String::new(),
             audit_log: Vec::new(),
+            diagnostics: Vec::new(),
         }
         .to_graph();
         let m = snap_graph.metrics();

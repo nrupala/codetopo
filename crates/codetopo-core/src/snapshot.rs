@@ -4,13 +4,17 @@
 
 //! JSON snapshot pathway (CODE_SCHEMA §7: JSON is the universal export
 //! pathway). A snapshot is the frozen, portable form of a [`Graph`]: nodes,
-//! edges, the schema version the producer emitted, and the head of the
-//! tamper-evident audit log it was exported under.
+//! edges, the schema version the producer emitted, the head of the
+//! tamper-evident audit log it was exported under, and — when the producer
+//! recorded them — the index-time diagnostics (CODE_SCHEMA §5), so a
+//! restored graph reports the same diagnostics as the graph it was
+//! exported from.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::diag::Diagnostic;
 use crate::graph::Graph;
 use crate::schema::{Edge, EdgeKind, Node};
 
@@ -41,6 +45,15 @@ pub struct Snapshot {
     /// with a fresh genesis log instead).
     #[serde(default)]
     pub audit_log: Vec<SnapshotAuditEntry>,
+    /// The index-time diagnostics recorded for the exported graph, in
+    /// builder order — the same vector the store persists and the
+    /// diagnostics answer serves. Additive like the audit trail: snapshots
+    /// written before this field existed parse with an empty vector (they
+    /// genuinely carry no recorded diagnostics), and the field is omitted
+    /// from the JSON entirely when empty, so a diagnostics-free graph's
+    /// snapshot bytes are exactly what earlier versions wrote.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 /// One entry of the tamper-evident audit log, as carried by a snapshot.
@@ -66,6 +79,20 @@ impl Snapshot {
     /// `audit_head` is the hash of the last entry of `audit_log`
     /// (empty string when the log is empty).
     pub fn from_graph(g: &Graph, audit_log: &[SnapshotAuditEntry]) -> Self {
+        Self::from_graph_with_diagnostics(g, audit_log, &[])
+    }
+
+    /// Export a graph with the diagnostics recorded when it was indexed.
+    /// Diagnostics live outside the [`Graph`] (the builder returns them
+    /// separately and the store persists them in their own table), so a
+    /// producer that has them — an index run, or any store-backed surface —
+    /// passes them here; a producer without them exports via
+    /// [`Snapshot::from_graph`] and the snapshot carries none.
+    pub fn from_graph_with_diagnostics(
+        g: &Graph,
+        audit_log: &[SnapshotAuditEntry],
+        diagnostics: &[Diagnostic],
+    ) -> Self {
         let mut edges: Vec<Edge> = g.edges().cloned().collect();
         edges.sort_by(|a, b| {
             a.from
@@ -79,6 +106,7 @@ impl Snapshot {
             edges,
             audit_head: audit_log.last().map(|e| e.hash.clone()).unwrap_or_default(),
             audit_log: audit_log.to_vec(),
+            diagnostics: diagnostics.to_vec(),
         }
     }
 
@@ -196,5 +224,48 @@ mod tests {
         let again = Snapshot::from_json(&out).expect("re-parses");
         assert_eq!(again.nodes[0].decisions, Some(4));
         assert_eq!(again.nodes[1].decisions, None);
+    }
+
+    /// Diagnostics recorded at index time travel with the snapshot:
+    /// export → JSON → parse returns them intact, in builder order.
+    #[test]
+    fn diagnostics_round_trip_with_the_snapshot() {
+        let diags = vec![
+            Diagnostic::MultiDefinition {
+                symbol: "pkg::m::f".to_string(),
+                locations: vec![],
+            },
+            Diagnostic::UnresolvedCall {
+                from: "pkg::m::g".to_string(),
+                target: "missing".to_string(),
+                line: 7,
+            },
+        ];
+        let graph = Graph::from_parts(HashMap::new(), Vec::new(), HashMap::new(), HashMap::new());
+        let snap = Snapshot::from_graph_with_diagnostics(&graph, &[], &diags);
+        let out = snap.to_json_pretty().expect("serializes");
+        assert!(
+            out.contains("\"diagnostics\""),
+            "recorded diagnostics are carried: {out}"
+        );
+        let again = Snapshot::from_json(&out).expect("re-parses");
+        assert_eq!(again.diagnostics, diags, "diagnostics survive the round trip");
+        assert_eq!(again, snap, "the whole snapshot is stable");
+    }
+
+    /// A graph with no recorded diagnostics writes exactly the bytes
+    /// earlier versions wrote (no `diagnostics` key), and a snapshot
+    /// written before the field existed parses with none recorded.
+    #[test]
+    fn absent_diagnostics_stay_absent() {
+        let graph = Graph::from_parts(HashMap::new(), Vec::new(), HashMap::new(), HashMap::new());
+        let snap = Snapshot::from_graph(&graph, &[]);
+        let out = snap.to_json_pretty().expect("serializes");
+        assert!(
+            !out.contains("diagnostics"),
+            "an unmeasured export gains no new bytes: {out}"
+        );
+        let legacy = Snapshot::from_json(&out).expect("own output re-parses");
+        assert!(legacy.diagnostics.is_empty());
     }
 }

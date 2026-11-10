@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use codetopo_cli::CliError;
 use codetopo_core::snapshot::SnapshotAuditEntry;
-use codetopo_core::{Graph, RankMetric, Snapshot};
+use codetopo_core::{Diagnostic, Graph, RankMetric, Snapshot};
 use codetopo_store::{AuditLog, Store};
 use napi::bindgen_prelude::*;
 use napi::Task;
@@ -127,6 +127,7 @@ pub struct GraphHandle {
     graph: Arc<Graph>,
     db_path: Option<String>,
     audit_entries: Vec<SnapshotAuditEntry>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl GraphHandle {
@@ -134,11 +135,13 @@ impl GraphHandle {
         graph: Graph,
         db_path: Option<String>,
         audit_entries: Vec<SnapshotAuditEntry>,
+        diagnostics: Vec<Diagnostic>,
     ) -> Self {
         GraphHandle {
             graph: Arc::new(graph),
             db_path,
             audit_entries,
+            diagnostics,
         }
     }
 
@@ -196,6 +199,20 @@ impl GraphHandle {
         }
         self.audit_entries.clone()
     }
+
+    fn diagnostics_fresh(&self) -> Vec<Diagnostic> {
+        // Same rule as the audit chain: a database handle re-reads the
+        // store so a snapshot taken after a re-index carries the current
+        // recorded diagnostics; a snapshot-born handle replays its own.
+        if let Some(db) = &self.db_path {
+            if let Ok(store) = Store::open(Path::new(db)) {
+                if let Ok(diagnostics) = store.load_diagnostics() {
+                    return diagnostics;
+                }
+            }
+        }
+        self.diagnostics.clone()
+    }
 }
 
 /// Open an index database into a handle (`Codetopo.open` underneath).
@@ -213,7 +230,15 @@ pub fn open_handle(db_path: String) -> Result<GraphHandle> {
         .and_then(|store| store.load_audit())
         .map(|audit| audit.snapshot_entries())
         .unwrap_or_default();
-    Ok(GraphHandle::from_graph(graph, Some(db_path), audit_entries))
+    let diagnostics = Store::open(path)
+        .and_then(|store| store.load_diagnostics())
+        .unwrap_or_default();
+    Ok(GraphHandle::from_graph(
+        graph,
+        Some(db_path),
+        audit_entries,
+        diagnostics,
+    ))
 }
 
 /// Build a handle directly from snapshot JSON (`fromSnapshot`).
@@ -222,7 +247,13 @@ pub fn open_handle(db_path: String) -> Result<GraphHandle> {
 pub fn handle_from_snapshot(snapshot_json: String) -> Result<GraphHandle> {
     let snap = parse_snapshot(&snapshot_json)?;
     let audit_entries = snap.audit_log.clone();
-    Ok(GraphHandle::from_graph(snap.to_graph(), None, audit_entries))
+    let diagnostics = snap.diagnostics.clone();
+    Ok(GraphHandle::from_graph(
+        snap.to_graph(),
+        None,
+        audit_entries,
+        diagnostics,
+    ))
 }
 
 /// Restore snapshot JSON into a database at `db_path` — the full
@@ -256,6 +287,9 @@ pub fn restore_snapshot(snapshot_json: String, db_path: String) -> Result<String
         .map_err(|e| coded_error("store_error", format!("store error: {e}")))?;
     store
         .save_audit(&audit)
+        .map_err(|e| coded_error("store_error", format!("store error: {e}")))?;
+    store
+        .save_diagnostics(&snap.diagnostics)
         .map_err(|e| coded_error("store_error", format!("store error: {e}")))?;
     to_json_string(&json!({ "nodes": nodes, "edges": edges, "verified": true }))
 }
@@ -418,7 +452,11 @@ impl GraphHandle {
     /// struct itself, bound to the current audit head.
     #[napi]
     pub fn snapshot(&self) -> Result<String> {
-        let snap = Snapshot::from_graph(&self.graph, &self.audit_entries_fresh());
+        let snap = Snapshot::from_graph_with_diagnostics(
+            &self.graph,
+            &self.audit_entries_fresh(),
+            &self.diagnostics_fresh(),
+        );
         to_json_string(
             &serde_json::to_value(snap)
                 .map_err(|e| coded_error("internal", format!("snapshot does not serialize: {e}")))?,
