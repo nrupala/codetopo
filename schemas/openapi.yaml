@@ -856,6 +856,69 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '504':
           $ref: '#/components/responses/RequestTimeout'
+  /ask:
+    get:
+      tags: [meta]
+      operationId: getAskPage
+      summary: The ask-your-index page — the keyed human ask surface.
+      description: |
+        A single self-contained page, served without a key like the root
+        document: it carries no data. The visitor pastes their own hosted
+        key into the page, and the page calls
+        `POST /v1/graphs/{id}/ask` with that key as the standard Bearer
+        credential. The key is never stored by the page.
+      security: []
+      responses:
+        '200':
+          description: The ask page.
+          content:
+            text/html:
+              schema:
+                type: string
+  /v1/graphs/{id}/ask:
+    post:
+      tags: [query]
+      operationId: askIndex
+      summary: Ask your index a plain-words question.
+      description: |
+        One plain-words question over the caller's own index (tenancy is
+        enforced exactly as on the query routes), routed by the ACP
+        agent's deterministic intent router over the chartered
+        functions. The response carries the measured `data` (the same
+        computations the query routes serve), a plain-language
+        `summary` templated over that data, a rendered `html` fragment
+        (tables, and the measured SVG when the question asked for a
+        drawing), and `refused: true` with a plain refusal when the
+        question maps to no chartered function — nothing is invented.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question:
+                  type: string
+      responses:
+        '200':
+          description: The routed answer, or a plain refusal.
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/schema:
     get:
       tags: [query]

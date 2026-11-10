@@ -19,6 +19,7 @@ name = "codetopo-server"
 path = "src/main.rs"
 
 [dependencies]
+codetopo-acp = { version = "0.9.0", path = "../codetopo-acp" }
 codetopo-cli = { version = "0.9.0", path = "../codetopo-cli" }
 codetopo-core = { version = "0.9.0", path = "../codetopo-core" }
 codetopo-store = { version = "0.9.0", path = "../codetopo-store" }

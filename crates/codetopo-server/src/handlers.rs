@@ -108,7 +108,7 @@ impl AppState {
     }
 
     /// Database path for one index id (§6: `<data_dir>/<id>.db`).
-    fn db_path(&self, index_id: &str) -> PathBuf {
+    pub(crate) fn db_path(&self, index_id: &str) -> PathBuf {
         self.config.index_db_path(index_id)
     }
 }
@@ -129,7 +129,7 @@ impl AppState {
 /// * Expired record: refused the same way, and cleaned up on the spot —
 ///   the record is dropped and the database file deleted — so expiry is
 ///   enforced even between the startup sweeps in `Config::prepare`.
-fn enforce_tenancy(state: &AppState, index_id: &str, key: &KeyId) -> Result<(), ApiError> {
+pub(crate) fn enforce_tenancy(state: &AppState, index_id: &str, key: &KeyId) -> Result<(), ApiError> {
     let Some(record) = state.tenancy.lookup(index_id)? else {
         if crate::tenancy::ownerless_readable(
             state.config.deny_ownerless_indexes,
@@ -193,22 +193,27 @@ pub fn router(state: AppState) -> Router {
         ));
     Router::new()
         .route("/v1/index", post(index))
+        .route("/v1/graphs/:id/ask", post(crate::ask::ask))
         .merge(queries)
         .with_state(state)
 }
 
-/// Build the public route table: exactly one route, `GET /`.
+/// Build the public route table: two routes, `GET /` and `GET /ask`.
 ///
 /// This is the deliberate exception to the rule [`router`] documents.
-/// Every `/v1` path sits behind [`crate::auth::metered`]; the root sits
-/// outside it (merged in [`crate::app`]) so the API host answers a browser
-/// or a bare `GET /` with what this service is and where its contract
-/// lives, instead of the framework's bare 404. The handler serves only
-/// facts that are already public — the service name, its version, and
-/// pointers — and touches no state, so opening this one route widens no
+/// Every `/v1` path sits behind [`crate::auth::metered`]; the root and
+/// the ask page sit outside it (merged in [`crate::app`]) so the API
+/// host answers a browser or a bare `GET /` with what this service is
+/// and where its contract lives, instead of the framework's bare 404.
+/// Both handlers serve only facts that are already public — the service
+/// name, its version, pointers, and the static ask page (which carries
+/// no data; the visitor's own key unlocks the metered ask route from
+/// the page) — and touch no state, so opening these routes widens no
 /// data surface.
 pub fn public_router() -> Router {
-    Router::new().route("/", get(root))
+    Router::new()
+        .route("/", get(root))
+        .route("/ask", get(crate::ask::ask_page))
 }
 
 /// The root document, content-negotiated: HTML for a browser's `Accept`,
@@ -265,6 +270,9 @@ requires an API key.</p>
 <h2>For humans</h2>
 <p>What codetopo does, pricing, and getting a key:
 <a href="https://aimlds.org/codetopo">aimlds.org/codetopo</a></p>
+<p>Already have a key? <a href="/ask">Ask your index</a> — plain-words
+questions over your own index, answered with rendered tables and a
+plain-language summary.</p>
 </body>
 </html>
 "#;
@@ -1469,7 +1477,7 @@ fn require_index(db: &FsPath, index_id: &str) -> Result<(), ApiError> {
 }
 
 /// Load a graph off the runtime, mapping store and id failures to API errors.
-fn load_graph_blocking(db: &FsPath, index_id: &str) -> Result<Graph, ApiError> {
+pub(crate) fn load_graph_blocking(db: &FsPath, index_id: &str) -> Result<Graph, ApiError> {
     require_index(db, index_id)?;
     load_graph_from_db(db).map_err(|err| map_cli_error(index_id, err))
 }
