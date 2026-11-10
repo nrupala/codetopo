@@ -23,7 +23,7 @@ codetopo-acp = { version = "0.9.1", path = "../codetopo-acp" }
 codetopo-cli = { version = "0.9.1", path = "../codetopo-cli" }
 codetopo-core = { version = "0.9.1", path = "../codetopo-core" }
 codetopo-store = { version = "0.9.1", path = "../codetopo-store" }
-axum = "0.7"
+axum = "0.8"
 flate2 = "1"
 rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
