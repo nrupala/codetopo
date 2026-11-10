@@ -4,6 +4,7 @@
 
 //! HTTP surface for codetopo (Phase 2 design §3, §4).
 
+pub mod ask;
 pub mod auth;
 pub mod config;
 pub mod error;
@@ -24,9 +25,10 @@ pub use handlers::{public_router, router, AppState};
 /// appending a metering record.
 ///
 /// The one exception is merged in *outside* that wrapper:
-/// [`handlers::public_router`] carries only `GET /`, the public root
-/// document (see its own comment for why it exists and why opening it is
-/// safe). Every `/v1` path stays inside the metered wrapper.
+/// [`handlers::public_router`] carries only `GET /` and `GET /ask`, the
+/// public root document and the ask page (see its own comment for why
+/// they exist and why opening them is safe). Every `/v1` path stays
+/// inside the metered wrapper.
 pub fn app(
     config: std::sync::Arc<config::Config>,
     keys: std::sync::Arc<keys::KeyStore>,
