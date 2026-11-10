@@ -168,7 +168,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-cli"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "clap",
  "codetopo-core",
@@ -182,7 +182,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-core"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "leiden-rs",
  "petgraph",
@@ -194,7 +194,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-extract"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "codetopo-core",
  "thiserror",
@@ -206,7 +206,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-store"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "codetopo-core",
  "hex",
