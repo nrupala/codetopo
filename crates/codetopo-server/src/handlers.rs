@@ -379,9 +379,11 @@ async fn index(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     Extension(plan): Extension<KeyPlan>,
+    RawQuery(raw_query): RawQuery,
     Query(query): Query<IndexQuery>,
     request: Request,
 ) -> Result<Json<Value>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/index", &["package"])?;
     let content_type = request
         .headers()
         .get(CONTENT_TYPE)
@@ -680,8 +682,10 @@ async fn descendants(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
     Query(query): Query<ClosureQuery>,
 ) -> Result<Json<ClosureResponse>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/descendants", &CLOSURE_PARAMS)?;
     closure(state, &key, index_id, query, "descendants", Direction::Downstream).await
 }
 
@@ -692,8 +696,10 @@ async fn ancestors(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
     Query(query): Query<ClosureQuery>,
 ) -> Result<Json<ClosureResponse>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/ancestors", &CLOSURE_PARAMS)?;
     closure(state, &key, index_id, query, "ancestors", Direction::Upstream).await
 }
 
@@ -705,8 +711,10 @@ async fn blast_radius(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
     Query(query): Query<ClosureQuery>,
 ) -> Result<Json<ClosureResponse>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/blast-radius", &CLOSURE_PARAMS)?;
     closure(
         state,
         &key,
@@ -813,8 +821,10 @@ async fn path(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
     Query(query): Query<PathQuery>,
 ) -> Result<Json<PathResponse>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/path", &["from", "to"])?;
     enforce_tenancy(&state, &index_id, &key)?;
     let from = required_param(query.from.as_deref(), "from")?;
     let to = required_param(query.to.as_deref(), "to")?;
@@ -868,7 +878,9 @@ async fn stats(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
 ) -> Result<Json<StatsResponse>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/stats", &[])?;
     enforce_tenancy(&state, &index_id, &key)?;
     let db = state.db_path(&index_id);
     let graph = load_graph_blocking(&db, &index_id)?;
@@ -969,7 +981,9 @@ async fn verify(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
 ) -> Result<Json<VerifyResponse>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/verify", &[])?;
     enforce_tenancy(&state, &index_id, &key)?;
     let db = state.db_path(&index_id);
     require_index(&db, &index_id)?;
@@ -1006,7 +1020,9 @@ async fn snapshot(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
 ) -> Result<Json<Snapshot>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/snapshot", &[])?;
     enforce_tenancy(&state, &index_id, &key)?;
     let db = state.db_path(&index_id);
     require_index(&db, &index_id)?;
@@ -1048,8 +1064,10 @@ async fn neighborhood(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
     Query(query): Query<NeighborhoodQuery>,
 ) -> Result<Json<Value>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/neighborhood", &["node", "depth"])?;
     enforce_tenancy(&state, &index_id, &key)?;
     let node = query
         .node
@@ -1085,8 +1103,14 @@ async fn symbol(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
     Query(query): Query<ClosureQuery>,
 ) -> Result<Json<Value>, ApiError> {
+    // The dossier route declares only `node` (the OpenAPI contract);
+    // the closure struct it reuses for decoding also carries
+    // `expand`/`limit`, which this route never honoured — refusing
+    // them is the point of the check, not an accident of the struct.
+    reject_unknown_params(raw_query.as_deref(), "/symbol", &["node"])?;
     enforce_tenancy(&state, &index_id, &key)?;
     let node_id = query
         .node
@@ -1114,7 +1138,9 @@ async fn diagnostics(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
 ) -> Result<Json<Value>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/diagnostics", &[])?;
     enforce_tenancy(&state, &index_id, &key)?;
     let db = state.db_path(&index_id);
     require_index(&db, &index_id)?;
@@ -1139,33 +1165,69 @@ struct RankQuery {
     limit: Option<String>,
 }
 
-/// The parameter names `rank` accepts. Serde's query decoding drops
-/// unknown keys silently, so a caller asking `?metric=pagerank`
-/// (a plausible guess; the parameter is `by`) used to receive the
-/// default metric's answer as if the parameter had been honoured —
-/// the failure behind the 0.9.0 T2 filing. The raw query is checked
-/// against this list and anything else is refused with
+/// Refuse any query parameter a route does not declare.
+///
+/// Serde's query decoding drops unknown keys silently, so a caller
+/// asking `?metric=pagerank` (a plausible guess; the parameter is
+/// `by`) used to receive the default metric's answer as if the
+/// parameter had been honoured — the failure behind the 0.9.0 T2
+/// filing. The rank route first refused unknown keys in 0.9.1's
+/// predecessor fix; since 0.9.1 every `/v1` route applies the same
+/// contract: the raw query is checked against the route's declared
+/// parameter names and anything else is refused with
 /// `invalid_param` naming the key, the same discipline as a bad
-/// value. (The other routes still decode leniently; rank is the
-/// route where a silently-ignored parameter changes the meaning of
-/// the answer, and the one a tester measured.)
-const RANK_PARAMS: [&str; 2] = ["by", "limit"];
-
-fn reject_unknown_rank_params(raw: &str) -> Result<(), ApiError> {
+/// value. A silently-ignored parameter is a wrong answer wearing a
+/// 200, on every route, not only the one a tester measured.
+pub(crate) fn reject_unknown_params(
+    raw_query: Option<&str>,
+    route: &str,
+    allowed: &[&str],
+) -> Result<(), ApiError> {
+    let Some(raw) = raw_query else {
+        return Ok(());
+    };
     for pair in raw.split('&') {
         if pair.is_empty() {
             continue;
         }
         let key = pair.split('=').next().unwrap_or("");
-        if !RANK_PARAMS.contains(&key) {
+        if !allowed.contains(&key) {
             return Err(ApiError::invalid_param(
                 key,
-                "unknown parameter for /rank; expected 'by' or 'limit'",
+                &format!(
+                    "unknown parameter for {route}; expected {expected}",
+                    expected = expected_params(allowed),
+                ),
             ));
         }
     }
     Ok(())
 }
+
+/// The declared names as prose for the refusal message:
+/// `'by'`, `'by' or 'limit'`, `'node', 'expand' or 'limit'`.
+fn expected_params(allowed: &[&str]) -> String {
+    match allowed {
+        [] => "no parameters".to_string(),
+        [only] => format!("'{only}'"),
+        [first, second] => format!("'{first}' or '{second}'"),
+        _ => {
+            let (last, rest) = allowed.split_last().expect("non-empty");
+            let mut out = String::new();
+            for (i, name) in rest.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&format!("'{name}'"));
+            }
+            out.push_str(&format!(" or '{last}'"));
+            out
+        }
+    }
+}
+
+/// The parameter names the closure routes accept.
+const CLOSURE_PARAMS: [&str; 3] = ["node", "expand", "limit"];
 
 /// `GET /v1/graphs/{id}/rank?by=&limit=` — the top symbols by a
 /// measurement (a count, or a §4a centrality value), with the
@@ -1181,9 +1243,7 @@ async fn rank(
     RawQuery(raw_query): RawQuery,
     Query(query): Query<RankQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    if let Some(raw) = raw_query.as_deref() {
-        reject_unknown_rank_params(raw)?;
-    }
+    reject_unknown_params(raw_query.as_deref(), "/rank", &["by", "limit"])?;
     enforce_tenancy(&state, &index_id, &key)?;
     let by = query
         .by
@@ -1229,7 +1289,9 @@ async fn metrics(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
 ) -> Result<Json<Value>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/metrics", &[])?;
     enforce_tenancy(&state, &index_id, &key)?;
     let db = state.db_path(&index_id);
     let graph = load_graph_blocking(&db, &index_id)?;
@@ -1259,8 +1321,10 @@ async fn communities(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
     Query(query): Query<CommunitiesQuery>,
 ) -> Result<Json<Value>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/communities", &["limit"])?;
     enforce_tenancy(&state, &index_id, &key)?;
     let limit: usize = match query.limit.as_deref().map(str::trim) {
         None | Some("") => DEFAULT_LIMIT,
@@ -1292,7 +1356,9 @@ async fn topo_sort(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
 ) -> Result<Json<Value>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/topo-sort", &[])?;
     enforce_tenancy(&state, &index_id, &key)?;
     let db = state.db_path(&index_id);
     let graph = load_graph_blocking(&db, &index_id)?;
@@ -1321,9 +1387,11 @@ async fn render(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
     Query(query): Query<RenderQuery>,
 ) -> Result<axum::response::Response, ApiError> {
     use axum::response::IntoResponse;
+    reject_unknown_params(raw_query.as_deref(), "/render", &["layout", "format"])?;
     enforce_tenancy(&state, &index_id, &key)?;
     let layout_name = query.layout.as_deref().unwrap_or("layered");
     let format = query.format.as_deref().unwrap_or("json");
@@ -1376,7 +1444,9 @@ async fn history(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
 ) -> Result<Json<Value>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/history", &[])?;
     enforce_tenancy(&state, &index_id, &key)?;
     let db = state.db_path(&index_id);
     let graph = load_graph_blocking(&db, &index_id)?;
@@ -1402,8 +1472,10 @@ async fn diff(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
     Query(query): Query<DiffQuery>,
 ) -> Result<Json<Value>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/diff", &["other"])?;
     enforce_tenancy(&state, &index_id, &key)?;
     let other_id = query
         .other
@@ -1434,8 +1506,10 @@ async fn search(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<Value>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/search", &["q", "limit"])?;
     enforce_tenancy(&state, &index_id, &key)?;
     let q = query
         .q
@@ -1464,8 +1538,9 @@ async fn search(
 /// `GET /v1/schema` — the schema description, identical to the CLI's
 /// `schema` command and the MCP `codetopo_describe_schema` tool
 /// (one generator in the CLI library serves all three).
-async fn schema() -> Json<Value> {
-    Json(describe_schema())
+async fn schema(RawQuery(raw_query): RawQuery) -> Result<Json<Value>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/schema", &[])?;
+    Ok(Json(describe_schema()))
 }
 
 /// Open an index database, mapping "no such file" to `unknown_index`.

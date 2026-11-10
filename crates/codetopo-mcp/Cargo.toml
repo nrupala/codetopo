@@ -4,7 +4,7 @@
 
 [package]
 name = "codetopo-mcp"
-version = "0.9.0"
+version = "0.9.1"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -23,9 +23,9 @@ name = "codetopo_mcp"
 path = "src/lib.rs"
 
 [dependencies]
-codetopo-cli = { version = "0.9.0", path = "../codetopo-cli" }
-codetopo-core = { version = "0.9.0", path = "../codetopo-core" }
-codetopo-store = { version = "0.9.0", path = "../codetopo-store" }
+codetopo-cli = { version = "0.9.1", path = "../codetopo-cli" }
+codetopo-core = { version = "0.9.1", path = "../codetopo-core" }
+codetopo-store = { version = "0.9.1", path = "../codetopo-store" }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }

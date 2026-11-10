@@ -197,7 +197,7 @@ end
 # Versions (static strings — copied, never freed)
 # ---------------------------------------------------------------------------
 
-"""The codetopo core version this library was built against (e.g. \"0.9.0\")."""
+"""The codetopo core version this library was built against (e.g. \"0.9.1\")."""
 codetopo_version() = (_ensure_lib(); _static_string(
     ccall((:codetopo_version, _LIB_PATH[]), Ptr{Cchar}, ())))
 

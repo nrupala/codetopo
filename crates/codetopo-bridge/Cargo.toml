@@ -4,7 +4,7 @@
 
 [package]
 name = "codetopo-bridge"
-version = "0.9.0"
+version = "0.9.1"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -19,7 +19,7 @@ name = "codetopo-bridge"
 path = "src/main.rs"
 
 [dependencies]
-codetopo-server = { version = "0.9.0", path = "../codetopo-server" }
+codetopo-server = { version = "0.9.1", path = "../codetopo-server" }
 aes-gcm = "0.10"
 axum = "0.7"
 hmac = "0.12"

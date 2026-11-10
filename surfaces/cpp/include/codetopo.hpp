@@ -287,7 +287,7 @@ inline Graph Graph::load_snapshot(const std::string& snapshot_json) {
 }
 
 /// Version of the codetopo core this library was built against
-/// (e.g. "0.9.0"). A copy — the C ABI's static string is never
+/// (e.g. "0.9.1"). A copy — the C ABI's static string is never
 /// freed and never exposed.
 inline std::string version() {
     const char* value = codetopo_version();

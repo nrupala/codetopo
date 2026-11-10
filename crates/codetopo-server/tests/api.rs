@@ -562,10 +562,13 @@ async fn a_served_request_appends_one_metering_record() {
     let before = harness.metering().len();
 
     // A query string is deliberately present: metering records the path without
-    // it, so a client cannot inflate the log with parameters.
+    // it, so a client cannot inflate the log with parameters. (The
+    // parameters are all declared ones — since 0.9.1 an undeclared
+    // parameter is refused, so this probe cannot smuggle one in to
+    // make its point any more.)
     let (status, _body) = harness
         .get(&format!(
-            "/v1/graphs/{index_id}/descendants?node=anything&limit=5&extra=x"
+            "/v1/graphs/{index_id}/descendants?node=anything&limit=5&expand=false"
         ))
         .await;
     assert_eq!(status, StatusCode::OK);
@@ -1147,6 +1150,222 @@ async fn rank_route_refuses_unknown_parameters() {
         .get(&format!("/v1/graphs/{index_id}/rank?by=pagerank&metric=pagerank"))
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// The rank refusal, generalized (0.9.1): every query route refuses
+/// an undeclared parameter with the flat `invalid_param`, naming the
+/// key — a silently-ignored parameter is a wrong answer wearing a
+/// 200 on every route, not only on rank. Each family's declared
+/// parameters keep working (the `valid` column is the control), and
+/// the refusal fires even when the rest of the request is valid.
+#[tokio::test]
+async fn query_routes_refuse_unknown_parameters() {
+    let harness = Harness::new();
+    let report = harness.index_fixture().await;
+    let index_id = report["index_id"].as_str().expect("index_id").to_string();
+    let graph = load_graph_from_db(&harness.db(&index_id)).expect("load graph");
+    let node = graph
+        .nodes()
+        .next()
+        .expect("fixture has nodes")
+        .id
+        .clone();
+    let enc = urlencode(&node);
+
+    // (route label, a valid request, the same request plus `&bogus=1`)
+    let families: Vec<(&str, String, String)> = vec![
+        (
+            "descendants",
+            format!("/v1/graphs/{index_id}/descendants?node={enc}"),
+            format!("/v1/graphs/{index_id}/descendants?node={enc}&bogus=1"),
+        ),
+        (
+            "ancestors",
+            format!("/v1/graphs/{index_id}/ancestors?node={enc}"),
+            format!("/v1/graphs/{index_id}/ancestors?node={enc}&bogus=1"),
+        ),
+        (
+            "blast-radius",
+            format!("/v1/graphs/{index_id}/blast-radius?node={enc}"),
+            format!("/v1/graphs/{index_id}/blast-radius?node={enc}&bogus=1"),
+        ),
+        (
+            "path",
+            format!("/v1/graphs/{index_id}/path?from={enc}&to={enc}"),
+            format!("/v1/graphs/{index_id}/path?from={enc}&to={enc}&bogus=1"),
+        ),
+        (
+            "neighborhood",
+            format!("/v1/graphs/{index_id}/neighborhood?node={enc}&depth=1"),
+            format!("/v1/graphs/{index_id}/neighborhood?node={enc}&depth=1&bogus=1"),
+        ),
+        (
+            "symbol",
+            format!("/v1/graphs/{index_id}/symbol?node={enc}"),
+            format!("/v1/graphs/{index_id}/symbol?node={enc}&bogus=1"),
+        ),
+        (
+            "search",
+            format!("/v1/graphs/{index_id}/search?q=fixture"),
+            format!("/v1/graphs/{index_id}/search?q=fixture&bogus=1"),
+        ),
+        (
+            "diff",
+            format!("/v1/graphs/{index_id}/diff?other={index_id}"),
+            format!("/v1/graphs/{index_id}/diff?other={index_id}&bogus=1"),
+        ),
+        (
+            "communities",
+            format!("/v1/graphs/{index_id}/communities?limit=5"),
+            format!("/v1/graphs/{index_id}/communities?limit=5&bogus=1"),
+        ),
+        (
+            "render",
+            format!("/v1/graphs/{index_id}/render?layout=layered&format=json"),
+            format!("/v1/graphs/{index_id}/render?layout=layered&format=json&bogus=1"),
+        ),
+    ];
+    for (label, valid, with_bogus) in &families {
+        let (status, body) = harness.get(valid).await;
+        assert_eq!(status, StatusCode::OK, "{label} control failed: {body}");
+        let (status, body) = harness.get(with_bogus).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{label} must refuse an unknown parameter: {body}"
+        );
+        assert_eq!(body["error"], "invalid_param", "{label}: {body}");
+        assert!(
+            body["message"].as_str().expect("message").contains("bogus"),
+            "{label} refusal names the parameter: {body}"
+        );
+    }
+
+    // `symbol` declares only `node`: the closure parameters it shares
+    // a decoding struct with are refused there, not silently dropped.
+    let (status, body) = harness
+        .get(&format!("/v1/graphs/{index_id}/symbol?node={enc}&expand=true"))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "symbol expand: {body}");
+    assert_eq!(body["error"], "invalid_param");
+    assert!(
+        body["message"].as_str().expect("message").contains("expand"),
+        "the refusal names `expand`: {body}"
+    );
+}
+
+/// The no-parameter routes refuse any parameter the same way: they
+/// declare none, so every key is unknown there.
+#[tokio::test]
+async fn parameterless_routes_refuse_any_parameter() {
+    let harness = Harness::new();
+    let report = harness.index_fixture().await;
+    let index_id = report["index_id"].as_str().expect("index_id").to_string();
+
+    for route in [
+        "stats",
+        "verify",
+        "snapshot",
+        "diagnostics",
+        "metrics",
+        "topo-sort",
+        "history",
+    ] {
+        let (status, body) = harness
+            .get(&format!("/v1/graphs/{index_id}/{route}"))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{route} control failed: {body}");
+        let (status, body) = harness
+            .get(&format!("/v1/graphs/{index_id}/{route}?bogus=1"))
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{route} must refuse an unknown parameter: {body}"
+        );
+        assert_eq!(body["error"], "invalid_param", "{route}: {body}");
+        assert!(
+            body["message"].as_str().expect("message").contains("bogus"),
+            "{route} refusal names the parameter: {body}"
+        );
+    }
+
+    let (status, body) = harness.get("/v1/schema").await;
+    assert_eq!(status, StatusCode::OK, "schema control: {body}");
+    let (status, body) = harness.get("/v1/schema?bogus=1").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "schema refusal: {body}");
+    assert_eq!(body["error"], "invalid_param");
+}
+
+/// `POST /v1/index` reads one query parameter (`package`, for the
+/// archive mode); anything else is refused like everywhere else,
+/// and the declared one keeps working in JSON mode too.
+#[tokio::test]
+async fn index_route_refuses_unknown_parameters() {
+    let harness = Harness::new();
+    let repo = fixture_repo().to_string_lossy().to_string();
+
+    let (status, body) = harness
+        .send(
+            Method::POST,
+            "/v1/index?bogus=1",
+            Some(json!({ "repo_path": repo, "package": "fixture" })),
+            Some(format!("Bearer {KEY_ID}:{SECRET}")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "index refusal: {body}");
+    assert_eq!(body["error"], "invalid_param");
+    assert!(
+        body["message"].as_str().expect("message").contains("bogus"),
+        "the refusal names the parameter: {body}"
+    );
+
+    let (status, body) = harness
+        .send(
+            Method::POST,
+            "/v1/index?package=fixture",
+            Some(json!({ "repo_path": repo, "package": "fixture" })),
+            Some(format!("Bearer {KEY_ID}:{SECRET}")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "declared parameter works: {body}");
+}
+
+/// The ask route (W1's G1 surface, merged while this change was in
+/// flight) declares no query parameters — its input is the JSON
+/// body — and is covered by the same refusal: a stray parameter is
+/// refused by name, and the plain route keeps answering.
+#[tokio::test]
+async fn ask_route_refuses_unknown_parameters() {
+    let harness = Harness::new();
+    let report = harness.index_fixture().await;
+    let index_id = report["index_id"].as_str().expect("index_id").to_string();
+    let question = json!({ "question": "How many nodes and edges are in my index?" });
+
+    let (status, body) = harness
+        .send(
+            Method::POST,
+            &format!("/v1/graphs/{index_id}/ask"),
+            Some(question.clone()),
+            Some(format!("Bearer {KEY_ID}:{SECRET}")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "ask control failed: {body}");
+
+    let (status, body) = harness
+        .send(
+            Method::POST,
+            &format!("/v1/graphs/{index_id}/ask?bogus=1"),
+            Some(question),
+            Some(format!("Bearer {KEY_ID}:{SECRET}")),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "ask refusal: {body}");
+    assert_eq!(body["error"], "invalid_param");
+    assert!(
+        body["message"].as_str().expect("message").contains("bogus"),
+        "the refusal names the parameter: {body}"
+    );
 }
 
 /// The metrics route returns the shared metrics object (plus

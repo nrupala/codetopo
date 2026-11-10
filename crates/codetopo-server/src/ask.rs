@@ -39,7 +39,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use axum::extract::{Path as UrlPath, State};
+use axum::extract::{Path as UrlPath, RawQuery, State};
 use axum::response::Html;
 use axum::{Extension, Json};
 use serde::Serialize;
@@ -53,7 +53,7 @@ use codetopo_store::Store;
 
 use crate::auth::KeyId;
 use crate::error::ApiError;
-use crate::handlers::{enforce_tenancy, load_graph_blocking, AppState};
+use crate::handlers::{enforce_tenancy, load_graph_blocking, reject_unknown_params, AppState};
 
 /// One routed answer: the machine data, the plain-language summary
 /// templated over it, an optional measured SVG drawing, and whether
@@ -563,8 +563,14 @@ pub async fn ask(
     State(state): State<AppState>,
     Extension(key): Extension<KeyId>,
     UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
     body: axum::body::Bytes,
 ) -> Result<Json<Value>, ApiError> {
+    // The ask route declares no query parameters (its input is the
+    // JSON body); the generalized refusal covers it like every
+    // other /v1 route, so a stray parameter is refused by name
+    // rather than silently ignored.
+    reject_unknown_params(raw_query.as_deref(), "/ask", &[])?;
     let parsed: AskRequest = serde_json::from_slice(&body)
         .map_err(|err| ApiError::invalid_body(&format!("not valid JSON for this route: {err}")))?;
     let question = parsed

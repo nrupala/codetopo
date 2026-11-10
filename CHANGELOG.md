@@ -10,6 +10,94 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-11-09
+
+A patch release over 0.9.0: the three hosted test-pass defects
+fixed, the board's three rectification flags carried, one API
+discipline completed, and one test flake retired. No schema change
+(SCHEMA_VERSION stays 1.2), no stored-format change, and every
+pre-existing answer is unchanged except where a fix below says
+otherwise. All eight crates on the 0.9.x line move to 0.9.1
+together; the independently versioned surfaces (codetopo-c,
+codetopo-napi, and the JS/R/Julia packages at 0.1.0) stay at their
+own versions, as before.
+
+- **Hosted API — an unknown query parameter is now refused on
+  every route.** The rank route learned to refuse undeclared
+  parameters in the #130 fix below (`?metric=pagerank` no longer
+  falls back to the default metric wearing a 200); that contract
+  now covers the whole `/v1` surface. Each route declares its
+  parameter set — closures `node`/`expand`/`limit`, `path`
+  `from`/`to`, `neighborhood` `node`/`depth`, `symbol` `node`
+  only, `search` `q`/`limit`, `rank` `by`/`limit`, `diff` `other`,
+  `communities` `limit`, `render` `layout`/`format`, `index`
+  `package` — and the routes that declare none (`stats`, `verify`,
+  `snapshot`, `diagnostics`, `metrics`, `topo-sort`, `history`,
+  `schema`, and the body-only `ask`) refuse any parameter at all. The refusal is the API's
+  flat 400 `invalid_param`, naming the offending key and the names
+  the route does declare. One existing test moved with the
+  contract: the metering probe that once proved query strings are
+  not logged by sending an undeclared `extra=x` now sends declared
+  parameters only — the log-stripping point it proves is unchanged.
+  Pinned per route family in the server suite (ten query families,
+  the parameterless routes, and the index route), beside the
+  original rank pin.
+
+- **Python resolution — bare sibling imports and same-package
+  calls resolve internally (PR #130).** The 0.9.0 hosted test pass
+  (Aarona's T1) measured 0 of 7 ground-truth imports and 0 of 7
+  calls resolving internally on a five-file Python fixture, because
+  `import b` in package `repo` was emitted as `external::b` and a
+  callee written `b.work` was looked up whole against an index
+  keyed by last segment. The builder now resolves a bare-name
+  import target to a sibling module in the importer's own
+  directory, and resolves a qualified callee (`b.work`,
+  `net::dial`) to the candidate whose hosting module the qualifier
+  names, ahead of the suffix tiers. On the filed fixture: imports
+  7/7 and calls 7/7 internal, no external stubs, and topo-sort —
+  which runs over the §9 dependency set and had correctly reported
+  a DAG over the wrong graph — now flags both ground-truth cycles
+  (8 groups, `cyclic_groups: 2`). Blast radius counts all five
+  functions for every module in the cycle. The rank half of that
+  filing is the refusal above: the metric parameter is `by` on
+  every surface, and the unrecognized names Aarona tried are now
+  refused by name instead of silently ignored.
+
+- **Board test-pass rectifications (PR #108).** The three
+  non-blocking flags from Milo's independent 0.9.0 pass, each
+  re-verified before fixing. F-M2: `codetopo render --layout force
+  --svg <file>` on a graph the force layout declines now fails
+  loudly — the decline JSON still prints, but the reason reaches
+  stderr and the exit is non-zero (it previously exited 0, wrote
+  no file, and said nothing outside the JSON). F-M3b: `render`
+  joins the `/v1/schema` query vocabulary, pinned by an exact-set
+  test so a future route cannot drift out of the schema silently;
+  F-M3a: README, llms-install and LAUNCHGUIDE state the install
+  targets plainly (the CLI is the `codetopo-cli` crate, the MCP
+  server is `codetopo-mcp`; there is no crate named `codetopo`).
+  F-M1: CODE_SCHEMA §9 and the PageRank method string now state
+  that 1e-6 is the power-iteration stopping rule (L1 step below
+  n × 1e-6), not an accuracy bound, with the test pass's
+  measurements on record.
+
+- **Test determinism — the `lifecycle_py` flake is fixed.** The
+  lifecycle walk asserted two index runs of an unchanged tree
+  produce byte-identical snapshots; the snapshot embeds the audit
+  log, whose entries carry wall-clock timestamps (one-second
+  resolution) with hashes chained from them, so the assertion
+  failed whenever the two runs straddled a second boundary —
+  measured at 2–3 failures per 200 runs on the unmodified tree.
+  The comparison now normalizes only the timestamp-derived fields
+  (each entry's `ts`, the chained hashes, the head) and keeps its
+  teeth everywhere else: each snapshot's audit chain must first
+  recompute and verify for its own timestamps, the links and head
+  must line up, and the two logs must record identical operations
+  — after which the normalized snapshots must be equal and
+  serialize byte-identically. Proof: 30 consecutive runs of the
+  test green, and a hand-driven pair of indexes taken 1.2 s apart
+  shown to differ in exactly the normalized fields and nothing
+  else.
+
 - **codetopo-bridge — a full refund ends the entitlement.** The
   refund change below named its open question; the Director ruled
   it the same day (2026-11-03): a FULL refund — the cumulative

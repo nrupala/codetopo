@@ -62,7 +62,7 @@ Default search, in order: `$CODETOPO_C_LIB`, then
 ```julia
 using Codetopo
 
-Codetopo.codetopo_version()   # "0.9.0" — the bound core
+Codetopo.codetopo_version()   # "0.9.1" — the bound core
 Codetopo.schema_version()     # "1.2"   — CODE_SCHEMA
 
 report = Codetopo.index_repo("path/to/repo", "index.db"; package="mypkg")

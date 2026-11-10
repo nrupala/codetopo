@@ -6,7 +6,11 @@
 //! fixture (`codetopo-extract/tests/fixture-py`, package `quarry`):
 //!
 //! 1. index → snapshot; a second index of the untouched tree
-//!    produces a **byte-identical** snapshot;
+//!    produces an identical snapshot — byte-identical in everything
+//!    except the audit log's wall-clock timestamps and the hashes
+//!    chained from them (the one place a snapshot honestly records
+//!    *when* it was made; see [`assert_snapshots_match`] for how the
+//!    comparison keeps its teeth there);
 //! 2. snapshot → restore → the restored graph is the same graph
 //!    (same node ids, same edge triples);
 //! 3. a self-diff is empty;
@@ -21,7 +25,8 @@ use std::path::{Path, PathBuf};
 
 use codetopo_cli::{index_repo, load_graph_from_db, restore_snapshot};
 use codetopo_core::measure::diff_graphs;
-use codetopo_core::Graph;
+use codetopo_core::{Graph, Snapshot};
+use codetopo_store::AuditLog;
 
 fn fixture_py_source() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../codetopo-extract/tests/fixture-py")
@@ -46,6 +51,103 @@ fn copy_fixture() -> PathBuf {
     repo
 }
 
+/// Assert two snapshots of the same tree are the same snapshot.
+///
+/// Everything must match exactly — schema, nodes, edges, and the
+/// audit log's recorded operations — with one honest exception: the
+/// audit entries' `ts` fields are wall-clock seconds
+/// (`codetopo_store`'s `now_ts`), and each entry's `hash`, the
+/// `prev_hash` links, and the snapshot's `audit_head` are chained
+/// from those timestamps, so two runs that straddle a one-second
+/// boundary differ in exactly those fields. (That was the flake
+/// this replaces: a raw byte comparison failed ~1–2% of runs,
+/// whenever the two index runs crossed a second.)
+///
+/// The exception is not a blind spot. Before anything is
+/// normalized, each snapshot must prove its own chain: the entries
+/// recompute and verify end-to-end for *their* timestamps
+/// ([`AuditLog::verify`]), the links and the head line up, the
+/// timestamps parse as seconds and never run backwards, and the
+/// two logs record the same operations (`seq`/`op`/`payload`
+/// identical, entry for entry). Only the timestamp-derived fields
+/// are then blanked, and the normalized snapshots must be equal
+/// *and* serialize to identical bytes — the byte-identity claim
+/// survives everywhere it was ever true.
+fn assert_snapshots_match(bytes1: &[u8], bytes2: &[u8]) {
+    let snap1 = Snapshot::from_json(std::str::from_utf8(bytes1).expect("snapshot 1 is UTF-8"))
+        .expect("snapshot 1 parses");
+    let snap2 = Snapshot::from_json(std::str::from_utf8(bytes2).expect("snapshot 2 is UTF-8"))
+        .expect("snapshot 2 parses");
+
+    for (label, snap) in [("first", &snap1), ("second", &snap2)] {
+        let log = AuditLog::from_snapshot_entries(&snap.audit_log);
+        assert!(
+            log.verify(),
+            "{label} snapshot's audit chain recomputes for its own timestamps"
+        );
+        assert_eq!(
+            snap.audit_head,
+            snap.audit_log.last().map(|e| e.hash.clone()).unwrap_or_default(),
+            "{label} snapshot's head is its chain's last link"
+        );
+        let mut prev_ts: Option<u64> = None;
+        for (i, entry) in snap.audit_log.iter().enumerate() {
+            assert_eq!(entry.seq, i as u64, "{label} audit seq is positional");
+            assert_eq!(
+                entry.prev_hash,
+                if i == 0 {
+                    "GENESIS".to_string()
+                } else {
+                    snap.audit_log[i - 1].hash.clone()
+                },
+                "{label} audit entry {i} links to its predecessor"
+            );
+            let ts: u64 = entry
+                .ts
+                .parse()
+                .unwrap_or_else(|_| panic!("{label} audit entry {i} ts is seconds: {}", entry.ts));
+            if let Some(prev) = prev_ts {
+                assert!(ts >= prev, "{label} audit timestamps never run backwards");
+            }
+            prev_ts = Some(ts);
+        }
+    }
+
+    assert_eq!(
+        snap1.audit_log.len(),
+        snap2.audit_log.len(),
+        "both runs record the same number of audit operations"
+    );
+    for (e1, e2) in snap1.audit_log.iter().zip(&snap2.audit_log) {
+        assert_eq!(
+            (e1.seq, &e1.op, &e1.payload),
+            (e2.seq, &e2.op, &e2.payload),
+            "both runs record the same audit operations"
+        );
+    }
+
+    let normalize = |snap: &Snapshot| {
+        let mut snap = snap.clone();
+        snap.audit_head.clear();
+        for entry in &mut snap.audit_log {
+            entry.ts.clear();
+            entry.prev_hash.clear();
+            entry.hash.clear();
+        }
+        snap
+    };
+    let (norm1, norm2) = (normalize(&snap1), normalize(&snap2));
+    assert_eq!(
+        norm1, norm2,
+        "snapshots of an unchanged tree agree outside the audit clock"
+    );
+    assert_eq!(
+        norm1.to_json_pretty().expect("normalized 1 serializes"),
+        norm2.to_json_pretty().expect("normalized 2 serializes"),
+        "normalized snapshots are byte-identical"
+    );
+}
+
 fn node_ids(graph: &Graph) -> BTreeSet<String> {
     graph.nodes().map(|n| n.id.clone()).collect()
 }
@@ -68,7 +170,9 @@ fn py_snapshot_restore_and_edit_diff() {
     let snap1 = work.join("snap1.json");
     let snap2 = work.join("snap2.json");
 
-    // 1. Index with a snapshot; index again — byte-identical bytes.
+    // 1. Index with a snapshot; index again — the same snapshot
+    // (byte-identical outside the audit log's wall-clock fields;
+    // see assert_snapshots_match).
     let report = index_repo(&repo, &db1, "quarry", Some(&snap1), Some(b"test-key"))
         .expect("index succeeds");
     assert_eq!(report.files_indexed, 4, "3 .py files + the README");
@@ -80,7 +184,7 @@ fn py_snapshot_restore_and_edit_diff() {
     assert_eq!(report2.nodes, report.nodes);
     let bytes1 = std::fs::read(&snap1).expect("read snapshot 1");
     let bytes2 = std::fs::read(&snap2).expect("read snapshot 2");
-    assert_eq!(bytes1, bytes2, "snapshots of an unchanged tree are byte-identical");
+    assert_snapshots_match(&bytes1, &bytes2);
     let snap_value: serde_json::Value =
         serde_json::from_slice(&bytes1).expect("snapshot is JSON");
     assert_eq!(

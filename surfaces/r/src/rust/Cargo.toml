@@ -18,9 +18,9 @@ name = "codetopo"
 
 [dependencies]
 extendr-api = "0.9.0"
-codetopo-core = { version = "0.9.0", path = "../../../../crates/codetopo-core" }
-codetopo-cli = { version = "0.9.0", path = "../../../../crates/codetopo-cli" }
-codetopo-store = { version = "0.9.0", path = "../../../../crates/codetopo-store" }
+codetopo-core = { version = "0.9.1", path = "../../../../crates/codetopo-core" }
+codetopo-cli = { version = "0.9.1", path = "../../../../crates/codetopo-cli" }
+codetopo-store = { version = "0.9.1", path = "../../../../crates/codetopo-store" }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 
 # This crate is the R package's private Rust crate. It lives under
