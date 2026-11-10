@@ -67,6 +67,7 @@ fn graph_of(nodes: Vec<Node>, edges: Vec<Edge>) -> Graph {
         edges,
         audit_head: String::new(),
         audit_log: Vec::new(),
+        diagnostics: Vec::new(),
     }
     .to_graph()
 }

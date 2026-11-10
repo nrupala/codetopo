@@ -757,6 +757,7 @@ impl Store {
             edges,
             audit_head: String::new(),
             audit_log: Vec::new(),
+            diagnostics: Vec::new(),
         };
         Ok(snap.to_graph())
     }

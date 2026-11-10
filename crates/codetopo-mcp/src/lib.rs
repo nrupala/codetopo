@@ -658,7 +658,8 @@ fn tool_snapshot(args: &Value) -> Result<Value, ToolError> {
     let store = Store::open(&db_path).map_err(store_failure)?;
     let graph = store.load_graph().map_err(store_failure)?;
     let audit = store.load_audit().map_err(store_failure)?;
-    let snapshot = Snapshot::from_graph(&graph, &audit.snapshot_entries());
+    let diagnostics = store.load_diagnostics().map_err(store_failure)?;
+    let snapshot = Snapshot::from_graph_with_diagnostics(&graph, &audit.snapshot_entries(), &diagnostics);
     serde_json::to_value(snapshot).map_err(|err| ToolError::MissingParam(err.to_string()))
 }
 

@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use codetopo_core::snapshot::SnapshotAuditEntry;
 use codetopo_core::{
-    EdgeKind, Graph, GraphBuilder, Node, NodeKind, PathStep, RankMetric, Snapshot,
+    Diagnostic, EdgeKind, Graph, GraphBuilder, Node, NodeKind, PathStep, RankMetric, Snapshot,
 };
 use codetopo_extract::{extract_file, is_supported};
 use codetopo_store::{hmac_proof, sha256_hex, verify_proof, AuditLog, InsertStats, Store};
@@ -360,9 +360,11 @@ pub fn index_repo(
     );
     store.save_audit(&audit)?;
 
-    // 6. Optional snapshot (+ proof when a key is available).
+    // 6. Optional snapshot (+ proof when a key is available). The
+    // snapshot carries the diagnostics this index just recorded, so a
+    // restore of it reports the same diagnostics as this run.
     if let Some(sp) = snapshot_path {
-        write_snapshot_file(&graph, &audit.snapshot_entries(), sp, hmac_key)?;
+        write_snapshot_file(&graph, &audit.snapshot_entries(), &diags, sp, hmac_key)?;
     }
 
     // 7. Aggregate-first output. `symbols` counts actual symbol nodes
@@ -446,7 +448,8 @@ fn proof_canonical_v2(
     )
 }
 
-/// Write `Snapshot::from_graph(graph, audit_log)` as pretty JSON to `out`.
+/// Write the snapshot of `graph` (with its recorded `diagnostics`) as
+/// pretty JSON to `out`.
 /// When `hmac_key` is present, also write `<out>.proof`: a structured
 /// proof certificate (JSON, format v2) binding the snapshot's SHA-256,
 /// its audit head, and its node/edge counts under an HMAC-SHA256
@@ -457,10 +460,11 @@ fn proof_canonical_v2(
 pub fn write_snapshot_file(
     graph: &Graph,
     audit_log: &[SnapshotAuditEntry],
+    diagnostics: &[Diagnostic],
     out: &Path,
     hmac_key: Option<&[u8]>,
 ) -> Result<(), CliError> {
-    let snap = Snapshot::from_graph(graph, audit_log);
+    let snap = Snapshot::from_graph_with_diagnostics(graph, audit_log, diagnostics);
     let json = snap.to_json_pretty()?;
     std::fs::write(out, &json)?;
     match hmac_key {
@@ -508,7 +512,8 @@ pub fn snapshot_db(db_path: &Path, out: &Path, hmac_key: Option<&[u8]>) -> Resul
     let store = Store::open(db_path)?;
     let graph = store.load_graph()?;
     let audit = store.load_audit()?;
-    write_snapshot_file(&graph, &audit.snapshot_entries(), out, hmac_key)?;
+    let diagnostics = store.load_diagnostics()?;
+    write_snapshot_file(&graph, &audit.snapshot_entries(), &diagnostics, out, hmac_key)?;
     eprintln!("snapshot written: {}", out.display());
     Ok(())
 }
@@ -700,8 +705,13 @@ pub fn restore_snapshot(
     let mut store = Store::open(db_path)?;
     let stats = store.replace_graph(&graph)?;
     store.save_audit(&audit)?;
+    // The diagnostics the snapshot carries become the restored index's
+    // recorded diagnostics (an older snapshot carries none, and the
+    // restored index then honestly reports none).
+    store.save_diagnostics(&snap.diagnostics)?;
     println!("restored nodes: {}", stats.nodes);
     println!("restored edges: {}", stats.edges);
+    println!("restored diagnostics: {}", snap.diagnostics.len());
     println!("verified: {proof_note}");
     Ok(stats)
 }

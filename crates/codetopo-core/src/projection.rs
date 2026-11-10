@@ -220,6 +220,7 @@ mod tests {
             ],
             audit_head: String::new(),
             audit_log: Vec::new(),
+            diagnostics: Vec::new(),
         };
         snap.to_graph()
     }
@@ -244,6 +245,7 @@ mod tests {
             edges: Vec::new(),
             audit_head: String::new(),
             audit_log: Vec::new(),
+            diagnostics: Vec::new(),
         };
         let p = AnalyticsProjection::build(&snap.to_graph());
         assert_eq!(p.node_count(), 0);

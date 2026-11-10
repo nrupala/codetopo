@@ -147,6 +147,47 @@ fn index_query_snapshot_restore_round_trip() {
     let _ = std::fs::remove_dir_all(&workdir);
 }
 
+/// Regression test for the diagnostics-carry gap (agent build S4 finding):
+/// diagnostics recorded at index time must cross a snapshot → restore
+/// migration intact — the restored index reports exactly the diagnostics
+/// of the index it was exported from, not zero.
+#[test]
+fn snapshot_restore_carries_diagnostics() {
+    let workdir = workdir("diagnostics-carry");
+    let repo = workdir.join("repo");
+    std::fs::create_dir_all(&repo).expect("create repo dir");
+    // A call cycle (a <-> b) plus a call to a symbol that does not exist:
+    // the builder records diagnostics for both.
+    std::fs::write(repo.join("a.rs"), "fn a() {\n    b();\n    missing();\n}\n").expect("write a.rs");
+    std::fs::write(repo.join("b.rs"), "fn b() {\n    a();\n}\n").expect("write b.rs");
+    let db = workdir.join("index.db");
+    let snap = workdir.join("snap.json");
+    let db2 = workdir.join("restored.db");
+
+    index_repo(&repo, &db, "fixture", Some(&snap), None).expect("index succeeds");
+    let before = codetopo_cli::diagnostics_value(&db).expect("diagnostics of the index");
+    let total = before["total"].as_u64().expect("total present");
+    assert!(
+        total >= 1,
+        "the fixture must record diagnostics at index time; got {before}"
+    );
+    let snap_json = std::fs::read_to_string(&snap).expect("read snapshot");
+    assert!(
+        snap_json.contains("\"diagnostics\""),
+        "the snapshot carries a diagnostics section"
+    );
+
+    restore_snapshot(&snap, &db2, None, true).expect("restore succeeds");
+    let after = codetopo_cli::diagnostics_value(&db2).expect("diagnostics of the restore");
+    assert_eq!(
+        after, before,
+        "diagnostics cross the migration intact (before {total}, after {})",
+        after["total"]
+    );
+
+    let _ = std::fs::remove_dir_all(&workdir);
+}
+
 #[test]
 fn unknown_id_exits_2() {
     let workdir = workdir("exit-code");

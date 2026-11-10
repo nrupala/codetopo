@@ -655,7 +655,14 @@ fn query_inner(handle: &codetopo_graph, op: &str, args: &Value) -> Result<Value,
                 let audit = store
                     .load_audit()
                     .map_err(|e| CError::new("store_error", format!("store error: {e}")))?;
-                let snap = Snapshot::from_graph(&stored, &audit.snapshot_entries());
+                let diagnostics = store
+                    .load_diagnostics()
+                    .map_err(|e| CError::new("store_error", format!("store error: {e}")))?;
+                let snap = Snapshot::from_graph_with_diagnostics(
+                    &stored,
+                    &audit.snapshot_entries(),
+                    &diagnostics,
+                );
                 serde_json::to_value(snap)
                     .map_err(|e| CError::internal(format!("snapshot does not serialize: {e}")))
             }

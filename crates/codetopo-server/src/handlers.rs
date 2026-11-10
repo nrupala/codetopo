@@ -1035,7 +1035,14 @@ async fn snapshot(
         let audit = store
             .load_audit()
             .map_err(|err| ApiError::internal(err.to_string()))?;
-        Ok::<_, ApiError>(Snapshot::from_graph(&graph, &audit.snapshot_entries()))
+        let diagnostics = store
+            .load_diagnostics()
+            .map_err(|err| ApiError::internal(err.to_string()))?;
+        Ok::<_, ApiError>(Snapshot::from_graph_with_diagnostics(
+            &graph,
+            &audit.snapshot_entries(),
+            &diagnostics,
+        ))
     })
     .await
     .map(Json)

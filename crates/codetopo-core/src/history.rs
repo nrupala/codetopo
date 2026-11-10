@@ -281,6 +281,7 @@ mod tests {
             edges: Vec::new(),
             audit_head: String::new(),
             audit_log: Vec::new(),
+            diagnostics: Vec::new(),
         }
         .to_graph()
     }
