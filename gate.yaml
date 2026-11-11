@@ -1,0 +1,239 @@
+# gate.yaml - codetopo delivery-system product contract.
+# Authored 2026-11-10 at the v0.9.1 arming (release branch
+# release/v0.9.1, code identity 5d5bfaf4). Every value below is
+# evidenced in the release tree or in the Gate 17 certification pack
+# (~/workspace/release-gate-runs/codetopo-v091-2026-11-10/). Where the
+# runner's probe shape cannot express this product's real behaviour,
+# the field is omitted and the reason is written here instead of a
+# declaration the tree cannot back.
+product: codetopo
+version: "0.9.1"
+# The live hosted API base (README.md, "Call the API at
+# https://codetopo-api.aimlds.org"). Gate runs may probe a scratch
+# instance of the gated build instead via the runner's --url override;
+# the vantage is named in the gate record either way.
+base_url: https://codetopo-api.aimlds.org
+types:
+  - web
+  - mcp
+  - payments
+compliance:
+  - privacy
+  - payments-via-processor
+  - accessibility
+artifacts:
+  product_definition: PRODUCT-DEFINITION.md
+  failure_analysis: FAILURE-ABUSE-ANALYSIS.md
+  scaffolding_certification: SCAFFOLDING-CERTIFICATION.md
+docs:
+  changelog: CHANGELOG.md
+  license_gate: REUSE.toml
+  threat_model: docs/threat-model.md
+  coverage_ledger: docs/coverage-ledger.json
+  charter_note: "AGPL-3.0-or-later for the product; the CODE_SCHEMA spec, client SDKs and the API/tool contract are Apache-2.0 (DESIGN.md decision 2; REUSE.toml is the machine-checked licence record)."
+sensitive_points: true
+isolation:
+  - point: "Hosted API key store (keys.db in the server data dir)"
+    kind: credentials
+    tier: in-process-exception
+    acceptance: "Gate lane, Gate 17 certification of v0.9.1, 2026-11-10: the store holds SHA-256(salt || secret) hashes only, compared in constant time with a dummy-hash burn for unknown ids (keys.rs, read in full at the gate); in-process verification is the product's design and is accepted for this release on that evidence."
+  - point: "Key administration path (keys subcommand; no network endpoint exists)"
+    kind: credentials
+    tier: software-air-gap
+  - point: "Tenant index data (one database per index in the server data dir)"
+    kind: critical-data
+    tier: in-process-exception
+    acceptance: "Gate lane, Gate 17 certification of v0.9.1, 2026-11-10: per-key tenancy is enforced in-process (tenancy.rs, handlers.rs) and was probed live at the gate - a cross-tenant read answers 404 unknown_index with no existence leak."
+pathways:
+  - id: PW-PUBLIC
+    covers:
+      - /
+      - /ask
+    situation: "A visitor or a keyholder's browser reads the product's two public pages: the front door and the keyed-ask page. Both carry the auth instructions in plain words."
+    gateway: "The server's root and ask handlers (handlers.rs, ask.rs); no credential is accepted or required on this pathway."
+    validation: "No input is taken except the ask page's own form fields in the browser; the page itself answers nothing without a key - the form calls PW-ASK with the visitor's own key."
+  - id: PW-INGEST
+    covers: /v1/index
+    situation: "A keyholder submits a repository to be indexed: a host path (self-hosted keys only), a git URL to clone, or an uploaded archive."
+    gateway: "The single auth wrapper (auth.rs) first, then the ingest handler's pre-ingest limit checks (handlers.rs, limits.rs), then ingest (ingest.rs)."
+    validation: "Bearer key verified against the hashed store; plan caps (active indexes, files per index) checked BEFORE work is spent; archive entries whose paths escape the extraction root are refused; repo_path is refused to hosted keys; clone URLs are https-only with embedded credentials refused."
+  - id: PW-GRAPH-READ
+    covers:
+      - /v1/schema
+      - /v1/graphs/{id}/descendants
+      - /v1/graphs/{id}/ancestors
+      - /v1/graphs/{id}/blast-radius
+      - /v1/graphs/{id}/path
+      - /v1/graphs/{id}/stats
+      - /v1/graphs/{id}/verify
+      - /v1/graphs/{id}/snapshot
+      - /v1/graphs/{id}/neighborhood
+      - /v1/graphs/{id}/symbol
+      - /v1/graphs/{id}/search
+      - /v1/graphs/{id}/diagnostics
+      - /v1/graphs/{id}/rank
+      - /v1/graphs/{id}/diff
+      - /v1/graphs/{id}/metrics
+      - /v1/graphs/{id}/communities
+      - /v1/graphs/{id}/topo-sort
+      - /v1/graphs/{id}/render
+      - /v1/graphs/{id}/history
+    situation: "A keyholder reads measurements from an index they own: closures, paths, statistics, rankings, diffs, renders, snapshots."
+    gateway: "The single auth wrapper (auth.rs), then the tenancy check (tenancy.rs): the index must belong to the calling key."
+    validation: "Bearer key verified; unknown parameters refused 400 invalid_param naming the declared set; an index owned by another key answers 404 unknown_index - no existence leak; query answers are measured data only."
+  - id: PW-ASK
+    covers: /v1/graphs/{id}/ask
+    situation: "A keyholder asks a plain-language question over their own index and receives measured data plus a templated summary."
+    gateway: "The single auth wrapper (auth.rs), the tenancy check, then the ask handler (ask.rs) and the deterministic ACP intent classifier."
+    validation: "Bearer key verified; the ask path contains no language model in 0.9.1 (no HTTP client, no model reference in ask.rs) - routing is deterministic, answers are measured data plus a template, and out-of-scope questions are refused in plain words."
+# Two product pathways carry no HTTP route of this server and so hold
+# no covers entries (the inventory below governs the server surface):
+# - MCP: an agent on the caller's own machine drives the same engine
+#   through the codetopo-mcp binary (stdio transport,
+#   schemas/mcp-tools.json) - twenty tools over the caller's local
+#   indexes. The hosted API exposes no MCP endpoint; the gateway is
+#   the binary's stdio boundary and the tool catalogue is extracted
+#   from the live binary.
+# - Payments: a buyer subscribes through the Stripe-hosted links
+#   declared under payments: - card data never touches this product
+#   (payments-via-processor); key issuance follows payment outside
+#   this artifact's HTTP surface.
+# expect_status below is what an UNAUTHENTICATED probe observes, by
+# design: every /v1 route sits behind the one auth wrapper and refuses
+# 401 before any handler runs (proven live at the gate). Authenticated
+# behaviour is the certification pack's probe record.
+routes:
+  - path: /
+    methods: GET
+    auth: public
+    expect_status: 200
+  - path: /ask
+    methods: GET
+    auth: public
+    expect_status: 200
+  - path: /v1/index
+    methods: POST
+    auth: required
+    expect_status: 401
+    probe_body_json: "{\"repo_path\": \"/srv/gate-probe-nonexistent\", \"package\": \"gate-probe\"}"
+  - path: /v1/schema
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/descendants
+    probe_path: /v1/graphs/gate-probe/descendants
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/ancestors
+    probe_path: /v1/graphs/gate-probe/ancestors
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/blast-radius
+    probe_path: /v1/graphs/gate-probe/blast-radius
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/path
+    probe_path: /v1/graphs/gate-probe/path
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/stats
+    probe_path: /v1/graphs/gate-probe/stats
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/verify
+    probe_path: /v1/graphs/gate-probe/verify
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/snapshot
+    probe_path: /v1/graphs/gate-probe/snapshot
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/neighborhood
+    probe_path: /v1/graphs/gate-probe/neighborhood
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/symbol
+    probe_path: /v1/graphs/gate-probe/symbol
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/search
+    probe_path: /v1/graphs/gate-probe/search
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/diagnostics
+    probe_path: /v1/graphs/gate-probe/diagnostics
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/rank
+    probe_path: /v1/graphs/gate-probe/rank
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/diff
+    probe_path: /v1/graphs/gate-probe/diff
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/metrics
+    probe_path: /v1/graphs/gate-probe/metrics
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/communities
+    probe_path: /v1/graphs/gate-probe/communities
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/topo-sort
+    probe_path: /v1/graphs/gate-probe/topo-sort
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/render
+    probe_path: /v1/graphs/gate-probe/render
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/history
+    probe_path: /v1/graphs/gate-probe/history
+    methods: GET
+    auth: required
+    expect_status: 401
+  - path: /v1/graphs/{id}/ask
+    probe_path: /v1/graphs/gate-probe/ask
+    methods: POST
+    auth: required
+    expect_status: 401
+payments:
+  links:
+    - https://buy.stripe.com/cNi00j0hYbEIbT9bz89Zm02
+    - https://buy.stripe.com/5kQ3cvd4K6kog9p32C9Zm0k
+test_command: "cargo test --workspace"
+# Deliberately NOT declared, with reasons (an omitted field leaves the
+# runner's check NOT RUN, which is the honest state):
+# - rate_limit: the product's bound is a per-key monthly query quota
+#   (hosted 10,000/month, guardrails 50,000/month) enforced from the
+#   metering log. The runner's probe shape (limit+3 anonymous POSTs of
+#   a text body) cannot express a per-key bound; the bound itself was
+#   proven live at the gate (429 query_quota_exceeded at quota, a
+#   second key unaffected) - certification pack, evidence/probe-output2.txt.
+# - ssrf: the product's only URL-accepting surface is ingest's git
+#   clone, which is not the runner's screen shape (no urls-array
+#   endpoint). Its resistance is code-evidenced (https-only, embedded
+#   credentials refused) and traversal-probed at the gate.
+# - leakage / surfaces: the product declares no judgment surfaces -
+#   its outputs are deterministic measurements, and 0.9.1's ask path
+#   carries no model. There is no surface adapter to name honestly.
+# - corpus: not a judgment product (certification adjudication:
+#   judgment differential NOT APPLICABLE, with reason).

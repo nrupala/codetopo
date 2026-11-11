@@ -1,0 +1,360 @@
+[
+  {
+    "coverage_id": "Cargo.toml%23workspace%20dependencies::Cargo.lock%23275%20crates::workspace::ATT%26CK%20T1195%20-%20Supply%20Chain%20Compromise",
+    "canonical_refs": {
+      "surface": "Cargo.toml#workspace dependencies",
+      "boundary": "Cargo.lock#275 crates",
+      "subsystem": "workspace",
+      "attack_class": "ATT&CK T1195 - Supply Chain Compromise"
+    },
+    "surface": "Dependency set",
+    "boundary": "Cargo.lock",
+    "subsystem": "workspace",
+    "attack_class": "Supply chain - known-vulnerable dependency",
+    "starting_paths": [
+      "Cargo.lock"
+    ],
+    "ordinary_attack_class_block": "ATT&CK T1195 - Supply Chain Compromise",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [],
+    "prior_status": "new",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "gate-lane",
+    "reviewed_paths": [
+      "Cargo.lock"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "gate-lane",
+        "reviewed_paths": [
+          "Cargo.lock"
+        ],
+        "invariant": "No known-vulnerable dependency ships in the release lockfile",
+        "method": "local",
+        "result": "cargo audit at the gate: 275 crates against 1,446 advisories, exit 0, no findings; OSV pass in the scanner report also zero (pack evidence/audit.log)",
+        "artifact": "agents/gate-lane/artifacts/audit.log"
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": []
+  },
+  {
+    "coverage_id": "README.md%23hosted%20API%20TLS%20surface::codetopo-api.aimlds.org%23TLS%20termination::hosted%20deployment::ATT%26CK%20T1557%20-%20Adversary-in-the-Middle",
+    "canonical_refs": {
+      "surface": "README.md#hosted API TLS surface",
+      "boundary": "codetopo-api.aimlds.org#TLS termination",
+      "subsystem": "hosted deployment",
+      "attack_class": "ATT&CK T1557 - Adversary-in-the-Middle"
+    },
+    "surface": "Production TLS surface",
+    "boundary": "TLS termination at the hosting site",
+    "subsystem": "hosted deployment",
+    "attack_class": "Adversary-in-the-middle / transport downgrade",
+    "starting_paths": [
+      "README.md"
+    ],
+    "ordinary_attack_class_block": "ATT&CK T1557 - Adversary-in-the-Middle",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [],
+    "prior_status": "new",
+    "attempts": [],
+    "wave": 1,
+    "status": "deferred",
+    "agent_id": null,
+    "reviewed_paths": [],
+    "local_checks": [],
+    "result_fingerprints": [],
+    "unresolved": [
+      "Kali backbone pass NOT RUN at the v0.9.1 gate (certification pack NOT RUN item 4): production TLS posture is the hosting site's and is owed at the RC deploy act."
+    ]
+  },
+  {
+    "coverage_id": "crates%2Fcodetopo-server%2Fsrc%2Fhandlers.rs%23graph%20routes::crates%2Fcodetopo-server%2Fsrc%2Ftenancy.rs%23owner%20check::crates%2Fcodetopo-server::Cross-tenant%20authorisation%20bypass%20%28CWE-639%29",
+    "canonical_refs": {
+      "surface": "crates/codetopo-server/src/handlers.rs#graph routes",
+      "boundary": "crates/codetopo-server/src/tenancy.rs#owner check",
+      "subsystem": "crates/codetopo-server",
+      "attack_class": "Cross-tenant authorisation bypass (CWE-639)"
+    },
+    "surface": "Graph read routes",
+    "boundary": "Per-key tenancy check",
+    "subsystem": "codetopo-server",
+    "attack_class": "Cross-tenant authorisation bypass",
+    "starting_paths": [
+      "crates/codetopo-server/src/tenancy.rs",
+      "crates/codetopo-server/src/handlers.rs"
+    ],
+    "ordinary_attack_class_block": "Cross-tenant authorisation bypass (CWE-639)",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [],
+    "prior_status": "new",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "gate-lane",
+    "reviewed_paths": [
+      "crates/codetopo-server/src/tenancy.rs",
+      "crates/codetopo-server/src/handlers.rs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "gate-lane",
+        "reviewed_paths": [
+          "crates/codetopo-server/src/tenancy.rs",
+          "crates/codetopo-server/src/handlers.rs"
+        ],
+        "invariant": "An index is readable only by the key that owns it, and a foreign index is indistinguishable from a missing one",
+        "method": "local",
+        "result": "Cross-tenant read probed live at the gate: 404 unknown_index, no existence leak; traversal-shaped id also 404",
+        "artifact": "agents/gate-lane/artifacts/probe-output.txt"
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": []
+  },
+  {
+    "coverage_id": "crates%2Fcodetopo-server%2Fsrc%2Fingest.rs%23archive%20extraction::crates%2Fcodetopo-server%2Fsrc%2Fingest.rs%23extraction%20root::crates%2Fcodetopo-server::Archive%20path%20traversal%20%28CWE-22%29",
+    "canonical_refs": {
+      "surface": "crates/codetopo-server/src/ingest.rs#archive extraction",
+      "boundary": "crates/codetopo-server/src/ingest.rs#extraction root",
+      "subsystem": "crates/codetopo-server",
+      "attack_class": "Archive path traversal (CWE-22)"
+    },
+    "surface": "Archive ingest",
+    "boundary": "Extraction root",
+    "subsystem": "codetopo-server",
+    "attack_class": "Path traversal in archive extraction",
+    "starting_paths": [
+      "crates/codetopo-server/src/ingest.rs"
+    ],
+    "ordinary_attack_class_block": "Archive path traversal (CWE-22)",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [],
+    "prior_status": "new",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "gate-lane",
+    "reviewed_paths": [
+      "crates/codetopo-server/src/ingest.rs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "gate-lane",
+        "reviewed_paths": [
+          "crates/codetopo-server/src/ingest.rs"
+        ],
+        "invariant": "No archive entry can write outside the extraction root",
+        "method": "local",
+        "result": "Traversal archive (../escape.txt) probed live at the gate: refused 400, no file escaped the root",
+        "artifact": "agents/gate-lane/artifacts/probe-output.txt"
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": []
+  },
+  {
+    "coverage_id": "crates%2Fcodetopo-server%2Fsrc%2Fingest.rs%23clone::crates%2Fcodetopo-server%2Fsrc%2Fingest.rs%23url%20policy::crates%2Fcodetopo-server::SSRF%20via%20ingest%20clone%20%28CWE-918%29",
+    "canonical_refs": {
+      "surface": "crates/codetopo-server/src/ingest.rs#clone",
+      "boundary": "crates/codetopo-server/src/ingest.rs#url policy",
+      "subsystem": "crates/codetopo-server",
+      "attack_class": "SSRF via ingest clone (CWE-918)"
+    },
+    "surface": "Ingest git clone",
+    "boundary": "Clone URL policy",
+    "subsystem": "codetopo-server",
+    "attack_class": "Server-side request forgery via the clone URL",
+    "starting_paths": [
+      "crates/codetopo-server/src/ingest.rs"
+    ],
+    "ordinary_attack_class_block": "SSRF via ingest clone (CWE-918)",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [],
+    "prior_status": "new",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "gate-lane",
+    "reviewed_paths": [
+      "crates/codetopo-server/src/ingest.rs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "gate-lane",
+        "reviewed_paths": [
+          "crates/codetopo-server/src/ingest.rs"
+        ],
+        "invariant": "The ingest clone is the server's only egress and refuses non-https URLs and embedded credentials",
+        "method": "source",
+        "result": "ingest.rs read in full at the gate: https-only, embedded credentials refused; git-client redirect behaviour not separately probed - named in the threat model as a residual",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": []
+  },
+  {
+    "coverage_id": "crates%2Fcodetopo-server%2Fsrc%2Fkeys.rs%23KeyStore::crates%2Fcodetopo-server%2Fsrc%2Fkeys.rs%23verify::crates%2Fcodetopo-server::ATT%26CK%20T1078%20-%20Valid%20Accounts",
+    "canonical_refs": {
+      "surface": "crates/codetopo-server/src/keys.rs#KeyStore",
+      "boundary": "crates/codetopo-server/src/keys.rs#verify",
+      "subsystem": "crates/codetopo-server",
+      "attack_class": "ATT&CK T1078 - Valid Accounts"
+    },
+    "surface": "API key store",
+    "boundary": "Key verification",
+    "subsystem": "codetopo-server",
+    "attack_class": "Valid accounts - stolen or guessed API key",
+    "starting_paths": [
+      "crates/codetopo-server/src/keys.rs"
+    ],
+    "ordinary_attack_class_block": "ATT&CK T1078 - Valid Accounts",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [],
+    "prior_status": "new",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "gate-lane",
+    "reviewed_paths": [
+      "crates/codetopo-server/src/keys.rs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "gate-lane",
+        "reviewed_paths": [
+          "crates/codetopo-server/src/keys.rs"
+        ],
+        "invariant": "Secrets are never stored or compared in plaintext",
+        "method": "source",
+        "result": "keys.rs stores SHA-256(salt || secret) hashes, constant-time compare, dummy-hash burn for unknown ids; read in full at the Gate 17 gate",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": []
+  },
+  {
+    "coverage_id": "crates%2Fcodetopo-server%2Fsrc%2Fkeys.rs%23hash%20construction::independent%20bench%23cryptographic%20verification::crates%2Fcodetopo-server::ATT%26CK%20T1553%20-%20Subvert%20Trust%20Controls",
+    "canonical_refs": {
+      "surface": "crates/codetopo-server/src/keys.rs#hash construction",
+      "boundary": "independent bench#cryptographic verification",
+      "subsystem": "crates/codetopo-server",
+      "attack_class": "ATT&CK T1553 - Subvert Trust Controls"
+    },
+    "surface": "Key hashing construction",
+    "boundary": "Independent crypto bench",
+    "subsystem": "codetopo-server",
+    "attack_class": "Subversion of the key trust control",
+    "starting_paths": [
+      "crates/codetopo-server/src/keys.rs"
+    ],
+    "ordinary_attack_class_block": "ATT&CK T1553 - Subvert Trust Controls",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [],
+    "prior_status": "new",
+    "attempts": [],
+    "wave": 1,
+    "status": "deferred",
+    "agent_id": null,
+    "reviewed_paths": [],
+    "local_checks": [],
+    "result_fingerprints": [],
+    "unresolved": [
+      "Arch crypto bench NOT RUN at the v0.9.1 gate (certification pack NOT RUN item 5): the hash construction rests on the gate's source read and the workspace suites, not on an independent bench re-verification."
+    ]
+  },
+  {
+    "coverage_id": "crates%2Fcodetopo-server%2Fsrc%2Flib.rs%23app%20router::crates%2Fcodetopo-server%2Fsrc%2Fauth.rs%23auth%20wrapper::crates%2Fcodetopo-server::ATT%26CK%20T1190%20-%20Exploit%20Public-Facing%20Application",
+    "canonical_refs": {
+      "surface": "crates/codetopo-server/src/lib.rs#app router",
+      "boundary": "crates/codetopo-server/src/auth.rs#auth wrapper",
+      "subsystem": "crates/codetopo-server",
+      "attack_class": "ATT&CK T1190 - Exploit Public-Facing Application"
+    },
+    "surface": "Hosted API /v1 surface",
+    "boundary": "Bearer auth wrapper",
+    "subsystem": "codetopo-server",
+    "attack_class": "Exploit public-facing application",
+    "starting_paths": [
+      "crates/codetopo-server/src/auth.rs",
+      "crates/codetopo-server/src/lib.rs"
+    ],
+    "ordinary_attack_class_block": "ATT&CK T1190 - Exploit Public-Facing Application",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [],
+    "prior_status": "new",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "gate-lane",
+    "reviewed_paths": [
+      "crates/codetopo-server/src/auth.rs",
+      "crates/codetopo-server/src/lib.rs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "gate-lane",
+        "reviewed_paths": [
+          "crates/codetopo-server/src/auth.rs",
+          "crates/codetopo-server/src/lib.rs"
+        ],
+        "invariant": "Every /v1 route sits behind the one auth wrapper; no-key and wrong-key answers are identical 401 bodies",
+        "method": "local",
+        "result": "Gate 17 probes: no-key and wrong-key both answered 401 unauthenticated with identical bodies; unauthenticated inventory is exactly / and /ask (pack evidence/probe-output.txt)",
+        "artifact": "agents/gate-lane/artifacts/probe-output.txt"
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": []
+  },
+  {
+    "coverage_id": "crates%2Fcodetopo-server%2Fsrc%2Fmetering.rs%23quota::crates%2Fcodetopo-server%2Fsrc%2Flimits.rs%23plan%20limits::crates%2Fcodetopo-server::ATT%26CK%20T1499%20-%20Endpoint%20Denial%20of%20Service",
+    "canonical_refs": {
+      "surface": "crates/codetopo-server/src/metering.rs#quota",
+      "boundary": "crates/codetopo-server/src/limits.rs#plan limits",
+      "subsystem": "crates/codetopo-server",
+      "attack_class": "ATT&CK T1499 - Endpoint Denial of Service"
+    },
+    "surface": "Metering and plan limits",
+    "boundary": "Per-key quota enforcement",
+    "subsystem": "codetopo-server",
+    "attack_class": "Resource exhaustion against shared service",
+    "starting_paths": [
+      "crates/codetopo-server/src/metering.rs",
+      "crates/codetopo-server/src/limits.rs"
+    ],
+    "ordinary_attack_class_block": "ATT&CK T1499 - Endpoint Denial of Service",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [],
+    "prior_status": "new",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "gate-lane",
+    "reviewed_paths": [
+      "crates/codetopo-server/src/metering.rs",
+      "crates/codetopo-server/src/limits.rs",
+      "crates/codetopo-server/src/handlers.rs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "gate-lane",
+        "reviewed_paths": [
+          "crates/codetopo-server/src/metering.rs",
+          "crates/codetopo-server/src/limits.rs",
+          "crates/codetopo-server/src/handlers.rs"
+        ],
+        "invariant": "One key cannot consume beyond its plan, and caps are enforced before work is spent",
+        "method": "local",
+        "result": "Quota proven live at the gate: seeded metering log to the hosted 10,000/month bound, next query answered 429 query_quota_exceeded; a guardrails key on the same instance unaffected",
+        "artifact": "agents/gate-lane/artifacts/probe-output2.txt"
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": []
+  }
+]
