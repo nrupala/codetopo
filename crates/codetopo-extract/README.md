@@ -232,6 +232,89 @@ crates.io. Its 0.23 API exposes `LANGUAGE_TYPESCRIPT` / `LANGUAGE_TSX` as
 grammar is pinned at `tree-sitter-python = "0.25"` (0.25.0, MIT) for
 the same runtime pairing.
 
+## The RA extractor (domain-profile build, Stage 5)
+
+Alongside the code extractors, this crate carries the Research
+Analyst tenant extractor (`src/ra.rs`, with `src/xlsx.rs`,
+`src/xmlmini.rs`, `src/eval.rs`, `src/siblings.rs`): it reads a
+financial-model workbook (XLSX) plus a declaration and emits a graph
+under `profiles/ra.profile.json`. RA is **analysis-only** — the
+extractor measures a model's structure and arithmetic; nothing in
+it recommends, scores, or advises on any security.
+
+**Declaration (`codetopo.ra-decl/1`, JSON).** The workbook alone
+does not say what its cells MEAN, so kind, label, period, and unit
+are declaration facts, never guessed: the declaration names every
+sheet (in workbook order), every non-caption cell (kind, label,
+optional period/unit/`presented_as` tag, optional source block),
+the articulation identities to execute, the scenarios (driver
+bindings), the estimates edges (method/window/error), and the
+references edges (optional claimant). Extraction refuses a workbook
+the declaration does not account for exactly — an undeclared
+non-caption cell, or a declared cell the workbook lacks, is an
+error, not a guess.
+
+**Evaluator bounds (`src/eval.rs`).** Values are recomputed from
+the workbook's own formulas by a bounded evaluator — the cached
+display values stored in the file NEVER enter evaluation. Grammar:
+numbers, cell refs (same-sheet and sheet-qualified, `$` anchors
+stripped), ranges as function arguments only, `+ − * / % ^`, unary
+signs, parentheses, comparisons inside `IF` conditions only.
+Functions: `SUM`, `AVERAGE`, `MIN`, `MAX`, `ABS`, `ROUND`, `SQRT`,
+`IF` (lazy branches), `NPV` (first value discounted one period).
+Anything outside the set — `XNPV` and `IRR` deliberately included —
+is an unknown function and the cell's value is **absent**:
+`not_measured`, never zero, never estimated. A formula reading a
+cell the workbook does not contain records an `UnresolvedCall`
+finding and invents no edge; a circular reference yields no values
+for its cycle and the core reports the SCC as a `Cycle` diagnostic.
+
+**Absence rules.** A measured field that could not be measured is
+absent from the node — absence is the answer, never a fabricated
+number. The same law governs provenance: a `sourced_from` edge
+missing `source` or `as_of` is REFUSED (`MissingProvenance`, the
+cell keeps its value, the edge does not enter); an `estimates` edge
+missing method, window, or error is refused the same way; market
+data enters only through a declared source under the profile's data
+doctrine (Stooq is the production price source of truth; there is
+no silent fallback to another vendor — a gap in the series is an
+absent price, dated as itself).
+
+**Identities execute (format gap F-2, closed).** The three
+articulation identities — balance-sheet equation, net-income
+rollforward, cash articulation — run over the emitted graph's
+measured values. A failure is a `Diagnostic::ArticulationIdentity`
+carrying BOTH sides and the tolerance; nothing is repaired,
+averaged, or silently passed. A side with no measured value is
+neither passed nor failed. Identity right-hand sides are signed
+sums of cell refs (`bs!B11+is!C10-cf!C7`): the rollforward
+subtracts by definition.
+
+**Builder decisions recorded at Stage 5.** F-3: the builder gained
+public `add_node` (register one tenant node verbatim),
+`add_boundary_stub` (the boundary-stub entry point over the
+previously private `ensure_external`), `add_contains`, and
+`record_diagnostic` (the tenant-diagnostic seam) — all additive,
+CODE-profile-neutral. F-1: `references` splits per edge (claimant →
+`declared_claim`; none → found reference, `extracted_truth`),
+adjudicated by `edge_provenance_class`; admission honours the
+split because the core's per-edge requirement
+(`provenance_required_attrs_for_edge`) treats a kind-dictionary
+attr declared OPTIONAL as a distinguisher, not a mandate — while
+required attrs (`source`/`as_of`, `method`/`window`/`error`) keep
+their full refusal force.
+
+**Statistics siblings (`src/siblings.rs`).** `sensitivity`
+re-evaluates the model's own arithmetic under a one-sided step
+(0.01 for rates, 1% of value otherwise) and reports the finite
+difference, the elasticity, and the provenance class of any
+non-truth edge on the pair's path; `scenario_spread` reports each
+output's values across the declared scenarios with range and
+signed deviation from base — never a confidence interval, never a
+target. Both are proven against hand-derived oracles by the RA
+Regression Contract (`tests/ra_contract.rs`, clauses C-RA1…C-RA8;
+fixtures and their hand arithmetic in `tests/fixtures/ra/`).
+
 ## Known limitations
 
 1. **Rust `use foo::bar`** where `foo` is neither `std`, `crate`, `self`,

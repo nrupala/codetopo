@@ -443,6 +443,7 @@ mod tests {
                 signature: None,
                 decisions: None,
                 measures: Default::default(),
+                loc_file: String::new(),
             })
             .collect();
         let raw_calls = calls

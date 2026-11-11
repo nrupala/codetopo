@@ -1,0 +1,43 @@
+{
+ "absent_values": [
+  "bs!B8",
+  "bs!B9",
+  "bs!B13",
+  "bs!C8",
+  "bs!C9",
+  "bs!C13",
+  "is!B7",
+  "is!B8",
+  "is!B9",
+  "is!B10",
+  "is!C7",
+  "is!C8",
+  "is!C9",
+  "is!C10",
+  "cf!C2",
+  "cf!C6",
+  "bs!C2",
+  "bs!C11",
+  "bs!C12",
+  "val!B20",
+  "val!B21",
+  "val!B22",
+  "val!B23",
+  "val!B24",
+  "val!B25",
+  "val!B26"
+ ],
+ "cycle_edge_kind": "computes_into",
+ "cycle_members": [
+  "bs!B8",
+  "is!B7"
+ ],
+ "fixture": "RA-F5(c)",
+ "measured_despite_cycle": {
+  "bs!C5": 420.0,
+  "cf!C5": 9.0,
+  "is!C2": 1100.0
+ },
+ "model_id": "ra-f5c-model",
+ "mutation": "bs!B8 = 200+is!B7 and is!B7 = val!B5*bs!B8: an interest<->debt circular reference (computes_into SCC)"
+}

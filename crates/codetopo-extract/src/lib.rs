@@ -12,6 +12,18 @@
 //!
 //! ID rules, node-kind mappings, and known limitations are documented in the
 //! crate README (`crates/codetopo-extract/README.md`).
+//!
+//! The RA extractor (Stage 5 of the domain-profile build) lives in
+//! [`ra`] (workbook → RA-profile graph), [`xlsx`] (the XLSX reader),
+//! [`eval`] (the bounded formula evaluator), [`xmlmini`] (the XML
+//! pull tokenizer the reader uses), and [`siblings`] (the profile's
+//! two statistics siblings, executed).
+
+pub mod eval;
+pub mod ra;
+pub mod siblings;
+pub mod xlsx;
+pub mod xmlmini;
 
 mod python;
 mod rust;
@@ -45,6 +57,14 @@ pub enum ExtractError {
     /// Something unexpected inside the extractor itself (never bad input).
     #[error("extractor internal error: {0}")]
     Internal(String),
+    /// The bytes are not a readable XLSX workbook, or a workbook
+    /// part is structurally broken (RA extractor, Stage 5).
+    #[error("invalid workbook: {0}")]
+    InvalidWorkbook(String),
+    /// The extraction declaration is missing, malformed, or does
+    /// not account for the workbook exactly (RA extractor, Stage 5).
+    #[error("declaration error: {0}")]
+    Declaration(String),
 }
 
 /// File extensions this crate can extract (case-insensitive).
@@ -146,6 +166,7 @@ fn extract_doc(package: &str, rel_path: &Path) -> FileSymbols {
             signature: None,
             decisions: None,
             measures: Default::default(),
+            loc_file: String::new(),
         }],
         imports: Vec::new(),
         calls: Vec::new(),

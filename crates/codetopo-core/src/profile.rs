@@ -587,6 +587,61 @@ impl DomainProfile {
         }
     }
 
+    /// The provenance attrs an edge of `kind` must carry FOR THIS
+    /// EDGE — the admission question `push_edge` asks. For almost
+    /// every kind this is exactly [`Self::provenance_required_attrs`].
+    ///
+    /// F-1 RESOLUTION (Stage 5 of the domain-profile build): a kind
+    /// whose class the profile splits PER EDGE cannot be admitted
+    /// by the kind-level list — RA's `references` is the case: its
+    /// kind class is `declared_claim` (whose class floor mandates
+    /// `claimant`), yet the profile's own per-edge rule — declared
+    /// in its gloss and pinned by conformance clause C-RA6(c) —
+    /// says a `references` edge WITHOUT `claimant` is a found
+    /// reference (extracted truth), a different class with no
+    /// mandatory attrs. The kind-level floor therefore refused
+    /// every found reference at admission and made the profile's
+    /// declared split unreachable: the F-1 format gap, live.
+    ///
+    /// The resolution keeps the mechanism general and the data
+    /// honest: when a kind's declared class mandates attrs that the
+    /// profile's attr dictionary for that kind marks OPTIONAL
+    /// (`required: false`) — i.e. the profile itself declares the
+    /// attr to be the per-edge distinguisher, present on some edges
+    /// and absent on others — those attrs are not admission
+    /// requirements; the edge's class is adjudicated per edge by
+    /// the consumer (for RA, `edge_provenance_class` in the
+    /// extractor). Attrs the dictionary marks REQUIRED, and every
+    /// attr of kinds without such a split, remain mandatory exactly
+    /// as before. CODE's kinds are untouched (their class mandates
+    /// nothing), and RA's `sourced_from` / `estimates` keep their
+    /// full floors — their dictionary marks source/as_of and
+    /// method/window/error required.
+    pub fn provenance_required_attrs_for_edge(
+        &self,
+        kind: &EdgeKind,
+        attrs: &serde_json::Map<String, serde_json::Value>,
+    ) -> Vec<String> {
+        let required = self.provenance_required_attrs(kind);
+        let Some(def) = self.edge_kind_def(kind) else {
+            return required.into_iter().map(str::to_string).collect();
+        };
+        required
+            .into_iter()
+            .filter(|a| {
+                // An attr the kind's dictionary declares optional is
+                // a per-edge distinguisher: mandatory only when the
+                // edge carries it (in which case it is present and
+                // the filter is moot) — never a ground for refusal.
+                match def.attrs.get(*a) {
+                    Some(attr_def) if !attr_def.required => attrs.contains_key(*a),
+                    _ => true,
+                }
+            })
+            .map(str::to_string)
+            .collect()
+    }
+
     /// The provenance class of an edge kind, if declared.
     pub fn provenance_class(&self, kind: &EdgeKind) -> Option<ProvenanceClass> {
         self.edge_kind_def(kind).map(|d| d.provenance_class)

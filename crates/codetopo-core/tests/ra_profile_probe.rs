@@ -62,6 +62,7 @@ fn sym(id: &str, kind: &str, line: u32, measures: &[(&str, Value)]) -> RawSymbol
         signature: None,
         decisions: None,
         measures: m,
+        loc_file: String::new(),
     }
 }
 

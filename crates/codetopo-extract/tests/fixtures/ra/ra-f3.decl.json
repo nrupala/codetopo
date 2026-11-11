@@ -1,0 +1,507 @@
+{
+ "artifact": "ra-f3-model.xlsx",
+ "format": "codetopo.ra-decl/1",
+ "identities": [
+  {
+   "lhs": "bs!B6",
+   "name": "balance_sheet_equation",
+   "rhs": "bs!B9+bs!B12",
+   "rule_name": "research-analyst.balance_sheet_equation",
+   "tolerance": 0.01
+  },
+  {
+   "lhs": "bs!C6",
+   "name": "balance_sheet_equation",
+   "rhs": "bs!C9+bs!C12",
+   "rule_name": "research-analyst.balance_sheet_equation",
+   "tolerance": 0.01
+  },
+  {
+   "lhs": "bs!C11",
+   "name": "net_income_rollforward",
+   "rhs": "bs!B11+is!C10-cf!C7",
+   "rule_name": "research-analyst.net_income_rollforward",
+   "tolerance": 0.01
+  },
+  {
+   "lhs": "bs!C2",
+   "name": "cash_articulation",
+   "rhs": "bs!B2+cf!C6",
+   "rule_name": "research-analyst.cash_articulation",
+   "tolerance": 0.01
+  }
+ ],
+ "label": "ra-f3-model",
+ "model_id": "ra-f3-model",
+ "references": [
+  {
+   "from": "notes!B2",
+   "to": "val!B26"
+  }
+ ],
+ "scenarios": [
+  {
+   "binds": {
+    "val!B2": 0.1,
+    "val!B3": 0.4,
+    "val!B4": 0.15
+   },
+   "label": "Base case",
+   "name": "base"
+  },
+  {
+   "binds": {
+    "val!B2": 0.2,
+    "val!B3": 0.45,
+    "val!B4": 0.12
+   },
+   "label": "Bull case",
+   "name": "bull"
+  },
+  {
+   "binds": {
+    "val!B2": 0.0,
+    "val!B3": 0.35,
+    "val!B4": 0.18
+   },
+   "label": "Bear case",
+   "name": "bear"
+  }
+ ],
+ "sheets": [
+  {
+   "cells": {
+    "B10": {
+     "kind": "line_item",
+     "label": "Net income FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B2": {
+     "kind": "line_item",
+     "label": "Revenue FY2024",
+     "period": "FY2024",
+     "source": {
+      "as_of": "2024-12-31",
+      "label": "Fixture filing (invented filer, FY2024 10-K)",
+      "source": "sec-edgar:fixture-10k-fy2024",
+      "stub": "source::sec-edgar:fixture-filing"
+     },
+     "unit": "USD"
+    },
+    "B3": {
+     "kind": "line_item",
+     "label": "Cost of goods sold FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B4": {
+     "kind": "line_item",
+     "label": "Gross profit FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B5": {
+     "kind": "line_item",
+     "label": "Operating expenses FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B6": {
+     "kind": "line_item",
+     "label": "Operating income (EBIT) FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B7": {
+     "kind": "line_item",
+     "label": "Interest expense FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B8": {
+     "kind": "line_item",
+     "label": "Earnings before tax FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B9": {
+     "kind": "line_item",
+     "label": "Income tax FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "C10": {
+     "kind": "line_item",
+     "label": "Net income FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C2": {
+     "kind": "line_item",
+     "label": "Revenue FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C3": {
+     "kind": "line_item",
+     "label": "Cost of goods sold FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C4": {
+     "kind": "line_item",
+     "label": "Gross profit FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C5": {
+     "kind": "line_item",
+     "label": "Operating expenses FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C6": {
+     "kind": "line_item",
+     "label": "Operating income (EBIT) FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C7": {
+     "kind": "line_item",
+     "label": "Interest expense FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C8": {
+     "kind": "line_item",
+     "label": "Earnings before tax FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C9": {
+     "kind": "line_item",
+     "label": "Income tax FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    }
+   },
+   "label": "Income statement",
+   "name": "is"
+  },
+  {
+   "cells": {
+    "B10": {
+     "kind": "line_item",
+     "label": "Share capital FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B11": {
+     "kind": "line_item",
+     "label": "Retained earnings FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B12": {
+     "kind": "line_item",
+     "label": "Total equity FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B13": {
+     "kind": "line_item",
+     "label": "Total liabilities and equity FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B2": {
+     "kind": "line_item",
+     "label": "Cash FY2024",
+     "period": "FY2024",
+     "source": {
+      "as_of": "2024-12-31",
+      "label": "Fixture filing (invented filer, FY2024 10-K)",
+      "source": "sec-edgar:fixture-10k-fy2024",
+      "stub": "source::sec-edgar:fixture-filing"
+     },
+     "unit": "USD"
+    },
+    "B3": {
+     "kind": "line_item",
+     "label": "Accounts receivable FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B4": {
+     "kind": "line_item",
+     "label": "Inventory FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B5": {
+     "kind": "line_item",
+     "label": "Property, plant and equipment FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B6": {
+     "kind": "line_item",
+     "label": "Total assets FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B7": {
+     "kind": "line_item",
+     "label": "Accounts payable FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B8": {
+     "kind": "line_item",
+     "label": "Debt FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "B9": {
+     "kind": "line_item",
+     "label": "Total liabilities FY2024",
+     "period": "FY2024",
+     "unit": "USD"
+    },
+    "C10": {
+     "kind": "line_item",
+     "label": "Share capital FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C11": {
+     "kind": "line_item",
+     "label": "Retained earnings FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C12": {
+     "kind": "line_item",
+     "label": "Total equity FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C13": {
+     "kind": "line_item",
+     "label": "Total liabilities and equity FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C2": {
+     "kind": "line_item",
+     "label": "Cash FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C3": {
+     "kind": "line_item",
+     "label": "Accounts receivable FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C4": {
+     "kind": "line_item",
+     "label": "Inventory FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C5": {
+     "kind": "line_item",
+     "label": "Property, plant and equipment FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C6": {
+     "kind": "line_item",
+     "label": "Total assets FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C7": {
+     "kind": "line_item",
+     "label": "Accounts payable FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C8": {
+     "kind": "line_item",
+     "label": "Debt FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C9": {
+     "kind": "line_item",
+     "label": "Total liabilities FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    }
+   },
+   "label": "Balance sheet",
+   "name": "bs"
+  },
+  {
+   "cells": {
+    "C2": {
+     "kind": "line_item",
+     "label": "Net income (cash flow) FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C3": {
+     "kind": "line_item",
+     "label": "Depreciation and amortisation FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C4": {
+     "kind": "line_item",
+     "label": "Capital expenditure FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C5": {
+     "kind": "line_item",
+     "label": "Increase in working capital FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C6": {
+     "kind": "line_item",
+     "label": "Net cash change FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "C7": {
+     "kind": "line_item",
+     "label": "Dividends paid FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    }
+   },
+   "label": "Cash-flow statement",
+   "name": "cf"
+  },
+  {
+   "cells": {
+    "B13": {
+     "kind": "parameter",
+     "label": "Tax rate"
+    },
+    "B14": {
+     "kind": "parameter",
+     "label": "WACC (discount rate)"
+    },
+    "B15": {
+     "kind": "parameter",
+     "label": "Terminal growth rate"
+    },
+    "B16": {
+     "kind": "parameter",
+     "label": "Shares outstanding (millions)"
+    },
+    "B2": {
+     "kind": "driver",
+     "label": "Revenue growth rate"
+    },
+    "B20": {
+     "kind": "output",
+     "label": "Free cash flow FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "B21": {
+     "kind": "output",
+     "label": "Present value of free cash flow",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "B22": {
+     "kind": "output",
+     "label": "Terminal value",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "B23": {
+     "kind": "output",
+     "label": "Present value of terminal value",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "B24": {
+     "kind": "output",
+     "label": "Enterprise value",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "B25": {
+     "kind": "output",
+     "label": "Equity value",
+     "period": "FY2025E",
+     "presented_as": "equity_value",
+     "unit": "USD"
+    },
+    "B26": {
+     "kind": "output",
+     "label": "Per-share value",
+     "period": "FY2025E",
+     "presented_as": "per_share_value"
+    },
+    "B3": {
+     "kind": "driver",
+     "label": "Gross margin"
+    },
+    "B4": {
+     "kind": "driver",
+     "label": "Operating expense ratio"
+    },
+    "B5": {
+     "kind": "parameter",
+     "label": "Interest rate on debt"
+    },
+    "B6": {
+     "kind": "driver",
+     "label": "Increase in receivables FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "B7": {
+     "kind": "driver",
+     "label": "Increase in inventory FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "B8": {
+     "kind": "driver",
+     "label": "Increase in payables FY2025E",
+     "period": "FY2025E",
+     "unit": "USD"
+    },
+    "B9": {
+     "kind": "driver",
+     "label": "Capital expenditure FY2025E (input)",
+     "period": "FY2025E",
+     "unit": "USD"
+    }
+   },
+   "label": "Valuation",
+   "name": "val"
+  },
+  {
+   "cells": {
+    "B2": {
+     "kind": "line_item",
+     "label": "Analyst note (text)"
+    }
+   },
+   "label": "Analyst notes",
+   "name": "notes"
+  }
+ ],
+ "tolerance": 0.01
+}

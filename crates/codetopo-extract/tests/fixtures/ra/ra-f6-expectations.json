@@ -1,0 +1,108 @@
+{
+ "admitted_estimates": {
+  "from": "val!B2",
+  "to": "is!C2"
+ },
+ "admitted_sourced_from": {
+  "as_of": "2024-09-27",
+  "cell": "bs!B2",
+  "source": "stooq:aapl.us:daily-close"
+ },
+ "fixture": "RA-F6",
+ "graph_class_with_estimates": "claims-bearing",
+ "model_id": "ra-f6-model",
+ "reference_found": {
+  "class": "extracted_truth",
+  "from": "notes!B2",
+  "to": "val!B25"
+ },
+ "reference_with_claimant": {
+  "claimant": "fixture analyst",
+  "class": "declared_claim",
+  "from": "notes!B2",
+  "to": "val!B26"
+ },
+ "refused_estimates": {
+  "from": "val!B3",
+  "missing": [
+   "error"
+  ],
+  "to": "is!C3"
+ },
+ "refused_sourced_from": {
+  "cell": "is!B2",
+  "cell_value_kept": 1000.0,
+  "missing": [
+   "as_of"
+  ]
+ },
+ "values": {
+  "bs!B10": 300.0,
+  "bs!B11": 90.0,
+  "bs!B12": 390.0,
+  "bs!B13": 640.0,
+  "bs!B2": 100.0,
+  "bs!B3": 80.0,
+  "bs!B4": 60.0,
+  "bs!B5": 400.0,
+  "bs!B6": 640.0,
+  "bs!B7": 50.0,
+  "bs!B8": 200.0,
+  "bs!B9": 250.0,
+  "bs!C10": 300.0,
+  "bs!C11": 258.75,
+  "bs!C12": 558.75,
+  "bs!C13": 813.75,
+  "bs!C2": 239.75,
+  "bs!C3": 88.0,
+  "bs!C4": 66.0,
+  "bs!C5": 420.0,
+  "bs!C6": 813.75,
+  "bs!C7": 55.0,
+  "bs!C8": 200.0,
+  "bs!C9": 255.0,
+  "cf!C2": 198.75,
+  "cf!C3": 40.0,
+  "cf!C4": 60.0,
+  "cf!C5": 9.0,
+  "cf!C6": 139.75,
+  "cf!C7": 30.0,
+  "is!B10": 165.0,
+  "is!B2": 1000.0,
+  "is!B3": 620.0,
+  "is!B4": 380.0,
+  "is!B5": 150.0,
+  "is!B6": 230.0,
+  "is!B7": 10.0,
+  "is!B8": 220.0,
+  "is!B9": 55.0,
+  "is!C10": 198.75,
+  "is!C2": 1100.0,
+  "is!C3": 660.0,
+  "is!C4": 440.0,
+  "is!C5": 165.0,
+  "is!C6": 275.0,
+  "is!C7": 10.0,
+  "is!C8": 265.0,
+  "is!C9": 66.25,
+  "val!B13": 0.25,
+  "val!B14": 0.1,
+  "val!B15": 0.03,
+  "val!B16": 100.0,
+  "val!B2": 0.1,
+  "val!B20": 169.75,
+  "val!B21": 154.3181818181818,
+  "val!B22": 2497.75,
+  "val!B23": 2270.681818181818,
+  "val!B24": 2425.0,
+  "val!B25": 2464.75,
+  "val!B26": 24.6475,
+  "val!B3": 0.4,
+  "val!B4": 0.15,
+  "val!B5": 0.05,
+  "val!B6": 8.0,
+  "val!B7": 6.0,
+  "val!B8": 5.0,
+  "val!B9": 60.0
+ }
+}

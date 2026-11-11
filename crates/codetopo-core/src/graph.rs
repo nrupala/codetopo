@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::diag::Diagnostic;
-use crate::emit::FileSymbols;
+use crate::emit::{FileSymbols, RawSymbol};
 use crate::profile::DomainProfile;
 use crate::schema::{Edge, EdgeKind, Loc, Node, NodeKind};
 
@@ -308,6 +308,93 @@ impl GraphBuilder {
         }
 
         self.diagnostics[mark..].to_vec()
+    }
+
+    /// Register one node directly, without file scaffolding.
+    ///
+    /// F-3 RESOLUTION (Stage 5 of the domain-profile build — the
+    /// builder's first design decision, taken here): tenant extractors
+    /// whose artefacts are not source files (a financial model is a
+    /// model/statement/cell structure, not a package/module/file tree)
+    /// need a public node entry point; before this method the only
+    /// routes were `add_file` (which hardcodes the CODE scaffolding:
+    /// package/module/file nodes under CODE kinds) or smuggling nodes
+    /// in as symbols of a synthetic file. This is that entry point:
+    /// the symbol's `id`, `kind`, `label`, loc, and measured fields are
+    /// taken verbatim, the tier comes from the builder's profile, and
+    /// the duplicate rule is the same as `add_file`'s — the first
+    /// registration is kept and a duplicate yields
+    /// [`Diagnostic::MultiDefinition`] naming both locations. The
+    /// symbol's `defines`/`refs`/`writes` name-lists are NOT resolved
+    /// here (that machinery is the CODE extractor's contract); tenant
+    /// extractors state their edges explicitly via
+    /// [`GraphBuilder::add_typed_edge`].
+    pub fn add_node(&mut self, sym: RawSymbol) -> Vec<Diagnostic> {
+        let mark = self.diagnostics.len();
+        let loc = Loc { file: sym.loc_file.clone(), line: sym.line, column: sym.column };
+        if let Some(first) = self.defs.get(&sym.id).cloned() {
+            self.diagnostics.push(Diagnostic::MultiDefinition {
+                symbol: sym.id.clone(),
+                locations: vec![first, loc],
+            });
+            return self.diagnostics[mark..].to_vec();
+        }
+        self.defs.insert(sym.id.clone(), loc.clone());
+        let tier = self.profile.tier_for(&sym.kind);
+        self.ensure_node(Node {
+            id: sym.id.clone(),
+            kind: sym.kind,
+            label: sym.label.clone(),
+            loc,
+            tier,
+            defines: sym.defines.clone(),
+            refs: sym.refs.clone(),
+            end_line: sym.end_line,
+            signature: sym.signature.clone(),
+            decisions: sym.decisions,
+            measures: sym.measures.clone(),
+        });
+        self.diagnostics[mark..].to_vec()
+    }
+
+    /// Register a boundary stub node under the profile's boundary
+    /// namespace — the public form of the stub the builder itself
+    /// creates for unresolved imports and calls (F-3, second half).
+    ///
+    /// The stub carries the profile's boundary kind (for the RA
+    /// profile: `source`), an empty location (it names something
+    /// outside the artefact), and no measured fields. Idempotent:
+    /// registering the same stub twice is one node. Tenant extractors
+    /// register a stub BEFORE offering an edge that lands on it
+    /// (`add_typed_edge` requires both endpoints to exist).
+    pub fn add_boundary_stub(&mut self, id: &str, label: &str) {
+        self.ensure_external(id, label);
+    }
+
+    /// Insert a containment edge under the profile's declared
+    /// containment kind, so tenant extractors can state their own
+    /// hierarchy (model → statement → cell) instead of inheriting the
+    /// CODE package/module/file scaffolding. Both endpoints must
+    /// already exist; a missing endpoint yields
+    /// [`Diagnostic::UnknownSymbol`] and no edge, exactly as
+    /// `add_typed_edge` behaves.
+    pub fn add_contains(&mut self, from: &str, to: &str) -> Vec<Diagnostic> {
+        self.add_typed_edge(Edge {
+            from: from.to_string(),
+            to: to.to_string(),
+            kind: EdgeKind::new(&self.profile.containment.edge_kind),
+            line: None,
+            attrs: Default::default(),
+        })
+    }
+
+    /// Record a diagnostic computed by an extractor pass over the
+    /// graph it is emitting (e.g. an articulation-identity failure,
+    /// format gap F-2's execution seam). The diagnostic joins the
+    /// builder's accumulated list and travels with the graph's
+    /// snapshot like any builder diagnostic.
+    pub fn record_diagnostic(&mut self, d: Diagnostic) {
+        self.diagnostics.push(d);
     }
 
     /// Insert a fully-formed edge, enforcing the CODE_SCHEMA §4 attribute
@@ -912,10 +999,9 @@ impl GraphBuilder {
         // mandatory attrs), so this never fires for code graphs.
         let missing: Vec<String> = self
             .profile
-            .provenance_required_attrs(&edge.kind)
-            .iter()
-            .filter(|a| !edge.attrs.contains_key(**a))
-            .map(|a| a.to_string())
+            .provenance_required_attrs_for_edge(&edge.kind, &edge.attrs)
+            .into_iter()
+            .filter(|a| !edge.attrs.contains_key(a))
             .collect();
         if !missing.is_empty() {
             self.diagnostics.push(Diagnostic::MissingProvenance {
@@ -1268,6 +1354,7 @@ mod tests {
             signature: None,
             decisions: None,
             measures: Default::default(),
+            loc_file: String::new(),
         }
     }
 

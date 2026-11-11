@@ -268,6 +268,7 @@ impl<'a> Walker<'a> {
             signature,
             decisions,
             measures: Default::default(),
+            loc_file: String::new(),
             defines,
             refs,
             writes,

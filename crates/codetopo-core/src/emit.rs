@@ -69,6 +69,14 @@ pub struct RawSymbol {
     /// *not measured* for that field.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub measures: BTreeMap<String, serde_json::Value>,
+    /// Location-file override for tenant extractors driving
+    /// [`crate::graph::GraphBuilder::add_node`]: the artefact (or
+    /// sheet) the symbol lives in, recorded in the node's `Loc.file`.
+    /// Empty (the default) means the builder records no file — the
+    /// pre-Stage-5 behaviour for every existing caller. `add_file`
+    /// ignores this field (it always names its own file).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub loc_file: String,
 }
 
 /// One inheritance or implementation claim found in a file: the named
