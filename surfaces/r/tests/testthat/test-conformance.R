@@ -225,7 +225,7 @@ test_that("errors carry the core's codes", {
   expect_true(inherits(err, "codetopo_error") && identical(err$code, "unknown_symbol"))
 
   err <- tryCatch(
-    { codetopo_from_snapshot('{"schema_version":"2.0","nodes":[],"edges":[],"audit_head":"","audit_log":[]}'); NULL },
+    { codetopo_from_snapshot('{"schema_version":"3.0","nodes":[],"edges":[],"audit_head":"","audit_log":[]}'); NULL },
     error = function(e) e
   )
   expect_true(inherits(err, "codetopo_error") && identical(err$code, "unsupported_schema_version"))
