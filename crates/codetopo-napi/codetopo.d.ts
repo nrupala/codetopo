@@ -161,7 +161,7 @@ export declare class Codetopo {
 
 /** The bound core's version, from the core crate itself. */
 export declare const CORE_VERSION: string;
-/** The CODE_SCHEMA version the bound core emits ("1.2"). */
+/** The core schema version the bound core emits ("2.0"). */
 export declare const SCHEMA_VERSION: string;
 export declare const NODE_KINDS: NodeKind[];
 export declare const EDGE_KINDS: EdgeKind[];

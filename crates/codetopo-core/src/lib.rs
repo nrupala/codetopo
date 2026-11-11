@@ -4,8 +4,11 @@
 
 //! codetopo-core — typed graph core for codetopo (Phase 1).
 //!
-//! - [`schema`] — the binding ontology (CODE_SCHEMA.md): node/edge kinds,
-//!   tiers, locations, typed edges with kind-scoped attributes.
+//! - [`schema`] — node/edge records, tiers, locations, typed edges.
+//! - [`profile`] — the domain profile: the dictionary (kinds, edge
+//!   sets, provenance classes, sibling measures) as data, loaded and
+//!   validated; the CODE profile is `profiles/code.profile.json`,
+//!   the extraction of CODE_SCHEMA v1.2 (core schema 2.0).
 //! - [`emit`] — the extractor output contract (what language extractors
 //!   produce, one value per file).
 //! - [`diag`] — diagnostics: well-formedness violations reported as data.
@@ -26,6 +29,7 @@ pub mod emit;
 pub mod force;
 pub mod graph;
 pub mod measure;
+pub mod profile;
 pub mod projection;
 pub mod render;
 pub mod schema;
@@ -33,13 +37,49 @@ pub mod snapshot;
 pub mod topology;
 
 pub use communities::{
-    CommunityPartition, CommunitySummary, LeidenDetector, NodeCommunity, COMMUNITIES_METHOD,
-    LEIDEN_SEED,
+    CommunityPartition, CommunitySummary, LeidenDetector, NodeCommunity, LEIDEN_SEED,
 };
-pub use coupling::{GraphMetrics, PackageMetrics, TypeMetrics, METRIC_METHODS};
-pub use history::{
-    graph_history, CoupledFiles, FileHotspot, HistoryInput, HistoryReport, HISTORY_METHODS,
-};
+
+/// The published method of every coupling/cohesion metric, keyed by
+/// the field name the surfaces report — since schema 2.0 this is a
+/// view over the CODE profile's sibling registry (founding spec
+/// §1.4: the registry, not a Rust constant, is their home). Kept as
+/// a function because the registry is data now.
+pub fn metric_methods() -> Vec<(String, String)> {
+    DomainProfile::code().metric_methods()
+}
+
+/// The published method of every history measurement, from the CODE
+/// profile's history parameterisation (founding spec D5).
+pub fn history_methods() -> Vec<(String, String)> {
+    DomainProfile::code()
+        .history
+        .as_ref()
+        .map(|h| {
+            h.methods
+                .iter()
+                .map(|(n, t)| (n.clone(), t.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The communities method text (the profile-independent §9 method,
+/// parameterised by the CODE profile's dependency set).
+pub fn communities_method() -> String {
+    DomainProfile::code()
+        .core_method("communities")
+        .expect("core method registered")
+}
+
+/// The topo-sort method text, likewise.
+pub fn topo_sort_method() -> String {
+    DomainProfile::code()
+        .core_method("topo_sort")
+        .expect("core method registered")
+}
+pub use coupling::{GraphMetrics, PackageMetrics, TypeMetrics};
+pub use history::{graph_history, CoupledFiles, FileHotspot, HistoryInput, HistoryReport};
 pub use diag::Diagnostic;
 pub use emit::{FileSymbols, RawCall, RawHeritage, RawImport, RawSymbol};
 pub use graph::{Graph, GraphBuilder, PathStep, Subgraph};
@@ -52,7 +92,13 @@ pub use force::{
     force_layout, render_svg_v2, ForceLayout, ForceNode, ForceParams, LayoutSpecV2,
 };
 pub use render::{layout, render_svg, LayoutEdge, LayoutNode, LayoutSpec};
-pub use topology::{TopoGroup, TopoOrder, TOPO_SORT_METHOD};
+pub use profile::{
+    Admission, AggregateKindDef, AttrDef, BoundaryDef, ConformanceDef, ContainmentDef,
+    CoreCompat, DomainProfile, EdgeKindDef, EdgeSets, HistoryDef, MeasureFieldDef,
+    NodeKindDef, ProvenanceClass, SiblingDef, SiblingInputs, WellFormednessDef,
+    PROFILE_FORMAT, CODE_PROFILE_JSON,
+};
+pub use topology::{TopoGroup, TopoOrder};
 pub use schema::{Edge, EdgeKind, Loc, Node, NodeKind, Tier};
 pub use snapshot::Snapshot;
 

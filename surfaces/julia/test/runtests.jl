@@ -102,7 +102,7 @@ end
 
 @testset "versions" begin
     @test startswith(Codetopo.codetopo_version(), "0.9")
-    @test Codetopo.schema_version() == "1.2"
+    @test Codetopo.schema_version() == "2.0"
 end
 
 @testset "error shape" begin
@@ -182,7 +182,7 @@ end
     @test occursin("\"measured\":false", Codetopo.history(g))
     @test occursin("\"chain_valid\":true", Codetopo.verify(g))
     snap = Codetopo.snapshot(g)
-    @test occursin("\"schema_version\":\"1.2\"", snap)
+    @test occursin("\"schema_version\":\"2.0\"", snap)
     d = Codetopo.diff(g; other_snapshot_json=snap)
     @test startswith(d, "{")
     # Unknown op errors through the raw hatch, naming the op.

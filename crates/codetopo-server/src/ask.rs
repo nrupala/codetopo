@@ -359,7 +359,7 @@ fn answer_stats(graph: &Graph) -> AskAnswer {
         *node_kinds.entry(node_kind_name(node.kind).to_string()).or_default() += 1;
     }
     let mut edge_kinds: BTreeMap<String, usize> = BTreeMap::new();
-    for kind in ALL_EDGE_KINDS {
+    for kind in all_edge_kinds() {
         let count = graph.edge_count_by_kind(kind);
         if count > 0 {
             edge_kinds.insert(kind.as_str().to_string(), count);
@@ -433,24 +433,11 @@ fn resolve_from_question(graph: &Graph, question: &str, hint: &str) -> Option<St
     None
 }
 
-const ALL_EDGE_KINDS: [EdgeKind; 9] = [
-    EdgeKind::Imports, EdgeKind::Calls, EdgeKind::Inherits, EdgeKind::Implements,
-    EdgeKind::Defines, EdgeKind::References, EdgeKind::Contains, EdgeKind::Reads, EdgeKind::Writes,
-];
-
+fn all_edge_kinds() -> Vec<EdgeKind> {
+    codetopo_core::DomainProfile::code().edge_kinds_in_order()
+}
 fn node_kind_name(kind: NodeKind) -> &'static str {
-    match kind {
-        NodeKind::Package => "package",
-        NodeKind::Module => "module",
-        NodeKind::File => "file",
-        NodeKind::Class => "class",
-        NodeKind::Interface => "interface",
-        NodeKind::Function => "function",
-        NodeKind::Method => "method",
-        NodeKind::Variable => "variable",
-        NodeKind::External => "external",
-        NodeKind::Doc => "doc",
-    }
+    kind.as_str()
 }
 
 // ---------------------------------------------------------------------------

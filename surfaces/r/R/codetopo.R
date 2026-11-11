@@ -149,7 +149,7 @@ codetopo_core_version <- function(...) {
   .ct_raw(ct_core_version(), "codetopo_core_version")
 }
 
-#' The CODE_SCHEMA version the bound core emits ("1.2").
+#' The CODE_SCHEMA version the bound core emits ("2.0").
 #' @export
 codetopo_schema_version <- function(...) {
   .ct_check_dots(list(...), "codetopo_schema_version")

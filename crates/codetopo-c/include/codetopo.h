@@ -113,7 +113,7 @@ typedef struct codetopo_graph codetopo_graph;
  *  (e.g. "0.9.1"). Static string — do NOT free. */
 const char *codetopo_version(void);
 
-/** CODE_SCHEMA version this build speaks (e.g. "1.2"), taken from the
+/** Core schema version this build speaks (e.g. "2.0"), taken from the
  *  core's SCHEMA_VERSION constant. Static string — do NOT free. */
 const char *codetopo_schema_version(void);
 

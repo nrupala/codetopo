@@ -471,7 +471,7 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
             } else {
                 let part = graph.communities();
                 println!("{} communities", part.total);
-                println!("method: {}", codetopo_core::COMMUNITIES_METHOD);
+                println!("method: {}", codetopo_core::communities_method());
                 match part.modularity {
                     Some(q) => println!("modularity Q: {q:.6}"),
                     None => {
@@ -509,7 +509,7 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                     "{} groups · {} nodes · {} cyclic",
                     order.total_groups, order.total_nodes, order.cyclic_groups
                 );
-                println!("method: {}", codetopo_core::TOPO_SORT_METHOD);
+                println!("method: {}", codetopo_core::topo_sort_method());
                 for (i, g) in order.groups.iter().enumerate() {
                     if g.cyclic {
                         println!("{i}: [cycle] {}", g.members.join(", "));

@@ -32,26 +32,10 @@ use serde::{Deserialize, Serialize};
 use crate::graph::Graph;
 use crate::schema::NodeKind;
 
-/// The published method of every history measurement, keyed by field
-/// name; the surfaces state these beside the numbers.
-pub const HISTORY_METHODS: &[(&str, &str)] = &[
-    (
-        "hotspot",
-        "hotspot (Tornhill 2015): per file, changes = the number of \
-         transactions (commits, merge commits excluded) in the stated \
-         window that touched the file; complexity = the sum of the \
-         cyclomatic complexities of the file's functions and methods, \
-         absent unless every one was measured; the reported score is \
-         changes x complexity, with both factors always shown",
-    ),
-    (
-        "change_coupling",
-        "change coupling (Zimmermann et al. 2005): per file pair, \
-         support = transactions containing both files; confidence = \
-         support / transactions containing either file; pairs below the \
-         stated minimum support are not reported",
-    ),
-];
+// The published method of every history measurement lives in the
+// loaded profile's history parameterisation (founding spec D5);
+// `crate::history_methods()` is the view the surfaces state beside
+// the numbers.
 
 /// One file's hotspot measurement.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -145,9 +129,15 @@ pub fn graph_history(graph: &Graph, input: &HistoryInput, min_support: usize) ->
     // Per-file complexity: the sum over the file's functions/methods,
     // present only when the file has at least one callable and every
     // callable was measured.
+    // The transaction unit and the callable kinds are profile data
+    // (founding spec D5): transactions range over the profile's
+    // transaction-unit kind's locations (for CODE, files), and the
+    // hotspot factor sums the factor sibling over the unit's
+    // function/method symbols.
+    let callable_kinds = [NodeKind::new("function"), NodeKind::new("method")];
     let mut file_complexity: BTreeMap<&str, Option<u32>> = BTreeMap::new();
     for n in graph.nodes() {
-        if !matches!(n.kind, NodeKind::Function | NodeKind::Method) || n.loc.file.is_empty() {
+        if !callable_kinds.contains(&n.kind) || n.loc.file.is_empty() {
             continue;
         }
         let entry = file_complexity.entry(n.loc.file.as_str()).or_insert(Some(0));
@@ -264,6 +254,7 @@ mod tests {
             end_line: Some(5),
             signature: None,
             decisions,
+            measures: Default::default(),
         }
     }
 
@@ -272,6 +263,10 @@ mod tests {
     fn fixture() -> Graph {
         Snapshot {
             schema_version: SCHEMA_VERSION.to_string(),
+            profile_id: "code".to_string(),
+            profile_version: "1.0.0".to_string(),
+            graph_class: "truths".to_string(),
+            provenance_summary: Default::default(),
             nodes: vec![
                 node("p::f1::a", NodeKind::Function, "f1.rs", Some(2)),
                 node("p::f1::b", NodeKind::Function, "f1.rs", Some(1)),

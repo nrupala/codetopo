@@ -267,6 +267,7 @@ impl<'a> Walker<'a> {
             end_line,
             signature,
             decisions,
+            measures: Default::default(),
             defines,
             refs,
             writes,

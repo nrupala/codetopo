@@ -19,7 +19,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::diag::Diagnostic;
 use crate::emit::FileSymbols;
-use crate::schema::{Edge, EdgeKind, Loc, Node, NodeKind, Tier};
+use crate::profile::DomainProfile;
+use crate::schema::{Edge, EdgeKind, Loc, Node, NodeKind};
 
 // ---------------------------------------------------------------------------
 // GraphBuilder
@@ -35,25 +36,16 @@ struct PendingRef {
     kind: EdgeKind,
 }
 
-/// Tier classification by node kind (CODE_SCHEMA §2): the structural
-/// skeleton a reader navigates by is `core`; type declarations are
-/// `recommended`; everything else — functions, methods, variables,
-/// externals, docs — is `optional`. One rule, applied in the builder,
-/// so every surface reports the same tier for the same node.
-fn tier_for(kind: NodeKind) -> Tier {
-    match kind {
-        NodeKind::Package | NodeKind::Module | NodeKind::File => Tier::Core,
-        NodeKind::Class | NodeKind::Interface => Tier::Recommended,
-        _ => Tier::Optional,
-    }
-}
-
 /// Validate-then-apply builder for [`Graph`].
 ///
 /// Lifecycle: `new()` → `add_file(...)` per file (each returns that file's
 /// diagnostics) → `build()` once, which resolves cross-file references,
 /// detects cycles, and returns the frozen graph plus all diagnostics.
 pub struct GraphBuilder {
+    /// The domain profile this build runs under: its dictionary,
+    /// edge sets, tier rule, boundary and provenance classes govern
+    /// every answer the builder produces.
+    profile: std::sync::Arc<DomainProfile>,
     /// Node id → node (insertion order is file order; queries sort by id).
     nodes: HashMap<String, Node>,
     /// Definition registry: symbol id → location of its FIRST definition.
@@ -88,8 +80,16 @@ pub struct GraphBuilder {
 }
 
 impl GraphBuilder {
+    /// A builder under the CODE profile — the pre-2.0 behaviour, and
+    /// the default every existing caller gets.
     pub fn new() -> Self {
+        Self::with_profile(DomainProfile::code())
+    }
+
+    /// A builder under a named domain profile.
+    pub fn with_profile(profile: std::sync::Arc<DomainProfile>) -> Self {
         GraphBuilder {
+            profile,
             nodes: HashMap::new(),
             defs: HashMap::new(),
             symbol_module: HashMap::new(),
@@ -153,17 +153,20 @@ impl GraphBuilder {
 
         // Package node: created once; the empty file/0 line loc marks "no
         // physical location".
+        let root_kind = NodeKind::new(&self.profile.containment.root_kind);
         self.ensure_node(Node {
             id: package.clone(),
-            kind: NodeKind::Package,
+            kind: root_kind,
             label: package.clone(),
             loc: Loc { file: String::new(), line: 0, column: None },
-            tier: tier_for(NodeKind::Package),
+            tier: self.profile.tier_for(&root_kind),
             defines: Vec::new(),
             refs: Vec::new(),
             end_line: None,
             signature: None,
             decisions: None,
+            measures: Default::default(),
+
         });
         self.module_package.entry(module_id.clone()).or_insert_with(|| package.clone());
         self.ensure_node(Node {
@@ -171,35 +174,40 @@ impl GraphBuilder {
             kind: NodeKind::Module,
             label: module_id.clone(),
             loc: Loc { file: fs.file.clone(), line: 1, column: None },
-            tier: tier_for(NodeKind::Module),
+            tier: self.profile.tier_for(&NodeKind::Module),
             defines: Vec::new(),
             refs: Vec::new(),
             end_line: None,
             signature: None,
             decisions: None,
+            measures: Default::default(),
+
         });
         self.ensure_node(Node {
             id: file_id.clone(),
             kind: NodeKind::File,
             label: fs.file.clone(),
             loc: Loc { file: fs.file.clone(), line: 1, column: None },
-            tier: tier_for(NodeKind::File),
+            tier: self.profile.tier_for(&NodeKind::File),
             defines: Vec::new(),
             refs: Vec::new(),
             end_line: None,
             signature: None,
             decisions: None,
+            measures: Default::default(),
+
         });
 
         // A package's root module shares the package's id (extractors
         // name a lib.rs / index root module after its package); that
         // node doubles as the module, so there is no package→module
         // self-edge — the module→file edge below is the package's.
+        let containment_kind = EdgeKind::new(&self.profile.containment.edge_kind);
         if module_id != package {
             self.push_edge(Edge {
                 from: package.clone(),
                 to: module_id.clone(),
-                kind: EdgeKind::Contains,
+                kind: containment_kind,
                 line: None,
                 attrs: Default::default(),
             });
@@ -207,7 +215,7 @@ impl GraphBuilder {
         self.push_edge(Edge {
             from: module_id.clone(),
             to: file_id.clone(),
-            kind: EdgeKind::Contains,
+            kind: containment_kind,
             line: None,
             attrs: Default::default(),
         });
@@ -235,17 +243,18 @@ impl GraphBuilder {
                 kind: s.kind,
                 label: s.label.clone(),
                 loc,
-                tier: tier_for(s.kind),
+                tier: self.profile.tier_for(&s.kind),
                 defines: s.defines.clone(),
                 refs: s.refs.clone(),
                 end_line: s.end_line,
                 signature: s.signature.clone(),
                 decisions: s.decisions,
+                measures: s.measures.clone(),
             });
             self.push_edge(Edge {
                 from: file_id.clone(),
                 to: s.id.clone(),
-                kind: EdgeKind::Contains,
+                kind: EdgeKind::new(&self.profile.containment.edge_kind),
                 line: None,
                 attrs: Default::default(),
             });
@@ -377,7 +386,7 @@ impl GraphBuilder {
         if self.is_module(raw) {
             return raw.to_string();
         }
-        let stripped = raw.strip_prefix("external::").unwrap_or(raw);
+        let stripped = raw.strip_prefix(&self.profile.boundary.id_namespace).unwrap_or(raw);
         let path = stripped.replace('/', "::");
         if let Some(m) = self.longest_module_prefix(&path) {
             return m;
@@ -438,7 +447,7 @@ impl GraphBuilder {
                 return pkg;
             }
         }
-        format!("external::{stripped}")
+        format!("{}{stripped}", self.profile.boundary.id_namespace)
     }
 
     /// Resolve calls, detect cycles, return (graph, diagnostics).
@@ -472,7 +481,7 @@ impl GraphBuilder {
         for imp in std::mem::take(&mut self.pending_imports) {
             let to_id = {
                 let target = self.import_target(&imp);
-                if let Some(name) = target.strip_prefix("external::") {
+                if let Some(name) = target.strip_prefix(&self.profile.boundary.id_namespace) {
                     let name = name.to_string();
                     self.ensure_external(&target, &name);
                 }
@@ -512,7 +521,7 @@ impl GraphBuilder {
                 Some(id) => id,
                 None => {
                     let target = c.to_name.clone();
-                    let ext = format!("external::{}", target);
+                    let ext = format!("{}{}", self.profile.boundary.id_namespace, target);
                     self.ensure_external(&ext, &target);
                     if self.unresolved_reported.insert(target.clone()) {
                         unresolved.push((c.from_id.clone(), target, c.line));
@@ -582,12 +591,24 @@ impl GraphBuilder {
         // 4. Cycle detection: Tarjan SCC over calls+imports edges.
         for cycle in self.find_cycles() {
             let set: HashSet<&str> = cycle.iter().map(|s| s.as_str()).collect();
-            let has_calls = self.edges.iter().any(|e| {
-                e.kind == EdgeKind::Calls
-                    && set.contains(e.from.as_str())
-                    && set.contains(e.to.as_str())
-            });
-            let edge_kind = if has_calls { EdgeKind::Calls } else { EdgeKind::Imports };
+            // The diagnostic names the earliest closure kind (in the
+            // profile's declaration order) present inside the SCC —
+            // for CODE: calls when any calls edge is inside, else
+            // imports, exactly the pre-2.0 rule.
+            let edge_kind = self
+                .profile
+                .edge_sets
+                .closure
+                .iter()
+                .map(|n| EdgeKind::new(n))
+                .find(|k| {
+                    self.edges.iter().any(|e| {
+                        e.kind == *k
+                            && set.contains(e.from.as_str())
+                            && set.contains(e.to.as_str())
+                    })
+                })
+                .unwrap_or(EdgeKind::Calls);
             self.diagnostics.push(Diagnostic::Cycle { edge_kind, cycle });
         }
 
@@ -602,7 +623,13 @@ impl GraphBuilder {
             adj.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.rank().cmp(&b.1.rank())));
         }
 
-        let graph = Graph { nodes: self.nodes, edges: self.edges, children, parents };
+        let graph = Graph {
+            nodes: self.nodes,
+            edges: self.edges,
+            children,
+            parents,
+            profile: self.profile.clone(),
+        };
         (graph, self.diagnostics)
     }
 
@@ -675,7 +702,7 @@ impl GraphBuilder {
             } else {
                 2
             };
-            tiers[tier].push((id, Self::node_kind_rank(self.nodes[id].kind)));
+            tiers[tier].push((id, self.profile.resolve_rank(&self.nodes[id].kind)));
         }
         tiers.iter_mut().find_map(|t| {
             // Symbol kinds before containers, External/Doc last, then
@@ -713,27 +740,17 @@ impl GraphBuilder {
                     .get(*id)
                     .is_some_and(|m| m == &qualifier || m.ends_with(&suffix))
             })
-            .map(|id| (id, Self::node_kind_rank(self.nodes[id].kind)))
+            .map(|id| (id, self.profile.resolve_rank(&self.nodes[id].kind)))
             .collect();
         hits.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(b.0)));
         hits.first().map(|(id, _)| (*id).clone())
     }
 
-    /// Rank of a node kind for suffix-match tie-breaking in
-    /// [`GraphBuilder::resolve`]: a call targets a *symbol*, so symbol kinds
-    /// sort first; container kinds (module/file/package) next; External and
-    /// Doc nodes — which never host calls — last.
-    fn node_kind_rank(kind: NodeKind) -> u8 {
-        match kind {
-            NodeKind::Function
-            | NodeKind::Method
-            | NodeKind::Class
-            | NodeKind::Interface
-            | NodeKind::Variable => 0,
-            NodeKind::Module | NodeKind::File | NodeKind::Package => 1,
-            NodeKind::External | NodeKind::Doc => 2,
-        }
-    }
+    // The resolve tie-break rank of a node kind is profile data
+    // (`DomainProfile::resolve_rank`): a call targets a *symbol*, so
+    // symbol kinds sort first; container kinds next; boundary and
+    // doc kinds — which never host calls — last. CODE's table is
+    // recorded in `code.profile.json`, field `resolve_rank`.
 
     /// Tarjan SCC over calls+imports edges. Returns each cyclic component
     /// (size > 1, or a self-loop) with member ids sorted; components sorted
@@ -741,7 +758,7 @@ impl GraphBuilder {
     fn find_cycles(&self) -> Vec<Vec<String>> {
         let mut adj: HashMap<&str, Vec<&str>> = HashMap::new();
         for e in &self.edges {
-            if matches!(e.kind, EdgeKind::Calls | EdgeKind::Imports) {
+            if self.profile.is_closure(&e.kind) {
                 adj.entry(e.from.as_str()).or_default().push(e.to.as_str());
             }
         }
@@ -862,19 +879,23 @@ impl GraphBuilder {
     fn ensure_external(&mut self, id: &str, label: &str) {
         if !self.nodes.contains_key(id) {
             self.index_name(id);
+            let kind = NodeKind::new(&self.profile.boundary.kind);
+            let tier = self.profile.tier_for(&kind);
             self.nodes.insert(
                 id.to_string(),
                 Node {
                     id: id.to_string(),
-                    kind: NodeKind::External,
+                    kind,
                     label: label.to_string(),
                     loc: Loc { file: String::new(), line: 0, column: None },
-                    tier: Tier::Optional,
+                    tier,
                     defines: Vec::new(),
                     refs: Vec::new(),
                     end_line: None,
                     signature: None,
                     decisions: None,
+                    measures: Default::default(),
+
                 },
             );
         }
@@ -884,7 +905,27 @@ impl GraphBuilder {
     /// Offending attributes are dropped and reported as `InvalidAttribute`
     /// diagnostics; identical (from, to, kind) edges are deduplicated.
     fn push_edge(&mut self, mut edge: Edge) {
-        let allowed = edge.kind.allowed_attrs();
+        // R2 (§4): no provenance, no edge. An edge whose class
+        // mandates provenance attributes and lacks one is refused —
+        // it does not enter the graph — and the refusal is the
+        // diagnostic. CODE's kinds are all extracted_truth (no
+        // mandatory attrs), so this never fires for code graphs.
+        let missing: Vec<String> = self
+            .profile
+            .provenance_required_attrs(&edge.kind)
+            .iter()
+            .filter(|a| !edge.attrs.contains_key(**a))
+            .map(|a| a.to_string())
+            .collect();
+        if !missing.is_empty() {
+            self.diagnostics.push(Diagnostic::MissingProvenance {
+                edge: format!("{}->{}", edge.from, edge.to),
+                kind: edge.kind,
+                missing,
+            });
+            return;
+        }
+        let allowed = self.profile.allowed_attrs(&edge.kind);
         let mut bad: Vec<String> = edge
             .attrs
             .keys()
@@ -916,7 +957,7 @@ impl Default for GraphBuilder {
 // ---------------------------------------------------------------------------
 
 /// One typed step of a path: `from -[kind]-> to`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PathStep {
     pub from: String,
     pub to: String,
@@ -924,7 +965,7 @@ pub struct PathStep {
 }
 
 /// A k-hop subgraph: the nodes plus the edges between them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Subgraph {
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
@@ -941,6 +982,11 @@ pub struct Graph {
     edges: Vec<Edge>,
     children: HashMap<String, Vec<(String, EdgeKind)>>,
     parents: HashMap<String, Vec<(String, EdgeKind)>>,
+    /// The domain profile this graph's dictionary belongs to. Every
+    /// profile-parameterised query (edge sets, boundary, aggregates)
+    /// reads it. Restored graphs default to the CODE profile — 1.x
+    /// snapshots name no profile because only one dictionary existed.
+    profile: std::sync::Arc<DomainProfile>,
 }
 
 impl Graph {
@@ -956,7 +1002,25 @@ impl Graph {
         for adj in children.values_mut().chain(parents.values_mut()) {
             adj.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.rank().cmp(&b.1.rank())));
         }
-        Graph { nodes, edges, children, parents }
+        Graph {
+            nodes,
+            edges,
+            children,
+            parents,
+            profile: DomainProfile::code(),
+        }
+    }
+
+    /// The profile this graph runs under.
+    pub fn profile(&self) -> &DomainProfile {
+        &self.profile
+    }
+
+    /// Attach a profile to a restored graph (a snapshot that names
+    /// one). Builder-made graphs carry their builder's profile.
+    pub fn with_profile(mut self, profile: std::sync::Arc<DomainProfile>) -> Self {
+        self.profile = profile;
+        self
     }
 
     pub fn get(&self, id: &str) -> Option<&Node> {
@@ -992,13 +1056,17 @@ impl Graph {
     /// Strictly reachable *other* nodes — the start node is never included,
     /// even on a cycle. Deterministic: BFS order, deduplicated.
     pub fn descendants(&self, id: &str) -> Vec<String> {
-        self.walk(id, &[EdgeKind::Calls, EdgeKind::Imports], true)
+        let kinds: Vec<EdgeKind> =
+            self.profile.edge_sets.closure.iter().map(|n| EdgeKind::new(n)).collect();
+        self.walk(id, &kinds, true)
     }
 
     /// Reverse of [`Graph::descendants`]: transitive closure over
     /// calls+imports edges following parent links.
     pub fn ancestors(&self, id: &str) -> Vec<String> {
-        self.walk(id, &[EdgeKind::Calls, EdgeKind::Imports], false)
+        let kinds: Vec<EdgeKind> =
+            self.profile.edge_sets.closure.iter().map(|n| EdgeKind::new(n)).collect();
+        self.walk(id, &kinds, false)
     }
 
     /// What breaks if `id` changes: every node that depends on `id`,
@@ -1007,17 +1075,9 @@ impl Graph {
     /// edges (dependents), the reverse direction from `descendants`;
     /// imports alone does not break (CODE_SCHEMA §6, DESIGN §3).
     pub fn blast_radius(&self, id: &str) -> Vec<String> {
-        self.walk(
-            id,
-            &[
-                EdgeKind::Calls,
-                EdgeKind::Inherits,
-                EdgeKind::Implements,
-                EdgeKind::Reads,
-                EdgeKind::Writes,
-            ],
-            false,
-        )
+        let kinds: Vec<EdgeKind> =
+            self.profile.edge_sets.breakage.iter().map(|n| EdgeKind::new(n)).collect();
+        self.walk(id, &kinds, false)
     }
 
     fn walk(&self, start: &str, kinds: &[EdgeKind], outgoing: bool) -> Vec<String> {
@@ -1072,7 +1132,7 @@ impl Graph {
                 for (nid, k) in neigh {
                     // Containment is hierarchy, not dependency — never part of
                     // a typed path.
-                    if *k == EdgeKind::Contains {
+                    if self.profile.is_containment(k) {
                         continue;
                     }
                     if visited.insert(nid.clone()) {
@@ -1124,7 +1184,7 @@ impl Graph {
             } else {
                 continue;
             };
-            scored.push((rank, GraphBuilder::node_kind_rank(node.kind), &node.id, node));
+            scored.push((rank, self.profile.resolve_rank(&node.kind), &node.id, node));
         }
         scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)).then_with(|| a.2.cmp(b.2)));
         scored.into_iter().take(limit).map(|(_, _, _, n)| n).collect()
@@ -1145,7 +1205,7 @@ impl Graph {
                     .flatten()
                 {
                     for (nid, k) in adj {
-                        if *k == EdgeKind::Contains {
+                        if self.profile.is_containment(k) {
                             continue;
                         }
                         if seen.insert(nid.clone()) {
@@ -1168,7 +1228,7 @@ impl Graph {
             .edges
             .iter()
             .filter(|e| {
-                e.kind != EdgeKind::Contains
+                !self.profile.is_containment(&e.kind)
                     && seen.contains(&e.from)
                     && seen.contains(&e.to)
             })
@@ -1192,7 +1252,7 @@ impl Graph {
 mod tests {
     use super::*;
     use crate::emit::{RawCall, RawImport, RawSymbol};
-    use crate::schema::NodeKind;
+    use crate::schema::{NodeKind, Tier};
 
     fn sym(id: &str, kind: NodeKind, line: u32) -> RawSymbol {
         RawSymbol {
@@ -1207,6 +1267,7 @@ mod tests {
             end_line: None,
             signature: None,
             decisions: None,
+            measures: Default::default(),
         }
     }
 
@@ -1805,7 +1866,7 @@ mod tests {
             hash: "audit-head-123".to_string(),
         }];
         let snap = Snapshot::from_graph(&g, &entries);
-        assert_eq!(snap.schema_version, "1.2");
+        assert_eq!(snap.schema_version, "2.0");
         assert_eq!(snap.audit_log, entries);
         let json = snap.to_json_pretty().expect("serialize");
         let snap2 = Snapshot::from_json(&json).expect("deserialize");

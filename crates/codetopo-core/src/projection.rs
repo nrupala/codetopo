@@ -11,8 +11,8 @@
 //!   precedent: a stub accumulating centrality because forty modules
 //!   call the same library function is noise the product refuses to
 //!   print.
-//! - **Directed edges:** the CODE_SCHEMA §9 dependency set (every edge
-//!   kind except `contains` — [`crate::coupling::is_dependency`]) as a
+//! - **Directed edges:** the loaded profile's dependency edge set
+//!   (for CODE, §9's set — [`crate::coupling::is_dependency`]) as a
 //!   *simple* graph: parallel edges collapse to one, self-loops drop.
 //! - **Community edges:** the undirected projection of the same set,
 //!   weighted by multiplicity (recorded dependency edges between the
@@ -46,6 +46,7 @@ use serde::Serialize;
 
 use crate::coupling::is_dependency;
 use crate::graph::Graph;
+#[cfg(test)]
 use crate::schema::NodeKind;
 
 /// A frozen analytics projection of a [`Graph`] (SPEC §3). Built once
@@ -67,9 +68,10 @@ pub struct AnalyticsProjection {
 impl AnalyticsProjection {
     /// Build the projection of `graph` (SPEC §3).
     pub fn build(graph: &Graph) -> Self {
+        let profile = graph.profile();
         let mut node_ids: Vec<String> = graph
             .nodes()
-            .filter(|n| n.kind != NodeKind::External && !n.id.starts_with("external::"))
+            .filter(|n| !profile.is_boundary(&n.kind, &n.id))
             .map(|n| n.id.clone())
             .collect();
         node_ids.sort();
@@ -82,7 +84,7 @@ impl AnalyticsProjection {
         let mut directed: BTreeSet<(usize, usize)> = BTreeSet::new();
         let mut community: BTreeMap<(usize, usize), u64> = BTreeMap::new();
         for e in graph.edges() {
-            if !is_dependency(e.kind) {
+            if !is_dependency(profile, e.kind) {
                 continue;
             }
             let (Some(&a), Some(&b)) = (index.get(e.from.as_str()), index.get(e.to.as_str()))
@@ -184,6 +186,7 @@ mod tests {
             end_line: None,
             signature: None,
             decisions: None,
+            measures: Default::default(),
         }
     }
 
@@ -201,9 +204,14 @@ mod tests {
     /// b → b self-loop, c isolated, plus a `contains` edge that must not
     /// count as a dependency.
     fn fixture() -> Graph {
-        use crate::schema::EdgeKind::*;
+        use crate::schema::EdgeKind;
+        let (calls, reads, contains) = (EdgeKind::Calls, EdgeKind::Reads, EdgeKind::Contains);
         let snap = Snapshot {
             schema_version: crate::snapshot::SCHEMA_VERSION.to_string(),
+            profile_id: "code".to_string(),
+            profile_version: "1.0.0".to_string(),
+            graph_class: "truths".to_string(),
+            provenance_summary: Default::default(),
             nodes: vec![
                 node("pkg::a", NodeKind::Function),
                 node("pkg::b", NodeKind::Function),
@@ -211,12 +219,12 @@ mod tests {
                 node("external::serde", NodeKind::External),
             ],
             edges: vec![
-                edge("pkg::a", "pkg::b", Calls),
-                edge("pkg::a", "pkg::b", Reads),
-                edge("pkg::b", "pkg::a", Calls),
-                edge("pkg::a", "external::serde", Calls),
-                edge("pkg::b", "pkg::b", Calls),
-                edge("pkg::a", "pkg::c", Contains),
+                edge("pkg::a", "pkg::b", calls),
+                edge("pkg::a", "pkg::b", reads),
+                edge("pkg::b", "pkg::a", calls),
+                edge("pkg::a", "external::serde", calls),
+                edge("pkg::b", "pkg::b", calls),
+                edge("pkg::a", "pkg::c", contains),
             ],
             audit_head: String::new(),
             audit_log: Vec::new(),
@@ -241,6 +249,10 @@ mod tests {
     fn projection_is_empty_for_an_empty_graph() {
         let snap = Snapshot {
             schema_version: crate::snapshot::SCHEMA_VERSION.to_string(),
+            profile_id: "code".to_string(),
+            profile_version: "1.0.0".to_string(),
+            graph_class: "truths".to_string(),
+            provenance_summary: Default::default(),
             nodes: Vec::new(),
             edges: Vec::new(),
             audit_head: String::new(),

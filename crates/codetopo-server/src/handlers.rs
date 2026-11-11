@@ -886,7 +886,7 @@ async fn stats(
     let graph = load_graph_blocking(&db, &index_id)?;
 
     let mut node_kinds = BTreeMap::new();
-    for kind in ALL_NODE_KINDS {
+    for kind in all_node_kinds() {
         let count = graph.nodes().filter(|node| node.kind == kind).count();
         if count > 0 {
             node_kinds.insert(node_kind_name(kind).to_string(), count);
@@ -894,7 +894,7 @@ async fn stats(
     }
 
     let mut edge_kinds = BTreeMap::new();
-    for kind in ALL_EDGE_KINDS {
+    for kind in all_edge_kinds() {
         let count = graph.edge_count_by_kind(kind);
         if count > 0 {
             edge_kinds.insert(kind.as_str().to_string(), count);
@@ -914,51 +914,20 @@ async fn stats(
     }))
 }
 
-/// Every node kind, in schema declaration order.
-const ALL_NODE_KINDS: [NodeKind; 10] = [
-    NodeKind::Package,
-    NodeKind::Module,
-    NodeKind::File,
-    NodeKind::Class,
-    NodeKind::Interface,
-    NodeKind::Function,
-    NodeKind::Method,
-    NodeKind::Variable,
-    NodeKind::External,
-    NodeKind::Doc,
-];
+/// Every node kind, in profile declaration order (the dictionary
+/// is profile data since schema 2.0).
+fn all_node_kinds() -> Vec<NodeKind> {
+    codetopo_core::DomainProfile::code().node_kinds_in_order()
+}
 
-/// Every edge kind, in schema declaration order.
-const ALL_EDGE_KINDS: [EdgeKind; 9] = [
-    EdgeKind::Imports,
-    EdgeKind::Calls,
-    EdgeKind::Inherits,
-    EdgeKind::Implements,
-    EdgeKind::Defines,
-    EdgeKind::References,
-    EdgeKind::Contains,
-    EdgeKind::Reads,
-    EdgeKind::Writes,
-];
+/// Every edge kind, in profile declaration order.
+fn all_edge_kinds() -> Vec<EdgeKind> {
+    codetopo_core::DomainProfile::code().edge_kinds_in_order()
+}
 
 /// Snake_case wire name of a node kind.
-///
-/// `NodeKind` has no `as_str` of its own (unlike `EdgeKind`), so the names
-/// live here; they are kept in step with the schema's `rename_all =
-/// "snake_case"` serialization, which is what clients see.
 fn node_kind_name(kind: NodeKind) -> &'static str {
-    match kind {
-        NodeKind::Package => "package",
-        NodeKind::Module => "module",
-        NodeKind::File => "file",
-        NodeKind::Class => "class",
-        NodeKind::Interface => "interface",
-        NodeKind::Function => "function",
-        NodeKind::Method => "method",
-        NodeKind::Variable => "variable",
-        NodeKind::External => "external",
-        NodeKind::Doc => "doc",
-    }
+    kind.as_str()
 }
 
 // ---------------------------------------------------------------------------

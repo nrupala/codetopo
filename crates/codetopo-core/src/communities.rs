@@ -27,15 +27,9 @@ use crate::projection::{AnalyticsProjection, CommunityDetector};
 /// never varied per query (owner decision 2).
 pub const LEIDEN_SEED: u64 = 20261102;
 
-/// The published method stated beside every communities answer.
-pub const COMMUNITIES_METHOD: &str = "Leiden community detection (Traag, Waltman & van Eck 2019), \
-     modularity quality function (Newman & Girvan 2004), resolution gamma = 1.0, \
-     fixed seed 20261102, over the undirected projection of the CODE_SCHEMA §9 \
-     dependency set weighted by recorded-edge multiplicity (external stubs \
-     excluded, self-loops dropped); community ids are assigned by smallest \
-     member id, ascending; an isolated node is a singleton community; \
-     modularity Q is computed by codetopo from the same projection and is \
-     absent when the graph has no edges (Q is undefined at m = 0)";
+// The published method stated beside every communities answer is
+// the profile-carried core method text (`crate::communities_method()`)
+// — §9's parameters with the loaded profile's dependency set named.
 
 /// The shipped detector: leiden-rs 0.8.1, pinned, behind the
 /// [`CommunityDetector`] trait (RA0) so it can be replaced without
@@ -113,7 +107,7 @@ pub fn modularity(projection: &AnalyticsProjection, labels: &[usize]) -> Option<
 }
 
 /// One community of a partition: its canonical id and measurements.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CommunitySummary {
     /// Canonical community id (numbering by smallest member id).
     pub id: usize,
@@ -126,7 +120,7 @@ pub struct CommunitySummary {
 }
 
 /// One node's community assignment.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NodeCommunity {
     pub id: String,
     pub community: usize,
@@ -230,10 +224,15 @@ mod tests {
                 end_line: None,
                 signature: None,
                 decisions: None,
+                measures: Default::default(),
             })
             .collect();
         let snap = Snapshot {
             schema_version: crate::snapshot::SCHEMA_VERSION.to_string(),
+            profile_id: "code".to_string(),
+            profile_version: "1.0.0".to_string(),
+            graph_class: "truths".to_string(),
+            provenance_summary: Default::default(),
             nodes,
             edges: edges
                 .iter()

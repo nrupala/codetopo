@@ -759,46 +759,20 @@ pub fn render_path(steps: &[PathStep]) -> String {
 /// kinds with the same names the CLI prints, rather than each carrying a copy
 /// of this table.
 pub fn node_kind_name(kind: NodeKind) -> &'static str {
-    match kind {
-        NodeKind::Package => "package",
-        NodeKind::Module => "module",
-        NodeKind::File => "file",
-        NodeKind::Class => "class",
-        NodeKind::Interface => "interface",
-        NodeKind::Function => "function",
-        NodeKind::Method => "method",
-        NodeKind::Variable => "variable",
-        NodeKind::External => "external",
-        NodeKind::Doc => "doc",
-    }
+    kind.as_str()
 }
 
-/// Every node kind, in schema order — the tally order for kind breakdowns.
-pub const ALL_NODE_KINDS: [NodeKind; 10] = [
-    NodeKind::Package,
-    NodeKind::Module,
-    NodeKind::File,
-    NodeKind::Class,
-    NodeKind::Interface,
-    NodeKind::Function,
-    NodeKind::Method,
-    NodeKind::Variable,
-    NodeKind::External,
-    NodeKind::Doc,
-];
+/// Every node kind, in profile declaration order — the tally order
+/// for kind breakdowns. Since schema 2.0 the order is the loaded
+/// CODE profile's declaration order (the dictionary is data now).
+pub fn all_node_kinds() -> Vec<NodeKind> {
+    codetopo_core::DomainProfile::code().node_kinds_in_order()
+}
 
-/// Every edge kind, in schema order — the tally order for kind breakdowns.
-pub const ALL_EDGE_KINDS: [EdgeKind; 9] = [
-    EdgeKind::Imports,
-    EdgeKind::Calls,
-    EdgeKind::Inherits,
-    EdgeKind::Implements,
-    EdgeKind::Defines,
-    EdgeKind::References,
-    EdgeKind::Contains,
-    EdgeKind::Reads,
-    EdgeKind::Writes,
-];
+/// Every edge kind, in profile declaration order — likewise.
+pub fn all_edge_kinds() -> Vec<EdgeKind> {
+    codetopo_core::DomainProfile::code().edge_kinds_in_order()
+}
 
 /// Aggregate-first store statistics: totals plus per-kind breakdowns
 /// (non-zero kinds only).
@@ -810,8 +784,8 @@ pub const ALL_EDGE_KINDS: [EdgeKind; 9] = [
 pub fn describe_schema() -> serde_json::Value {
     serde_json::json!({
         "schema_version": codetopo_core::snapshot::SCHEMA_VERSION,
-        "node_kinds": ALL_NODE_KINDS.iter().map(|k| node_kind_name(*k)).collect::<Vec<_>>(),
-        "edge_kinds": ALL_EDGE_KINDS.iter().map(|k| k.as_str()).collect::<Vec<_>>(),
+        "node_kinds": all_node_kinds().iter().map(|k| node_kind_name(*k)).collect::<Vec<_>>(),
+        "edge_kinds": all_edge_kinds().iter().map(|k| k.as_str()).collect::<Vec<_>>(),
         "tiers": {
             "core": "package, module, file (the structural skeleton)",
             "recommended": "class, interface (type declarations)",
@@ -847,14 +821,14 @@ pub fn print_id_list_json(relation: &str, node: &str, ids: &[String], expand: bo
 /// (`{nodes: {total, by_kind}, edges: {total, by_kind}}`).
 pub fn print_stats_json(graph: &Graph) {
     let mut node_kinds = serde_json::Map::new();
-    for kind in ALL_NODE_KINDS {
+    for kind in all_node_kinds() {
         let count = graph.nodes().filter(|n| n.kind == kind).count();
         if count > 0 {
             node_kinds.insert(node_kind_name(kind).to_string(), count.into());
         }
     }
     let mut edge_kinds = serde_json::Map::new();
-    for kind in ALL_EDGE_KINDS {
+    for kind in all_edge_kinds() {
         let count = graph.edge_count_by_kind(kind);
         if count > 0 {
             edge_kinds.insert(kind.as_str().to_string(), count.into());
@@ -871,14 +845,14 @@ pub fn print_stats_json(graph: &Graph) {
 
 pub fn print_stats(graph: &Graph) {
     println!("nodes: {}", graph.node_count());
-    for kind in ALL_NODE_KINDS {
+    for kind in all_node_kinds() {
         let n = graph.nodes().filter(|nd| nd.kind == kind).count();
         if n > 0 {
             println!("  {}: {n}", node_kind_name(kind));
         }
     }
     println!("edges: {}", graph.edge_count());
-    for kind in ALL_EDGE_KINDS {
+    for kind in all_edge_kinds() {
         let n = graph.edge_count_by_kind(kind);
         if n > 0 {
             println!("  {}: {n}", kind.as_str());
@@ -978,7 +952,7 @@ pub fn communities_value(graph: &Graph, limit: usize) -> serde_json::Value {
     let part = graph.communities();
     let truncated = part.assignments.len() > limit;
     json!({
-        "method": codetopo_core::COMMUNITIES_METHOD,
+        "method": codetopo_core::communities_method(),
         "total": part.total,
         "modularity": part.modularity,
         "communities": part.communities,
@@ -996,7 +970,7 @@ pub fn communities_value(graph: &Graph, limit: usize) -> serde_json::Value {
 pub fn topo_sort_value(graph: &Graph) -> serde_json::Value {
     let order = graph.topo_sort();
     json!({
-        "method": codetopo_core::TOPO_SORT_METHOD,
+        "method": codetopo_core::topo_sort_method(),
         "total_groups": order.total_groups,
         "total_nodes": order.total_nodes,
         "cyclic_groups": order.cyclic_groups,
@@ -1037,8 +1011,8 @@ pub fn render_value(graph: &Graph, layout_name: &str) -> Result<serde_json::Valu
 /// each metric's published method stated beside the numbers.
 pub fn metrics_value(graph: &Graph) -> serde_json::Value {
     let metrics = graph.metrics();
-    let methods: std::collections::BTreeMap<&str, &str> =
-        codetopo_core::METRIC_METHODS.iter().copied().collect();
+    let methods: std::collections::BTreeMap<String, String> =
+        codetopo_core::metric_methods().into_iter().collect();
     json!({
         "types": metrics.types,
         "packages": metrics.packages,
@@ -1061,8 +1035,8 @@ pub fn history_value(
         None => codetopo_core::HistoryReport::not_measured(absent_reason, min_support),
     };
     let mut value = serde_json::to_value(&report).expect("history report serializes");
-    let methods: std::collections::BTreeMap<&str, &str> =
-        codetopo_core::HISTORY_METHODS.iter().copied().collect();
+    let methods: std::collections::BTreeMap<String, String> =
+        codetopo_core::history_methods().into_iter().collect();
     value["methods"] = json!(methods);
     value
 }

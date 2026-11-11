@@ -34,79 +34,14 @@ use serde::{Deserialize, Serialize};
 use crate::graph::Graph;
 use crate::schema::{EdgeKind, Node, NodeKind};
 
-/// The published method of every metric this module computes, keyed by
-/// the field name the surfaces report. The surfaces state these beside
-/// the numbers (the provenance rule: no number without its method).
-pub const METRIC_METHODS: &[(&str, &str)] = &[
-    (
-        "cbo",
-        "coupling between objects (Chidamber & Kemerer 1994): the number of \
-         distinct types this type is coupled to — a dependency edge (any kind \
-         except contains) between this type or one of its methods and another \
-         type or one of its methods, in either direction",
-    ),
-    (
-        "rfc",
-        "response for a class (Chidamber & Kemerer 1994): the number of this \
-         type's methods plus the number of distinct methods of other types \
-         they call (external stubs excluded)",
-    ),
-    (
-        "lcom",
-        "lack of cohesion, as raw pair counts (Lanza & Marinescu 2006): over \
-         every pair of this type's methods, a pair shares when their recorded \
-         accesses overlap — the targets of their reads/writes edges and their \
-         recorded references, intersected with the type's member names (its \
-         methods plus the targets of its methods' writes); reported as \
-         sharing and non-sharing pair counts, never collapsed to a verdict",
-    ),
-    (
-        "tcc",
-        "tight class cohesion (Bieman & Kang 1995), over recorded accesses \
-         as in lcom: sharing pairs / total method pairs",
-    ),
-    (
-        "atfd",
-        "access to foreign data (Lanza & Marinescu 2006), operationalized: \
-         the number of distinct symbols outside this type — variables and \
-         methods — targeted by calls, reads, or writes edges from this \
-         type's methods (external stubs excluded)",
-    ),
-    (
-        "wmc",
-        "weighted methods per class (Chidamber & Kemerer 1994): the sum of \
-         the cyclomatic complexities of this type's methods; absent unless \
-         every method's complexity was measured",
-    ),
-    (
-        "ca",
-        "afferent coupling (Martin 1994): the number of distinct \
-         node-to-node dependency pairs (dependency edges per CODE_SCHEMA \
-         §9: imports, calls, inherits, implements, defines, reads, writes, \
-         references) from other packages into this package",
-    ),
-    (
-        "ce",
-        "efferent coupling (Martin 1994): the number of distinct \
-         node-to-node dependency pairs from this package to other packages \
-         of the same repository (links to external libraries are not \
-         counted here; see external_ce)",
-    ),
-    (
-        "instability",
-        "instability (Martin 1994): Ce / (Ca + Ce); absent when the package \
-         has no measured coupling in either direction",
-    ),
-    (
-        "external_ce",
-        "external coupling: the number of distinct node-to-node dependency \
-         pairs from this package to external (third-party / stdlib) stub \
-         nodes, counted and named separately from ce (CODE_SCHEMA §9, the \
-         B0.3 rule) — never merged into it",
-    ),
-];
+// The published method of every metric this module computes lives in
+// the loaded profile's sibling registry (founding spec §1.4 — the
+// registry, not a Rust constant, is their home since schema 2.0).
+// `crate::metric_methods()` is the registry view the surfaces state
+// beside the numbers (the provenance rule: no number without its method).
 
-/// Measurements of one type (a `class` or `interface` node).
+/// Measurements of one type (a node of the profile's *type*
+/// aggregate kinds — for CODE, `class` or `interface`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TypeMetrics {
     pub id: String,
@@ -114,7 +49,7 @@ pub struct TypeMetrics {
     pub label: String,
     /// How many methods belong to the type (id-prefix membership).
     pub method_count: usize,
-    /// Distinct types coupled to this one (see [`METRIC_METHODS`]).
+    /// Distinct types coupled to this one (see the sibling registry).
     pub cbo: usize,
     /// Methods of the type + distinct foreign methods they call.
     pub rfc: usize,
@@ -159,55 +94,54 @@ pub struct GraphMetrics {
     pub packages: Vec<PackageMetrics>,
 }
 
-/// The dependency edge kinds of CODE_SCHEMA §9 — everything except
-/// `contains` (hierarchy, not dependency, §1.4) — over which coupling
-/// is measured. The analytics projection (`crate::projection`) ranges
-/// over the same set: one definition for the whole engine.
-pub(crate) fn is_dependency(kind: EdgeKind) -> bool {
-    matches!(
-        kind,
-        EdgeKind::Imports
-            | EdgeKind::Calls
-            | EdgeKind::Inherits
-            | EdgeKind::Implements
-            | EdgeKind::Defines
-            | EdgeKind::Reads
-            | EdgeKind::Writes
-            | EdgeKind::References
-    )
+/// The dependency test, answered by a profile's dependency edge set
+/// (founding spec §1.2 part 4). The analytics projection
+/// (`crate::projection`) ranges over the same set: one definition for
+/// the whole engine, now carried as profile data.
+pub(crate) fn is_dependency(profile: &crate::profile::DomainProfile, kind: EdgeKind) -> bool {
+    profile.is_dependency(&kind)
 }
 
-/// The package a node id belongs to: the first `::` segment. `None`
-/// for external stubs (they are nobody's package — links to them are
-/// external coupling, not inter-package coupling).
-fn package_of(id: &str) -> Option<&str> {
-    if id.starts_with("external::") {
-        None
-    } else {
-        Some(id.split("::").next().unwrap_or(id))
-    }
+/// The package a node id belongs to, per the profile's package rule:
+/// the first `::` segment. `None` for boundary stubs (they are
+/// nobody's package — links to them are external coupling, not
+/// inter-package coupling).
+fn package_of<'a>(profile: &crate::profile::DomainProfile, id: &'a str) -> Option<&'a str> {
+    profile.package_of(id)
 }
 
 impl Graph {
-    /// All coupling and cohesion measurements of this graph, per
-    /// [`METRIC_METHODS`] and CODE_SCHEMA §9.
+    /// All coupling and cohesion measurements of this graph, per the
+    /// profile's sibling registrations and CODE_SCHEMA §9.
     pub fn metrics(&self) -> GraphMetrics {
+        let profile = self.profile();
+        // The aggregate definitions are profile data (founding spec
+        // §1.4): the *type* aggregate's kinds and membership rule and
+        // the member kind come from the sibling registrations, not
+        // from a hard-coded class/interface/method reading.
+        let type_kinds: Vec<NodeKind> = profile
+            .sibling("cbo")
+            .and_then(|s| s.aggregate_kind.as_ref())
+            .map(|a| a.node_kinds.iter().map(|n| NodeKind::new(n)).collect())
+            .unwrap_or_default();
+        let member_kind = NodeKind::new("method");
+        let access_kinds = [EdgeKind::new("reads"), EdgeKind::new("writes")];
+        let call_kind = EdgeKind::new("calls");
+        let data_kinds = [NodeKind::new("method"), NodeKind::new("variable")];
         // Index nodes once: by id, and methods grouped by owning type.
         let by_id: HashMap<&str, &Node> =
             self.nodes().map(|n| (n.id.as_str(), n)).collect();
         let owner_of = |node: &Node| -> Option<String> {
-            match node.kind {
-                NodeKind::Class | NodeKind::Interface => Some(node.id.clone()),
-                NodeKind::Method => {
-                    let (owner, _) = node.id.rsplit_once("::")?;
-                    match by_id.get(owner) {
-                        Some(t) if matches!(t.kind, NodeKind::Class | NodeKind::Interface) => {
-                            Some(owner.to_string())
-                        }
-                        _ => None,
-                    }
+            if type_kinds.contains(&node.kind) {
+                Some(node.id.clone())
+            } else if node.kind == member_kind {
+                let (owner, _) = node.id.rsplit_once("::")?;
+                match by_id.get(owner) {
+                    Some(t) if type_kinds.contains(&t.kind) => Some(owner.to_string()),
+                    _ => None,
                 }
-                _ => None,
+            } else {
+                None
             }
         };
         // A method's owner is its immediate id parent (rsplit), so a
@@ -215,7 +149,7 @@ impl Graph {
         // the outer one.
         let mut methods_of: BTreeMap<String, Vec<&Node>> = BTreeMap::new();
         for n in self.nodes() {
-            if n.kind == NodeKind::Method {
+            if n.kind == member_kind {
                 if let Some(owner) = owner_of(n) {
                     methods_of.entry(owner).or_default().push(n);
                 }
@@ -237,7 +171,7 @@ impl Graph {
         let mut pairs_external: BTreeMap<String, BTreeSet<(String, String)>> =
             BTreeMap::new();
         for e in self.edges() {
-            if !is_dependency(e.kind) {
+            if !is_dependency(profile, e.kind) {
                 continue;
             }
             let (Some(from), Some(to)) = (by_id.get(e.from.as_str()), by_id.get(e.to.as_str()))
@@ -245,7 +179,7 @@ impl Graph {
                 continue;
             };
             // Package pairs (node-to-node, deduplicated by the set).
-            match (package_of(&e.from), package_of(&e.to)) {
+            match (package_of(profile, &e.from), package_of(profile, &e.to)) {
                 (Some(a), Some(b)) if a != b => {
                     pairs_out
                         .entry(a.to_string())
@@ -273,14 +207,12 @@ impl Graph {
             }
             // Recorded accesses of a method (any owner): reads/writes
             // edge targets, by label.
-            if from.kind == NodeKind::Method
-                && matches!(e.kind, EdgeKind::Reads | EdgeKind::Writes)
-            {
+            if from.kind == member_kind && access_kinds.contains(&e.kind) {
                 access_labels
                     .entry(e.from.clone())
                     .or_default()
                     .insert(to.label.clone());
-                if e.kind == EdgeKind::Writes {
+                if e.kind == access_kinds[1] {
                     writes_labels
                         .entry(e.from.clone())
                         .or_default()
@@ -288,16 +220,16 @@ impl Graph {
                 }
             }
             // Per-type call/access tallies, from the type's methods only.
-            if from.kind == NodeKind::Method {
+            if from.kind == member_kind {
                 if let Some(owner) = owner_of(from) {
-                    if e.kind == EdgeKind::Calls
-                        && to.kind == NodeKind::Method
+                    if e.kind == call_kind
+                        && to.kind == member_kind
                         && owner_of(to).as_deref() != Some(owner.as_str())
                     {
                         rfc_calls.entry(owner.clone()).or_default().insert(e.to.clone());
                     }
-                    if matches!(e.kind, EdgeKind::Calls | EdgeKind::Reads | EdgeKind::Writes)
-                        && matches!(to.kind, NodeKind::Method | NodeKind::Variable)
+                    if (e.kind == call_kind || access_kinds.contains(&e.kind))
+                        && data_kinds.contains(&to.kind)
                         && owner_of(to).as_deref() != Some(owner.as_str())
                         && e.to != owner
                     {
@@ -309,7 +241,7 @@ impl Graph {
 
         let mut types = Vec::new();
         for n in self.nodes() {
-            if !matches!(n.kind, NodeKind::Class | NodeKind::Interface) {
+            if !type_kinds.contains(&n.kind) {
                 continue;
             }
             let methods = methods_of.get(&n.id).cloned().unwrap_or_default();
@@ -350,10 +282,10 @@ impl Graph {
         // nodes without an explicit package node).
         let mut package_ids: BTreeSet<String> = BTreeSet::new();
         for n in self.nodes() {
-            if n.kind == NodeKind::Package {
+            if n.kind == NodeKind::new(&profile.containment.root_kind) {
                 package_ids.insert(n.id.clone());
             }
-            if let Some(p) = package_of(&n.id) {
+            if let Some(p) = package_of(profile, &n.id) {
                 package_ids.insert(p.to_string());
             }
         }
@@ -461,6 +393,7 @@ mod tests {
             end_line: Some(5),
             signature: None,
             decisions,
+            measures: Default::default(),
         }
     }
 
@@ -519,6 +452,10 @@ mod tests {
         ];
         Snapshot {
             schema_version: crate::snapshot::SCHEMA_VERSION.to_string(),
+            profile_id: "code".to_string(),
+            profile_version: "1.0.0".to_string(),
+            graph_class: "truths".to_string(),
+            provenance_summary: Default::default(),
             nodes,
             edges,
             audit_head: String::new(),
@@ -613,7 +550,7 @@ mod tests {
             if e.kind == EdgeKind::Contains {
                 continue;
             }
-            if let (Some(a), Some(b)) = (package_of(&e.from), package_of(&e.to)) {
+            if let (Some(a), Some(b)) = (package_of(g.profile(), &e.from), package_of(g.profile(), &e.to)) {
                 if a != b {
                     raw_pairs.insert((e.from.as_str(), e.to.as_str()));
                 }
@@ -639,6 +576,10 @@ mod tests {
         let edges: Vec<Edge> = snap_graph.edges().cloned().collect();
         snap_graph = Snapshot {
             schema_version: crate::snapshot::SCHEMA_VERSION.to_string(),
+            profile_id: "code".to_string(),
+            profile_version: "1.0.0".to_string(),
+            graph_class: "truths".to_string(),
+            provenance_summary: Default::default(),
             nodes,
             edges,
             audit_head: String::new(),

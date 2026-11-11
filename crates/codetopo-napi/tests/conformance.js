@@ -76,7 +76,7 @@ async function f1() {
   const coreManifest = fs.readFileSync(path.join(ROOT, 'crates', 'codetopo-core', 'Cargo.toml'), 'utf8');
   const coreVersion = coreManifest.match(/\[package\][\s\S]*?version\s*=\s*"([^"]+)"/)[1];
   assert.strictEqual(CORE_VERSION, coreVersion, 'CORE_VERSION is the bound core version');
-  assert.strictEqual(SCHEMA_VERSION, '1.2');
+  assert.strictEqual(SCHEMA_VERSION, '2.0');
   assert.strictEqual(Codetopo.describeSchema().schema_version, SCHEMA_VERSION);
   ok('provenance: CORE_VERSION from the bound core; SCHEMA_VERSION = describeSchema()');
 
@@ -308,7 +308,7 @@ async function errorsAndStrictness() {
   assert.throws(
     () =>
       Codetopo.fromSnapshot(
-        JSON.stringify({ schema_version: '2.0', nodes: [], edges: [], audit_head: '', audit_log: [] })
+        JSON.stringify({ schema_version: '3.0', nodes: [], edges: [], audit_head: '', audit_log: [] })
       ),
     (err) => err.code === 'unsupported_schema_version'
   );

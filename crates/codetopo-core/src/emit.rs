@@ -13,6 +13,8 @@
 //! it; `GraphBuilder::build` resolves the cross-file references (`imports`,
 //! `calls`, `refs`).
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::schema::NodeKind;
@@ -24,7 +26,7 @@ use crate::schema::NodeKind;
 /// package/module/file skeleton is `core`, type declarations are
 /// `recommended`, everything else `optional`). Symbol `id`s are taken
 /// verbatim as node ids.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RawSymbol {
     pub id: String,
     pub kind: NodeKind,
@@ -62,6 +64,11 @@ pub struct RawSymbol {
     /// extractor that does not count) — never read it as zero.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decisions: Option<u32>,
+    /// Profile-declared measured fields beyond the core-reserved
+    /// three, keyed by the profile's field name. Absence of a key is
+    /// *not measured* for that field.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub measures: BTreeMap<String, serde_json::Value>,
 }
 
 /// One inheritance or implementation claim found in a file: the named
@@ -72,7 +79,7 @@ pub struct RawSymbol {
 /// refs; unresolvable heritage is silent. `kind` is only ever
 /// [`EdgeKind::Inherits`] or [`EdgeKind::Implements`] — the builder
 /// ignores anything else.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RawHeritage {
     pub type_name: String,
     pub target_name: String,
@@ -86,7 +93,7 @@ pub struct RawHeritage {
 /// `module_id`); `to_module_id` either links to a known module or becomes an
 /// `external::{to_module_id}` stub — external dependencies are normal and
 /// produce no diagnostic.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RawImport {
     pub from_module_id: String,
     pub to_module_id: String,
@@ -99,7 +106,7 @@ pub struct RawImport {
 /// first, then `::{to_name}` suffix match (same module → same package → any,
 /// deterministic), else an `external::{to_name}` stub plus a single deduped
 /// `UnresolvedCall` diagnostic per distinct target name.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RawCall {
     pub from_id: String,
     pub to_name: String,
@@ -107,7 +114,7 @@ pub struct RawCall {
 }
 
 /// Everything one extractor run produces for one file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileSymbols {
     pub package: String,
     pub file: String,

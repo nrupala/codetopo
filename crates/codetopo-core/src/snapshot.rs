@@ -16,19 +16,56 @@ use serde::{Deserialize, Serialize};
 
 use crate::diag::Diagnostic;
 use crate::graph::Graph;
+use crate::profile::DomainProfile;
 use crate::schema::{Edge, EdgeKind, Node};
 
-/// Schema version this implementation emits. Consumers reject major
-/// mismatches loudly (CODE_SCHEMA §8); the 1.1 line adds the optional
-/// measured fields of CODE_SCHEMA §3 (end line, signature, decision
-/// counts) — additive, so 1.0 snapshots still read, their nodes simply
-/// carry no measurements.
-pub const SCHEMA_VERSION: &str = "1.2";
+fn default_profile_id() -> String {
+    DomainProfile::code().profile_id.clone()
+}
+
+fn default_profile_version() -> String {
+    DomainProfile::code().profile_version.clone()
+}
+
+fn default_graph_class() -> String {
+    "truths".to_string()
+}
+
+/// Core schema version this implementation emits. 2.0 is the
+/// domain-profile move: the dictionary became profile data, and the
+/// snapshot gained its `profile_id` / `profile_version` stamps plus
+/// the computed `graph_class` / `provenance_summary` (§4.3). 1.x
+/// snapshots still read — they name no profile because only one
+/// dictionary existed, so they load under the CODE profile by
+/// definition (founding spec §1.3) — and their nodes simply carry no
+/// profile measures.
+pub const SCHEMA_VERSION: &str = "2.0";
 
 /// Portable frozen graph.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub schema_version: String,
+    /// The domain profile the graph's dictionary belongs to
+    /// (founding spec §1.3). Absent in 1.x snapshots; defaults to
+    /// `code`, the only dictionary that existed then.
+    #[serde(default = "default_profile_id")]
+    pub profile_id: String,
+    /// The profile's own version (semver; §8's law applied to
+    /// profiles). Absent in 1.x snapshots; defaults to the CODE
+    /// profile's founding version.
+    #[serde(default = "default_profile_version")]
+    pub profile_version: String,
+    /// The computed graph class (§4.3): `truths` iff every edge is
+    /// extracted_truth or sourced_fact, else `claims-bearing`.
+    /// Computed at export, never declared; defaults on read so a
+    /// hand-written or 1.x snapshot parses — consumers that need the
+    /// stamp recompute it from the graph's profile.
+    #[serde(default = "default_graph_class")]
+    pub graph_class: String,
+    /// Edge counts by provenance class (§4.3), stamped beside
+    /// `graph_class` at export.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub provenance_summary: std::collections::BTreeMap<String, usize>,
     #[serde(default)]
     pub nodes: Vec<Node>,
     #[serde(default)]
@@ -60,7 +97,7 @@ pub struct Snapshot {
 /// Field-for-field identical to the store crate's `AuditEntry`; defined here
 /// so snapshots can transport the chain without core depending on the store
 /// crate.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SnapshotAuditEntry {
     pub seq: u64,
     pub ts: String,
@@ -100,8 +137,15 @@ impl Snapshot {
                 .then_with(|| a.to.cmp(&b.to))
                 .then_with(|| a.kind.as_str().cmp(b.kind.as_str()))
         });
+        let profile = g.profile();
+        let (graph_class, provenance_summary) =
+            profile.graph_class_of(g.edges().map(|e| &e.kind));
         Snapshot {
             schema_version: SCHEMA_VERSION.to_string(),
+            profile_id: profile.profile_id.clone(),
+            profile_version: profile.profile_version.clone(),
+            graph_class,
+            provenance_summary,
             nodes: g.nodes().cloned().collect(),
             edges,
             audit_head: audit_log.last().map(|e| e.hash.clone()).unwrap_or_default(),
@@ -117,15 +161,17 @@ impl Snapshot {
         version.split('.').next()?.parse().ok()
     }
 
-    /// Enforce CODE_SCHEMA §8: a consumer rejects a snapshot whose schema
-    /// major version differs from its own — loudly, never by guessing.
-    /// Same-major minor drift is tolerated, per the §8 rule.
+    /// Enforce §8: a consumer rejects a snapshot whose core schema
+    /// major it does not speak — loudly, never by guessing. This
+    /// build speaks major 2 (profile-driven) and major 1 (the
+    /// pre-profile line, which loads under the CODE profile by
+    /// definition — founding spec §1.3). Same-major minor drift is
+    /// tolerated, per the §8 rule.
     pub fn check_schema_version(&self) -> Result<(), String> {
-        let want = Self::schema_major(SCHEMA_VERSION).expect("own schema version parses");
         match Self::schema_major(&self.schema_version) {
-            Some(m) if m == want => Ok(()),
+            Some(1) | Some(2) => Ok(()),
             _ => Err(format!(
-                "unsupported snapshot schema_version {:?} (this build supports major {want})",
+                "unsupported snapshot schema_version {:?} (this build supports majors 1 and 2)",
                 self.schema_version
             )),
         }
@@ -144,6 +190,14 @@ impl Snapshot {
     /// sorted so query determinism holds for deserialized graphs exactly as
     /// for freshly built ones.
     pub fn to_graph(&self) -> Graph {
+        self.to_graph_checked()
+            .expect("snapshot names a loadable profile")
+    }
+
+    /// [`Snapshot::to_graph`] with the refusal surfaced: a snapshot
+    /// naming a profile this build cannot load is an error, never a
+    /// silent read under the CODE dictionary.
+    pub fn to_graph_checked(&self) -> Result<Graph, String> {
         let mut nodes: HashMap<String, Node> = HashMap::new();
         for n in &self.nodes {
             nodes.insert(n.id.clone(), n.clone());
@@ -154,7 +208,16 @@ impl Snapshot {
             children.entry(e.from.clone()).or_default().push((e.to.clone(), e.kind));
             parents.entry(e.to.clone()).or_default().push((e.from.clone(), e.kind));
         }
-        Graph::from_parts(nodes, self.edges.clone(), children, parents)
+        let graph = Graph::from_parts(nodes, self.edges.clone(), children, parents);
+        if self.profile_id == DomainProfile::code().profile_id {
+            Ok(graph)
+        } else {
+            Err(format!(
+                "snapshot names profile {:?} which this build cannot load (only {:?} is embedded)",
+                self.profile_id,
+                DomainProfile::code().profile_id
+            ))
+        }
     }
 }
 

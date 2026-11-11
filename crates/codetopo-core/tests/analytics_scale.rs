@@ -47,6 +47,7 @@ fn node(id: String) -> Node {
         end_line: None,
         signature: None,
         decisions: None,
+        measures: Default::default(),
     }
 }
 
@@ -63,6 +64,10 @@ fn edge(from: &str, to: &str) -> Edge {
 fn graph_of(nodes: Vec<Node>, edges: Vec<Edge>) -> Graph {
     Snapshot {
         schema_version: codetopo_core::snapshot::SCHEMA_VERSION.to_string(),
+        profile_id: "code".to_string(),
+        profile_version: "1.0.0".to_string(),
+        graph_class: "truths".to_string(),
+        provenance_summary: Default::default(),
         nodes,
         edges,
         audit_head: String::new(),

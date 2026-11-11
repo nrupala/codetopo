@@ -145,6 +145,7 @@ fn extract_doc(package: &str, rel_path: &Path) -> FileSymbols {
             end_line: None,
             signature: None,
             decisions: None,
+            measures: Default::default(),
         }],
         imports: Vec::new(),
         calls: Vec::new(),
