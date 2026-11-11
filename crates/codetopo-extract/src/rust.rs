@@ -297,6 +297,7 @@ impl<'a> Walker<'a> {
             signature,
             decisions,
             measures: Default::default(),
+            loc_file: String::new(),
         });
         self.enclosing.push(id);
         let saved = self.in_assoc;

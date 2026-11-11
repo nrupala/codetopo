@@ -1,0 +1,50 @@
+{
+ "fixture": "RA-F2 (sensitivity oracle, C-RA4)",
+ "model_id": "ra-f2-model",
+ "pairs": {
+  "val!B20|val!B2": {
+   "closed_form": "1000*(1-0.25)*(0.40-0.15)",
+   "elasticity": 0.11045655375552282,
+   "finite_difference": 187.5,
+   "step": 0.01
+  },
+  "val!B24|val!B8": {
+   "closed_form": "dEV/dAP = 1/1.1 + (1.03/0.07)/1.1 = 100/7 (via \u0394WC\u2192FCF)",
+   "elasticity": 0.029455081001472753,
+   "finite_difference": 14.285714285714286,
+   "no_path": true,
+   "no_path_means": "no computes_into path through the balance-sheet bridge (bs!C7); the measured effect runs through cf!C5 (\u0394WC) instead",
+   "step": 0.05
+  },
+  "val!B26|val!B14": {
+   "closed_form": "(PS(0.11) - PS(0.10))/0.01 with PS(w) = [169.75/(1+w) + 174.8425/((w-0.03)(1+w)) + 39.75]/100",
+   "elasticity": -1.22984075464043,
+   "finite_difference": -303.125,
+   "step": 0.01
+  },
+  "val!B26|val!B15": {
+   "closed_form": "(PS(0.04) - PS(0.03))/0.01 with PS(gt) = [169.75/1.1 + (169.75*(1+gt)/(0.10-gt))/1.1 - 200 + 239.75]/100",
+   "elasticity": 0.49193630185617204,
+   "finite_difference": 404.1666666666667,
+   "step": 0.01
+  },
+  "val!B26|val!B16": {
+   "closed_form": "(PS(shares=101) - PS(shares=100))/1",
+   "elasticity": -0.9900990099009901,
+   "finite_difference": -0.24403465346534653,
+   "step": 1.0
+  },
+  "val!B26|val!B2": {
+   "closed_form": "1000*0.75*0.25/100 * (1 + 1/1.1 + (1.03/0.07)/1.1)",
+   "elasticity": 0.11628243954037645,
+   "finite_difference": 28.660714285714285,
+   "step": 0.01
+  },
+  "val!B26|val!B9": {
+   "closed_form": "-(1/1.1 + (1.03/0.07)/1.1 + 1)/100",
+   "elasticity": -0.37210380652920466,
+   "finite_difference": -0.15285714285714286,
+   "step": 0.6
+  }
+ }
+}

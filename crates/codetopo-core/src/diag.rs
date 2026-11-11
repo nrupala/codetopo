@@ -58,6 +58,21 @@ pub enum Diagnostic {
         kind: EdgeKind,
         missing: Vec<String>,
     },
+    /// A tenant profile's declared articulation identity, evaluated by
+    /// an extractor over the emitted graph, does not hold (Domain-
+    /// Profile Founding Spec §1 well-formedness; format gap F-2, closed
+    /// in Stage 5 of the domain-profile build). The diagnostic carries
+    /// BOTH sides' measured values and the declared tolerance — the
+    /// failure is reported, never repaired: the graph keeps the values
+    /// the artefact actually computes. `identity` is the profile's
+    /// identity name (e.g. `balance_sheet_equation`); `lhs`/`rhs` are
+    /// the two sides' measured totals in the profile's currency units.
+    ArticulationIdentity {
+        identity: String,
+        lhs: f64,
+        rhs: f64,
+        tolerance: f64,
+    },
 }
 
 impl fmt::Display for Diagnostic {
@@ -91,6 +106,17 @@ impl fmt::Display for Diagnostic {
                     kind,
                     edge,
                     missing.join(", ")
+                )
+            }
+            Diagnostic::ArticulationIdentity { identity, lhs, rhs, tolerance } => {
+                write!(
+                    f,
+                    "articulation identity '{}' does not hold: lhs {} vs rhs {} (difference {}, tolerance {})",
+                    identity,
+                    lhs,
+                    rhs,
+                    (lhs - rhs).abs(),
+                    tolerance
                 )
             }
         }

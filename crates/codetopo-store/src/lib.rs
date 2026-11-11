@@ -183,6 +183,7 @@ fn diagnostic_kind(d: &Diagnostic) -> &'static str {
         Diagnostic::InvalidAttribute { .. } => "invalid_attribute",
         Diagnostic::UnknownSymbol { .. } => "unknown_symbol",
         Diagnostic::MissingProvenance { .. } => "missing_provenance",
+        Diagnostic::ArticulationIdentity { .. } => "articulation_identity",
     }
 }
 
@@ -909,6 +910,7 @@ mod tests {
             signature: None,
             decisions: None,
             measures: Default::default(),
+            loc_file: String::new(),
         }
     }
 

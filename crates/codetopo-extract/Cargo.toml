@@ -16,8 +16,13 @@ categories = ["development-tools", "parsing"]
 
 [dependencies]
 codetopo-core = { version = "0.9.1", path = "../codetopo-core" }
+serde_json = { version = "1", features = ["float_roundtrip"] }
 tree-sitter = "0.25"
 tree-sitter-rust = "0.24"
 tree-sitter-typescript = "0.23"
 tree-sitter-python = "0.25"
 thiserror = "2"
+zip = { version = "9", default-features = false, features = ["deflate", "_deflate-any"] }
+
+[dev-dependencies]
+codetopo-store = { version = "0.9.1", path = "../codetopo-store" }
