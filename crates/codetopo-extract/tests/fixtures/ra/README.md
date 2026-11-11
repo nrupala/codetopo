@@ -156,6 +156,21 @@ others: +1% of value). Derivations (PS = per-share 24.6475 at base):
   bs!C7 is read by no formula); the measured effect runs through
   cf!C5 (ΔWC) instead.
 
+## The Stooq boundary window (`stooq-aapl-us-boundary-window.csv`)
+
+C-RA7's gap case runs on the captured aapl.us daily series. The
+full capture (10,626 rows, 1984–2026) is build evidence, not a repo
+artefact, so this repo vendors the boundary window it exercises:
+rows 2023-09-01..2024-09-30 (272 lines incl. header), copied
+byte-for-byte from the Stage 4 capture
+`stage4-evidence/stooq-aapl-us-daily.csv` (678,921 B, sha256
+`414d86003a91f41fd4ac4fde5967e85c3156332bda46026a293689608ba67e76`)
+in the domain-profile build home. Window sha256:
+`6939e5f8dd735389caa35ec9ad32b3dc2c12ba7ecb5724bf4f85782096280f85`.
+Values asserted: 2024-09-27 close 225.9 (intact FY2024 boundary),
+2023-09-29 close 168.926 (FY2023 boundary), 2024-09-26 close
+225.632 (the last row the truncation leaves).
+
 ## Provenance of the workbooks
 
 The `.xlsx` files are written by openpyxl with formulas as stored

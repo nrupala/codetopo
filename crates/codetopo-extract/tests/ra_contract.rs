@@ -864,11 +864,17 @@ fn c_ra7_absence_cases() {
     // Case 2: the Stooq gap. The captured aapl.us series is cut two
     // trading days before the FY2024 period-end; the boundary price
     // for 2024-09-28 is then ABSENT — never back-filled from
-    // 2024-09-26, never fetched from a second vendor.
+    // 2024-09-26, never fetched from a second vendor. The series the
+    // test reads is the boundary window vendored into this repo
+    // (tests/fixtures/ra/stooq-aapl-us-boundary-window.csv) — rows
+    // 2023-09-01..2024-09-30 copied byte-for-byte from the Stage 4
+    // capture stage4-evidence/stooq-aapl-us-daily.csv (678,921 B,
+    // sha256 414d8600…); the window carries every value this case
+    // asserts, so the contract runs from this repo alone.
     let csv_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../stage4-evidence/stooq-aapl-us-daily.csv");
+        .join("tests/fixtures/ra/stooq-aapl-us-boundary-window.csv");
     let csv = std::fs::read_to_string(&csv_path)
-        .unwrap_or_else(|e| panic!("C-RA7: captured Stooq series unreadable: {e}"));
+        .unwrap_or_else(|e| panic!("C-RA7: vendored Stooq window unreadable: {e}"));
     let close_on = |series: &str, date: &str| -> Option<f64> {
         series
             .lines()
@@ -1165,7 +1171,7 @@ fn ra_f5d_single_valuation_output() {
     // Both cells still measure; the rule is a diagnostic, not a repair.
     for (sr, w) in expected_values(&exp) {
         close(
-            value_of(&ex.graph, &exp["model_id"].as_str().unwrap(), &sr).unwrap(),
+            value_of(&ex.graph, exp["model_id"].as_str().unwrap(), &sr).unwrap(),
             w,
             1e-9,
             &format!("RA-F5(d) value {sr}"),
