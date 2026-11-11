@@ -325,14 +325,14 @@ fn ct_stats(db_path: &str, snapshot_json: &str) -> String {
     boundary(|| {
         let loaded = load(db_path, snapshot_json)?;
         let mut node_kinds = serde_json::Map::new();
-        for kind in codetopo_cli::ALL_NODE_KINDS {
+        for kind in codetopo_cli::all_node_kinds() {
             let count = loaded.graph.nodes().filter(|n| n.kind == kind).count();
             if count > 0 {
                 node_kinds.insert(codetopo_cli::node_kind_name(kind).to_string(), count.into());
             }
         }
         let mut edge_kinds = serde_json::Map::new();
-        for kind in codetopo_cli::ALL_EDGE_KINDS {
+        for kind in codetopo_cli::all_edge_kinds() {
             let count = loaded.graph.edge_count_by_kind(kind);
             if count > 0 {
                 edge_kinds.insert(kind.as_str().to_string(), count.into());
