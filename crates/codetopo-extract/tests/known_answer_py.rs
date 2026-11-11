@@ -179,19 +179,21 @@ fn f2_graph_known_answers_and_the_property_collision() {
     assert_eq!(size_node.label, "size");
 
     // Node counts by kind — arithmetic in the fixture README.
+    // Kinds are counted by their wire names (schema 2.0: a kind's
+    // Debug form is its wrapper, so the count keys off `as_str`).
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for n in graph.nodes() {
-        *counts.entry(format!("{:?}", n.kind)).or_default() += 1;
+        *counts.entry(n.kind.as_str().to_string()).or_default() += 1;
     }
     let want: BTreeMap<String, usize> = [
-        ("Package".to_string(), 1),
-        ("Module".to_string(), 2),
-        ("File".to_string(), 3),
-        ("Variable".to_string(), 3),
-        ("Interface".to_string(), 1),
-        ("Class".to_string(), 4),
-        ("Method".to_string(), 7),
-        ("External".to_string(), 5),
+        ("package".to_string(), 1),
+        ("module".to_string(), 2),
+        ("file".to_string(), 3),
+        ("variable".to_string(), 3),
+        ("interface".to_string(), 1),
+        ("class".to_string(), 4),
+        ("method".to_string(), 7),
+        ("external".to_string(), 5),
     ]
     .into_iter()
     .collect();
@@ -201,16 +203,16 @@ fn f2_graph_known_answers_and_the_property_collision() {
     // Edge counts by kind — arithmetic in the fixture README.
     let mut ecounts: BTreeMap<String, usize> = BTreeMap::new();
     for e in graph.edges() {
-        *ecounts.entry(format!("{:?}", e.kind)).or_default() += 1;
+        *ecounts.entry(e.kind.as_str().to_string()).or_default() += 1;
     }
     let ewant: BTreeMap<String, usize> = [
-        ("Contains".to_string(), 20),
-        ("Imports".to_string(), 7),
-        ("Calls".to_string(), 1),
-        ("Reads".to_string(), 2),
-        ("Defines".to_string(), 1),
-        ("Writes".to_string(), 1),
-        ("Inherits".to_string(), 1),
+        ("contains".to_string(), 20),
+        ("imports".to_string(), 7),
+        ("calls".to_string(), 1),
+        ("reads".to_string(), 2),
+        ("defines".to_string(), 1),
+        ("writes".to_string(), 1),
+        ("inherits".to_string(), 1),
     ]
     .into_iter()
     .collect();

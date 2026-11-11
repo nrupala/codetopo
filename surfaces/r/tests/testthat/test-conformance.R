@@ -28,7 +28,7 @@ test_that("provenance comes from the bound core", {
     manifest_lines[(pkg_at + 1L):length(manifest_lines)]))[1L]]
   core_version <- sub('.*"([^"]+)".*', "\\1", version_line)
   expect_identical(codetopo_core_version(), core_version)
-  expect_identical(codetopo_schema_version(), "1.2")
+  expect_identical(codetopo_schema_version(), "2.0")
   expect_identical(codetopo_describe_schema()$schema_version, codetopo_schema_version())
 })
 

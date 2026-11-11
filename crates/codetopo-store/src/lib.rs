@@ -72,7 +72,8 @@ CREATE TABLE IF NOT EXISTS nodes(
     refs_json TEXT NOT NULL,
     end_line INTEGER,
     signature TEXT,
-    decisions INTEGER
+    decisions INTEGER,
+    measures_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS edges(
     from_id TEXT NOT NULL,
@@ -163,6 +164,7 @@ fn migrate_nodes_columns(conn: &rusqlite::Connection) -> Result<(), StoreError> 
         ("end_line", "INTEGER"),
         ("signature", "TEXT"),
         ("decisions", "INTEGER"),
+        ("measures_json", "TEXT NOT NULL DEFAULT '{}'"),
     ] {
         if !existing.iter().any(|c| c == name) {
             conn.execute(&format!("ALTER TABLE nodes ADD COLUMN {name} {ddl}"), [])?;
@@ -180,6 +182,7 @@ fn diagnostic_kind(d: &Diagnostic) -> &'static str {
         Diagnostic::UnresolvedCall { .. } => "unresolved_call",
         Diagnostic::InvalidAttribute { .. } => "invalid_attribute",
         Diagnostic::UnknownSymbol { .. } => "unknown_symbol",
+        Diagnostic::MissingProvenance { .. } => "missing_provenance",
     }
 }
 
@@ -190,20 +193,10 @@ fn now_ts() -> String {
         .unwrap_or_else(|_| "0".to_string())
 }
 
-/// Canonical snake_case wire name for a [`NodeKind`] (matches core's serde).
+/// Canonical snake_case wire name for a [`NodeKind`] — since schema
+/// 2.0 the kind carries its own wire name (core's `as_str`).
 fn node_kind_str(k: NodeKind) -> &'static str {
-    match k {
-        NodeKind::Package => "package",
-        NodeKind::Module => "module",
-        NodeKind::File => "file",
-        NodeKind::Class => "class",
-        NodeKind::Interface => "interface",
-        NodeKind::Function => "function",
-        NodeKind::Method => "method",
-        NodeKind::Variable => "variable",
-        NodeKind::External => "external",
-        NodeKind::Doc => "doc",
-    }
+    k.as_str()
 }
 
 /// Canonical snake_case wire name for a [`Tier`] (matches core's serde).
@@ -544,8 +537,8 @@ impl Store {
         let mut stats = InsertStats { nodes: 0, edges: 0 };
         {
             let mut st = tx.prepare(
-                "INSERT INTO nodes(id, kind, label, file, line, col, tier, defines_json, refs_json, end_line, signature, decisions)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                "INSERT INTO nodes(id, kind, label, file, line, col, tier, defines_json, refs_json, end_line, signature, decisions, measures_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             )?;
             for node in graph.nodes() {
                 stats.nodes += st.execute(rusqlite::params![
@@ -561,6 +554,7 @@ impl Store {
                     node.end_line.map(|c| c as i64),
                     node.signature,
                     node.decisions.map(|c| c as i64),
+                    serde_json::to_string(&node.measures)?,
                 ])?;
             }
         }
@@ -611,8 +605,8 @@ impl Store {
             let mut n = 0usize;
             {
                 let mut st = tx.prepare(
-                    "INSERT OR IGNORE INTO nodes(id, kind, label, file, line, col, tier, defines_json, refs_json, end_line, signature, decisions)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    "INSERT OR IGNORE INTO nodes(id, kind, label, file, line, col, tier, defines_json, refs_json, end_line, signature, decisions, measures_json)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 )?;
                 for node in graph.nodes().skip(done).take(CHUNK_ROWS) {
                     stats.nodes += st.execute(rusqlite::params![
@@ -628,6 +622,7 @@ impl Store {
                         node.end_line.map(|c| c as i64),
                         node.signature,
                         node.decisions.map(|c| c as i64),
+                        serde_json::to_string(&node.measures)?,
                     ])?;
                     n += 1;
                 }
@@ -715,7 +710,7 @@ impl Store {
     /// Look up one node by id. `Ok(None)` when the id is not stored.
     pub fn get_node(&self, id: &str) -> Result<Option<Node>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, kind, label, file, line, col, tier, defines_json, refs_json, end_line, signature, decisions
+            "SELECT id, kind, label, file, line, col, tier, defines_json, refs_json, end_line, signature, decisions, measures_json
              FROM nodes WHERE id = ?1",
         )?;
         let mut rows = stmt.query([id])?;
@@ -738,7 +733,7 @@ impl Store {
     /// rebuild via `Snapshot::to_graph()`.
     pub fn load_graph(&self) -> Result<Graph, StoreError> {
         let mut ns = self.conn.prepare(
-            "SELECT id, kind, label, file, line, col, tier, defines_json, refs_json, end_line, signature, decisions
+            "SELECT id, kind, label, file, line, col, tier, defines_json, refs_json, end_line, signature, decisions, measures_json
              FROM nodes ORDER BY id",
         )?;
         let nodes: Vec<Node> = ns
@@ -753,6 +748,10 @@ impl Store {
             .collect::<Result<Vec<_>, _>>()?;
         let snap = Snapshot {
             schema_version: SCHEMA_VERSION.to_string(),
+            profile_id: "code".to_string(),
+            profile_version: "1.0.0".to_string(),
+            graph_class: "truths".to_string(),
+            provenance_summary: Default::default(),
             nodes,
             edges,
             audit_head: String::new(),
@@ -860,6 +859,15 @@ fn node_from_row(row: &rusqlite::Row<'_>) -> Result<Node, rusqlite::Error> {
         end_line: row.get::<_, Option<i64>>(9)?.map(|c| c as u32),
         signature: row.get(10)?,
         decisions: row.get::<_, Option<i64>>(11)?.map(|c| c as u32),
+        measures: {
+            let ms: Option<String> = row.get(12).ok().flatten();
+            match ms {
+                Some(text) => {
+                    serde_json::from_str(&text).map_err(|e| conv_err(12, e))?
+                }
+                None => Default::default(),
+            }
+        },
     })
 }
 
@@ -900,6 +908,7 @@ mod tests {
             end_line: None,
             signature: None,
             decisions: None,
+            measures: Default::default(),
         }
     }
 

@@ -201,7 +201,7 @@ end
 codetopo_version() = (_ensure_lib(); _static_string(
     ccall((:codetopo_version, _LIB_PATH[]), Ptr{Cchar}, ())))
 
-"""The CODE_SCHEMA version this build speaks (e.g. \"1.2\")."""
+"""The CODE_SCHEMA version this build speaks (e.g. \"2.0\")."""
 schema_version() = (_ensure_lib(); _static_string(
     ccall((:codetopo_schema_version, _LIB_PATH[]), Ptr{Cchar}, ())))
 

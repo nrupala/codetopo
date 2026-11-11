@@ -189,8 +189,8 @@ fn py_snapshot_restore_and_edit_diff() {
         serde_json::from_slice(&bytes1).expect("snapshot is JSON");
     assert_eq!(
         snap_value["schema_version"],
-        serde_json::json!("1.2"),
-        "the snapshot carries CODE_SCHEMA 1.2"
+        serde_json::json!("2.0"),
+        "the snapshot carries core schema 2.0 (the CODE profile's dictionary)"
     );
 
     // 2. Restore: the same graph comes back.

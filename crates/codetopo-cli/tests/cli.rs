@@ -349,8 +349,8 @@ fn expired_certificate_is_refused() {
     let _ = std::fs::remove_dir_all(&workdir);
 }
 
-/// Schema gate follows CODE_SCHEMA §8's major rule: a different major
-/// is rejected; same-major drift is tolerated.
+/// Schema gate: majors this build speaks (1 and 2) restore; an
+/// unspoken major is rejected; same-major drift is tolerated.
 #[test]
 fn restore_schema_major_rule() {
     let workdir = workdir("schema-major");
@@ -360,18 +360,21 @@ fn restore_schema_major_rule() {
     index_repo(&repo, &db, "fixture", Some(&snap), None).expect("index without proof");
     let text = std::fs::read_to_string(&snap).expect("read snapshot");
 
-    let snap2 = workdir.join("snap-v2.json");
-    std::fs::write(&snap2, text.replace("1.2", "2.0")).expect("write v2 snapshot");
-    let db2 = workdir.join("v2.db");
-    let err = restore_snapshot(&snap2, &db2, None, true)
-        .expect_err("schema major 2 must be rejected");
+    // Since schema 2.0 the build speaks majors 1 and 2 (a 1.x
+    // snapshot loads under its own profile — the CODE profile);
+    // major 3 is the refused one now.
+    let snap3 = workdir.join("snap-v3.json");
+    std::fs::write(&snap3, text.replace("2.0", "3.0")).expect("write v3 snapshot");
+    let db3 = workdir.join("v3.db");
+    let err = restore_snapshot(&snap3, &db3, None, true)
+        .expect_err("schema major 3 must be rejected");
     assert!(
         err.to_string().contains("schema_version"),
         "error names the schema version, got: {err}"
     );
 
     let snap19 = workdir.join("snap-v19.json");
-    std::fs::write(&snap19, text.replace("1.2", "1.9")).expect("write v1.9 snapshot");
+    std::fs::write(&snap19, text.replace("2.0", "1.9")).expect("write v1.9 snapshot");
     let db19 = workdir.join("v19.db");
     restore_snapshot(&snap19, &db19, None, true)
         .expect("same-major snapshot restores on the explicit unverified path");
@@ -495,7 +498,7 @@ fn discovery_commands_and_json_output() {
     assert!(out.status.success());
     let value: serde_json::Value =
         serde_json::from_slice(&out.stdout).expect("schema --json is JSON");
-    assert_eq!(value["schema_version"], "1.2");
+    assert_eq!(value["schema_version"], "2.0");
     assert!(value["node_kinds"].as_array().expect("kinds").iter().any(|k| k == "function"));
 
     let out = run(&["stats", "--json"]);
@@ -961,8 +964,10 @@ fn metrics_end_to_end_two_packages() {
     );
     assert_eq!(
         value["methods"].as_object().expect("methods").len(),
-        10,
-        "every metric's method is stated"
+        12,
+        "every registered sibling's method is stated (the registry \
+         carries all twelve CODE siblings since schema 2.0, not only \
+         the ten coupling metrics)"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

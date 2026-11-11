@@ -6,7 +6,8 @@
 //!
 //! The layout is a pure function of the graph: layered by the
 //! longest dependency path over the SCC-condensed dependency DAG
-//! (calls, imports, inherits, implements, reads, writes), in-layer
+//! (the profile's layering set — for CODE: calls, imports, inherits,
+//! implements, reads, writes), in-layer
 //! order always by node id. Same graph in → same spec out → same
 //! SVG bytes out. No clocks, no randomness, no hash-order anywhere
 //! on the path.
@@ -26,7 +27,7 @@ use crate::schema::{EdgeKind, NodeKind, Tier};
 pub const LAYOUT_VERSION: u32 = 1;
 
 /// One placed node.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LayoutNode {
     pub id: String,
     pub label: String,
@@ -39,7 +40,7 @@ pub struct LayoutNode {
 /// One drawn edge. Layout edges are deduplicated on
 /// (from, to, kind): the graph distinguishes call sites by line,
 /// a drawing cannot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LayoutEdge {
     pub from: String,
     pub to: String,
@@ -47,7 +48,7 @@ pub struct LayoutEdge {
 }
 
 /// The frozen render specification (JSON form).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LayoutSpec {
     pub layout_version: u32,
     /// Grid width: the node count of the widest layer.
@@ -60,25 +61,27 @@ pub struct LayoutSpec {
     pub edges: Vec<LayoutEdge>,
 }
 
-/// Edge kinds that make one node *depend on* another, and so
-/// participate in layering. Containment (contains/defines) is
-/// drawn but does not layer: hierarchy depth is not dependency
-/// depth, and mixing them flattens both.
-pub(crate) fn is_dependency(kind: EdgeKind) -> bool {
-    matches!(
-        kind,
-        EdgeKind::Calls
-            | EdgeKind::Imports
-            | EdgeKind::Inherits
-            | EdgeKind::Implements
-            | EdgeKind::Reads
-            | EdgeKind::Writes
-    )
+/// Edge kinds that make one node *depend on* another for layering:
+/// the profile's dependency set minus the definition/containment
+/// kinds (hierarchy and definition are drawn but do not layer:
+/// hierarchy depth is not dependency depth, and mixing them
+/// flattens both). For the CODE profile this is exactly the
+/// pre-2.0 set: calls, imports, inherits, implements, reads, writes.
+pub(crate) fn is_dependency(profile: &crate::profile::DomainProfile, kind: &EdgeKind) -> bool {
+    profile.is_dependency(kind)
+        && kind.as_str() != "defines"
+        && !profile.is_containment(kind)
+}
+
+/// The same test for a graph's own profile.
+pub(crate) fn is_dependency_of(graph: &Graph, kind: &EdgeKind) -> bool {
+    is_dependency(graph.profile(), kind)
 }
 
 /// Lay out `graph` deterministically (see the module docs and
 /// `docs/render.md` for the exact rules).
 pub fn layout(graph: &Graph) -> LayoutSpec {
+    let profile = graph.profile();
     let ids: Vec<String> = graph.nodes().map(|n| n.id.clone()).collect();
     let index_of: HashMap<&str, usize> =
         ids.iter().enumerate().map(|(i, id)| (id.as_str(), i)).collect();
@@ -87,7 +90,7 @@ pub fn layout(graph: &Graph) -> LayoutSpec {
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); ids.len()];
     let mut seen_edges: BTreeSet<(usize, usize)> = BTreeSet::new();
     for edge in graph.edges() {
-        if !is_dependency(edge.kind) {
+        if !is_dependency(profile, &edge.kind) {
             continue;
         }
         let (Some(&a), Some(&b)) = (
@@ -273,33 +276,36 @@ const Y_STEP: u32 = 56;
 const MARGIN: u32 = 16;
 
 pub(crate) fn kind_fill(kind: NodeKind) -> (&'static str, &'static str) {
-    // (fill, stroke) per kind — a fixed table, part of the spec.
-    match kind {
-        NodeKind::Package => ("#ede9fe", "#7c3aed"),
-        NodeKind::Module => ("#dbeafe", "#2563eb"),
-        NodeKind::File => ("#f1f5f9", "#64748b"),
-        NodeKind::Class => ("#d1fae5", "#059669"),
-        NodeKind::Interface => ("#ccfbf1", "#0d9488"),
-        NodeKind::Function => ("#fef3c7", "#d97706"),
-        NodeKind::Method => ("#ffedd5", "#ea580c"),
-        NodeKind::Variable => ("#f3f4f6", "#6b7280"),
-        NodeKind::External => ("#f9fafb", "#9ca3af"),
-        NodeKind::Doc => ("#fef9c3", "#a16207"),
+    // (fill, stroke) per kind — the CODE presentation table, part of
+    // the render spec. Presentation is not dictionary: an unknown
+    // (other-profile) kind takes the neutral default.
+    match kind.as_str() {
+        "package" => ("#ede9fe", "#7c3aed"),
+        "module" => ("#dbeafe", "#2563eb"),
+        "file" => ("#f1f5f9", "#64748b"),
+        "class" => ("#d1fae5", "#059669"),
+        "interface" => ("#ccfbf1", "#0d9488"),
+        "function" => ("#fef3c7", "#d97706"),
+        "method" => ("#ffedd5", "#ea580c"),
+        "variable" => ("#f3f4f6", "#6b7280"),
+        "external" => ("#f9fafb", "#9ca3af"),
+        "doc" => ("#fef9c3", "#a16207"),
+        _ => ("#f3f4f6", "#6b7280"),
     }
 }
 
 pub(crate) fn edge_stroke(kind: EdgeKind) -> (&'static str, Option<&'static str>) {
-    // (stroke, dasharray)
-    match kind {
-        EdgeKind::Calls => ("#334155", None),
-        EdgeKind::Imports => ("#64748b", Some("5 3")),
-        EdgeKind::Contains => ("#cbd5e1", None),
-        EdgeKind::Inherits => ("#059669", None),
-        EdgeKind::Implements => ("#0d9488", None),
-        EdgeKind::Reads => ("#9333ea", None),
-        EdgeKind::Writes => ("#dc2626", None),
-        EdgeKind::Defines => ("#94a3b8", Some("2 3")),
-        EdgeKind::References => ("#94a3b8", None),
+    // (stroke, dasharray) — the CODE presentation table.
+    match kind.as_str() {
+        "calls" => ("#334155", None),
+        "imports" => ("#64748b", Some("5 3")),
+        "contains" => ("#cbd5e1", None),
+        "inherits" => ("#059669", None),
+        "implements" => ("#0d9488", None),
+        "reads" => ("#9333ea", None),
+        "writes" => ("#dc2626", None),
+        "defines" => ("#94a3b8", Some("2 3")),
+        _ => ("#94a3b8", None),
     }
 }
 
@@ -382,7 +388,7 @@ pub fn render_svg(spec: &LayoutSpec) -> String {
     for node in &spec.nodes {
         let (fill, stroke) = kind_fill(node.kind);
         let (x, y) = pos[node.id.as_str()];
-        let dash = if node.kind == NodeKind::External {
+        let dash = if node.kind.as_str() == "external" {
             " stroke-dasharray=\"4 3\""
         } else {
             ""
@@ -436,6 +442,7 @@ mod tests {
                 end_line: None,
                 signature: None,
                 decisions: None,
+                measures: Default::default(),
             })
             .collect();
         let raw_calls = calls

@@ -1,0 +1,733 @@
+{
+  "admission": {
+    "admitted_classes": [
+      "extracted_truth"
+    ],
+    "connectivity": true,
+    "extractable_truths": true,
+    "logic_structure": true,
+    "notes": "Software structure is parsed from source artifacts by deterministic, stated rules. Every connection in this profile is extracted from an artifact, never declared as an opinion.",
+    "provable": true
+  },
+  "boundary": {
+    "id_namespace": "external::",
+    "kind": "external"
+  },
+  "conformance": {
+    "corpus": [
+      "crates/codetopo-core/tests/oracle_goldens.rs",
+      "crates/codetopo-core/tests/oracle_communities.rs",
+      "crates/codetopo-core/tests/topo_sort_fixture.rs",
+      "crates/codetopo-extract/tests/known_answer_py.rs",
+      "crates/codetopo-cli/tests/lifecycle_py.rs",
+      "crates/codetopo-cli/tests/py_sibling_fixture.rs"
+    ],
+    "oracle": "The CODE-Profile Regression Contract of the Domain-Profile Founding Spec section 2: corpus C1 oracle goldens, C2 Python known-answer fixture, C3 sibling tripwire, C4 the whole workspace suite, C5 the self-index of the pinned tree abca831d (7,328 nodes / 25,088 edges / 5,086 diagnostics, canonical content hash sha256 f3f2d4159dfa901e7dbf86327b96deefada144d02d74664b41b9600259e84d06).",
+    "tolerances": "Exact for counts, sets, orders, partitions and pair counts; float families within the C1 corpus tolerances (PageRank 1e-6, betweenness 1e-9, closeness 1e-9, eigenvector 1e-6, Katz 1e-6, communities Q 1e-9)."
+  },
+  "containment": {
+    "edge_kind": "contains",
+    "forest": true,
+    "root_kind": "package"
+  },
+  "core_compat": {
+    "core_schema_major": 2
+  },
+  "edge_kinds": [
+    {
+      "attrs": {
+        "bindings": {
+          "required": false,
+          "type": "string[]"
+        },
+        "line": {
+          "required": false,
+          "type": "number"
+        }
+      },
+      "emission": "live",
+      "from_kinds": [
+        "module"
+      ],
+      "gloss": "A module imports another module or an external stub",
+      "name": "imports",
+      "provenance_attrs": [],
+      "provenance_class": "extracted_truth",
+      "to_kinds": [
+        "module",
+        "external"
+      ]
+    },
+    {
+      "attrs": {
+        "arg_shapes": {
+          "required": false,
+          "type": "string[]"
+        },
+        "line": {
+          "required": false,
+          "type": "number"
+        }
+      },
+      "emission": "live",
+      "from_kinds": [
+        "function",
+        "method"
+      ],
+      "gloss": "A function or method calls another function or method",
+      "name": "calls",
+      "provenance_attrs": [],
+      "provenance_class": "extracted_truth",
+      "to_kinds": [
+        "function",
+        "method"
+      ]
+    },
+    {
+      "attrs": {
+        "bases": {
+          "required": false,
+          "type": "string[]"
+        }
+      },
+      "emission": "live",
+      "from_kinds": [
+        "class"
+      ],
+      "gloss": "A class inherits from another class",
+      "name": "inherits",
+      "provenance_attrs": [],
+      "provenance_class": "extracted_truth",
+      "to_kinds": [
+        "class"
+      ]
+    },
+    {
+      "attrs": {
+        "members": {
+          "required": false,
+          "type": "string[]"
+        }
+      },
+      "emission": "live",
+      "from_kinds": [
+        "class"
+      ],
+      "gloss": "A class implements an interface",
+      "name": "implements",
+      "provenance_attrs": [],
+      "provenance_class": "extracted_truth",
+      "to_kinds": [
+        "interface"
+      ]
+    },
+    {
+      "attrs": {
+        "line": {
+          "required": false,
+          "type": "number"
+        }
+      },
+      "emission": "live",
+      "from_kinds": [
+        "*"
+      ],
+      "gloss": "A node defines a symbol here",
+      "name": "defines",
+      "provenance_attrs": [],
+      "provenance_class": "extracted_truth",
+      "to_kinds": [
+        "*"
+      ]
+    },
+    {
+      "attrs": {
+        "line": {
+          "required": false,
+          "type": "number"
+        }
+      },
+      "emission": "restore_only",
+      "from_kinds": [
+        "*"
+      ],
+      "gloss": "Legacy reference edge retained so pre-2026-10 snapshots restore unchanged; new graphs do not emit it",
+      "name": "references",
+      "provenance_attrs": [],
+      "provenance_class": "extracted_truth",
+      "to_kinds": [
+        "*"
+      ]
+    },
+    {
+      "attrs": {},
+      "emission": "live",
+      "from_kinds": [
+        "package",
+        "module",
+        "file",
+        "class"
+      ],
+      "gloss": "Pure containment hierarchy: package to module to file to symbol",
+      "name": "contains",
+      "provenance_attrs": [],
+      "provenance_class": "extracted_truth",
+      "to_kinds": [
+        "module",
+        "file",
+        "class",
+        "interface",
+        "function",
+        "method",
+        "variable",
+        "doc"
+      ]
+    },
+    {
+      "attrs": {
+        "line": {
+          "required": false,
+          "type": "number"
+        }
+      },
+      "emission": "live",
+      "from_kinds": [
+        "*"
+      ],
+      "gloss": "A node reads a symbol here",
+      "name": "reads",
+      "provenance_attrs": [],
+      "provenance_class": "extracted_truth",
+      "to_kinds": [
+        "*"
+      ]
+    },
+    {
+      "attrs": {
+        "line": {
+          "required": false,
+          "type": "number"
+        }
+      },
+      "emission": "live",
+      "from_kinds": [
+        "*"
+      ],
+      "gloss": "A node writes a symbol here",
+      "name": "writes",
+      "provenance_attrs": [],
+      "provenance_class": "extracted_truth",
+      "to_kinds": [
+        "*"
+      ]
+    }
+  ],
+  "edge_sets": {
+    "breakage": [
+      "calls",
+      "inherits",
+      "implements",
+      "reads",
+      "writes"
+    ],
+    "closure": [
+      "calls",
+      "imports"
+    ],
+    "dependency": [
+      "imports",
+      "calls",
+      "inherits",
+      "implements",
+      "defines",
+      "reads",
+      "writes",
+      "references"
+    ]
+  },
+  "format": "codetopo.profile/1",
+  "history": {
+    "hotspot_factor_sibling": "code.complexity",
+    "methods": {
+      "change_coupling": "change coupling (Zimmermann et al. 2005): per file pair, support = transactions containing both files; confidence = support / transactions containing either file; pairs below the stated minimum support are not reported",
+      "hotspot": "hotspot (Tornhill 2015): per file, changes = the number of transactions (commits, merge commits excluded) in the stated window that touched the file; complexity = the sum of the cyclomatic complexities of the file's functions and methods, absent unless every one was measured; the reported score is changes x complexity, with both factors always shown"
+    },
+    "transaction_unit_kind": "file"
+  },
+  "id_grammar": {
+    "boundary_prefix": "external::",
+    "package_rule": "A node's package is the first :: segment of its id; external:: stubs are nobody's package.",
+    "productions": [
+      "{package}",
+      "{package}::{module-path}",
+      "{package}::{module-path}::{Symbol}",
+      "{package}::/{file-path}",
+      "external::{name}"
+    ],
+    "root_alias": true,
+    "separator": "::",
+    "type_membership": "id_prefix_one_segment"
+  },
+  "location": {
+    "fields": [
+      {
+        "name": "file",
+        "required": true,
+        "type": "string"
+      },
+      {
+        "name": "line",
+        "required": true,
+        "type": "integer"
+      },
+      {
+        "name": "column",
+        "required": false,
+        "type": "integer"
+      }
+    ],
+    "ordering": "file, then 1-based line, then optional 1-based column"
+  },
+  "measured_fields": [
+    {
+      "absence": "not_measured",
+      "extraction_rule": "The last source line of the declaration, 1-based and inclusive (CODE_SCHEMA section 3). Core-reserved field: it keeps its 1.x first-class wire shape.",
+      "name": "end_line",
+      "on_kinds": [
+        "package",
+        "module",
+        "file",
+        "class",
+        "interface",
+        "function",
+        "method",
+        "variable",
+        "external",
+        "doc"
+      ],
+      "type": "integer"
+    },
+    {
+      "absence": "not_measured",
+      "extraction_rule": "The declaration text of the symbol, body and initializer excluded, whitespace collapsed (CODE_SCHEMA section 3). Core-reserved field: it keeps its 1.x first-class wire shape.",
+      "name": "signature",
+      "on_kinds": [
+        "package",
+        "module",
+        "file",
+        "class",
+        "interface",
+        "function",
+        "method",
+        "variable",
+        "external",
+        "doc"
+      ],
+      "type": "string"
+    },
+    {
+      "absence": "not_measured",
+      "extraction_rule": "Decision points counted in the symbol's body per CODE_SCHEMA section 3.2. Rust (tree-sitter-rust): if expression (including if let; each else if is a nested if) +1; while, for, loop +1 each; match +(arms - 1); the ? operator (try_expression) +1; each && and || in a binary expression +1. TypeScript / JavaScript (tree-sitter-typescript): if +1; for, for-in/for-of, while, do-while +1 each; ternary (?:) +1; switch + (number of case clauses), default not counted; catch +1; each &&, ||, and ?? in a binary expression +1. Python (tree-sitter-python): if +1 and each elif clause +1 (else alone +0); for (including async for) and while +1 each; each except clause +1; conditional expression (x if c else y) +1; each and/or boolean operator +1; inside comprehensions, each for clause +1 and each if clause +1; match + (number of case clauses - 1), case guards not counted separately. Not counted in Python: assert, with, raise, the not operator, comparison chains, else/finally blocks. In every language: a k-way branch contributes k-1 decision points; nested item declarations are never descended into; closures, arrow functions, function expressions, lambdas and comprehensions are not symbols and are descended into. A branch-free function body counts 0. Core-reserved field: it keeps its 1.x first-class wire shape.",
+      "name": "decisions",
+      "on_kinds": [
+        "function",
+        "method"
+      ],
+      "type": "integer"
+    }
+  ],
+  "node_kinds": [
+    {
+      "containment_role": "root",
+      "gloss": "A distributable unit (crate, npm package, PyPI project)",
+      "name": "package",
+      "tier": "core",
+      "resolve_rank": 1
+    },
+    {
+      "containment_role": "intermediate",
+      "gloss": "A single compilable unit (file-level, language-appropriate)",
+      "name": "module",
+      "tier": "core",
+      "resolve_rank": 1
+    },
+    {
+      "containment_role": "intermediate",
+      "gloss": "A physical file (superset anchor when module mapping is ambiguous)",
+      "name": "file",
+      "tier": "core",
+      "resolve_rank": 1
+    },
+    {
+      "containment_role": "intermediate",
+      "gloss": "A class / struct / trait / interface definition",
+      "name": "class",
+      "tier": "recommended",
+      "resolve_rank": 0
+    },
+    {
+      "containment_role": "intermediate",
+      "gloss": "A pure contract (trait, protocol, interface) — split from class where the language distinguishes",
+      "name": "interface",
+      "tier": "recommended",
+      "resolve_rank": 0
+    },
+    {
+      "containment_role": "leaf",
+      "gloss": "A free function",
+      "name": "function",
+      "tier": "optional",
+      "resolve_rank": 0
+    },
+    {
+      "containment_role": "leaf",
+      "gloss": "A function bound to a class/struct",
+      "name": "method",
+      "tier": "optional",
+      "resolve_rank": 0
+    },
+    {
+      "containment_role": "leaf",
+      "gloss": "A module-level variable / constant worth tracking",
+      "name": "variable",
+      "tier": "optional",
+      "resolve_rank": 0
+    },
+    {
+      "containment_role": "none",
+      "gloss": "Third-party or stdlib symbol (dependency boundary marker)",
+      "name": "external",
+      "tier": "optional",
+      "resolve_rank": 2
+    },
+    {
+      "containment_role": "leaf",
+      "gloss": "A documentation anchor (README section, doc page) linkable from code nodes",
+      "name": "doc",
+      "tier": "optional",
+      "resolve_rank": 2
+    }
+  ],
+  "profile_id": "code",
+  "profile_version": "1.0.0",
+  "siblings": [
+    {
+      "citation": "McCabe 1976; CODE_SCHEMA sections 3.2 and 9",
+      "inputs": {
+        "edge_sets": [],
+        "measured_fields": [
+          "decisions"
+        ]
+      },
+      "layer": "graph",
+      "measure_id": "code.complexity",
+      "method_text": "cyclomatic complexity (McCabe 1976; CODE_SCHEMA §9): v = decision points + 1, decision points counted per CODE_SCHEMA §3.2; only symbols whose decisions were measured are ranked",
+      "name": "complexity",
+      "oracle": "crates/codetopo-cli/tests/cli.rs (measured-symbols read-back) and crates/codetopo-core/src/measure.rs tests",
+      "scope": "node",
+      "title": "Cyclomatic complexity"
+    },
+    {
+      "citation": "CODE_SCHEMA section 9",
+      "inputs": {
+        "edge_sets": [],
+        "measured_fields": [
+          "end_line"
+        ]
+      },
+      "layer": "graph",
+      "measure_id": "code.size",
+      "method_text": "size of a symbol, in lines: end_line - loc.line + 1 (CODE_SCHEMA §9); reported only where end_line was measured",
+      "name": "size",
+      "oracle": "crates/codetopo-core/src/measure.rs tests (dossier measurements)",
+      "scope": "node",
+      "title": "Declaration size in lines"
+    },
+    {
+      "aggregate_kind": {
+        "membership": "id_prefix_one_segment",
+        "name": "type",
+        "node_kinds": [
+          "class",
+          "interface"
+        ]
+      },
+      "citation": "Chidamber & Kemerer 1994; CODE_SCHEMA section 9",
+      "inputs": {
+        "edge_sets": [
+          "dependency"
+        ],
+        "measured_fields": []
+      },
+      "layer": "graph",
+      "measure_id": "code.cbo",
+      "method_text": "coupling between objects (Chidamber & Kemerer 1994): the number of distinct types this type is coupled to — a dependency edge (any kind except contains) between this type or one of its methods and another type or one of its methods, in either direction",
+      "name": "cbo",
+      "oracle": "crates/codetopo-core/src/coupling.rs tests (hand-verified type metrics)",
+      "scope": "aggregate",
+      "title": "Coupling between objects"
+    },
+    {
+      "aggregate_kind": {
+        "membership": "id_prefix_one_segment",
+        "name": "type",
+        "node_kinds": [
+          "class",
+          "interface"
+        ]
+      },
+      "citation": "Chidamber & Kemerer 1994; CODE_SCHEMA section 9",
+      "inputs": {
+        "edge_sets": [
+          "dependency"
+        ],
+        "measured_fields": []
+      },
+      "layer": "graph",
+      "measure_id": "code.rfc",
+      "method_text": "response for a class (Chidamber & Kemerer 1994): the number of this type's methods plus the number of distinct methods of other types they call (external stubs excluded)",
+      "name": "rfc",
+      "oracle": "crates/codetopo-core/src/coupling.rs tests (hand-verified type metrics)",
+      "scope": "aggregate",
+      "title": "Response for a class"
+    },
+    {
+      "aggregate_kind": {
+        "membership": "id_prefix_one_segment",
+        "name": "type",
+        "node_kinds": [
+          "class",
+          "interface"
+        ]
+      },
+      "citation": "Lanza & Marinescu 2006; CODE_SCHEMA section 9",
+      "inputs": {
+        "edge_sets": [
+          "dependency"
+        ],
+        "measured_fields": []
+      },
+      "layer": "graph",
+      "measure_id": "code.lcom",
+      "method_text": "lack of cohesion, as raw pair counts (Lanza & Marinescu 2006): over every pair of this type's methods, a pair shares when their recorded accesses overlap — the targets of their reads/writes edges and their recorded references, intersected with the type's member names (its methods plus the targets of its methods' writes); reported as sharing and non-sharing pair counts, never collapsed to a verdict",
+      "name": "lcom",
+      "oracle": "crates/codetopo-core/src/coupling.rs tests (hand-verified type metrics)",
+      "scope": "aggregate",
+      "title": "Lack of cohesion, as raw pair counts"
+    },
+    {
+      "aggregate_kind": {
+        "membership": "id_prefix_one_segment",
+        "name": "type",
+        "node_kinds": [
+          "class",
+          "interface"
+        ]
+      },
+      "citation": "Bieman & Kang 1995; CODE_SCHEMA section 9",
+      "inputs": {
+        "edge_sets": [
+          "dependency"
+        ],
+        "measured_fields": []
+      },
+      "layer": "graph",
+      "measure_id": "code.tcc",
+      "method_text": "tight class cohesion (Bieman & Kang 1995), over recorded accesses as in lcom: sharing pairs / total method pairs",
+      "name": "tcc",
+      "oracle": "crates/codetopo-core/src/coupling.rs tests (hand-verified type metrics)",
+      "scope": "aggregate",
+      "title": "Tight class cohesion"
+    },
+    {
+      "aggregate_kind": {
+        "membership": "id_prefix_one_segment",
+        "name": "type",
+        "node_kinds": [
+          "class",
+          "interface"
+        ]
+      },
+      "citation": "Lanza & Marinescu 2006; CODE_SCHEMA section 9",
+      "inputs": {
+        "edge_sets": [
+          "dependency"
+        ],
+        "measured_fields": []
+      },
+      "layer": "graph",
+      "measure_id": "code.atfd",
+      "method_text": "access to foreign data (Lanza & Marinescu 2006), operationalized: the number of distinct symbols outside this type — variables and methods — targeted by calls, reads, or writes edges from this type's methods (external stubs excluded)",
+      "name": "atfd",
+      "oracle": "crates/codetopo-core/src/coupling.rs tests (hand-verified type metrics)",
+      "scope": "aggregate",
+      "title": "Access to foreign data"
+    },
+    {
+      "aggregate_kind": {
+        "membership": "id_prefix_one_segment",
+        "name": "type",
+        "node_kinds": [
+          "class",
+          "interface"
+        ]
+      },
+      "citation": "Chidamber & Kemerer 1994; CODE_SCHEMA section 9",
+      "inputs": {
+        "edge_sets": [],
+        "measured_fields": [
+          "decisions"
+        ]
+      },
+      "layer": "graph",
+      "measure_id": "code.wmc",
+      "method_text": "weighted methods per class (Chidamber & Kemerer 1994): the sum of the cyclomatic complexities of this type's methods; absent unless every method's complexity was measured",
+      "name": "wmc",
+      "oracle": "crates/codetopo-core/src/coupling.rs tests (hand-verified type metrics; absence case included)",
+      "scope": "aggregate",
+      "title": "Weighted methods per class"
+    },
+    {
+      "aggregate_kind": {
+        "membership": "id_prefix_one_segment",
+        "name": "package",
+        "node_kinds": [
+          "package"
+        ],
+        "membership_rule": "the package of an id is its first segment before the '::' separator (the profile's package rule); boundary-namespace ids belong to no package"
+      },
+      "citation": "Martin 1994; CODE_SCHEMA section 9",
+      "inputs": {
+        "edge_sets": [
+          "dependency"
+        ],
+        "measured_fields": []
+      },
+      "layer": "graph",
+      "measure_id": "code.ca",
+      "method_text": "afferent coupling (Martin 1994): the number of distinct node-to-node dependency pairs (dependency edges per CODE_SCHEMA §9: imports, calls, inherits, implements, defines, reads, writes, references) from other packages into this package",
+      "name": "ca",
+      "oracle": "crates/codetopo-core/src/coupling.rs tests (hand-verified package metrics)",
+      "scope": "aggregate",
+      "title": "Afferent coupling"
+    },
+    {
+      "aggregate_kind": {
+        "membership": "id_prefix_one_segment",
+        "name": "package",
+        "node_kinds": [
+          "package"
+        ],
+        "membership_rule": "the package of an id is its first segment before the '::' separator (the profile's package rule); boundary-namespace ids belong to no package"
+      },
+      "citation": "Martin 1994; CODE_SCHEMA section 9",
+      "inputs": {
+        "edge_sets": [
+          "dependency"
+        ],
+        "measured_fields": []
+      },
+      "layer": "graph",
+      "measure_id": "code.ce",
+      "method_text": "efferent coupling (Martin 1994): the number of distinct node-to-node dependency pairs from this package to other packages of the same repository (links to external libraries are not counted here; see external_ce)",
+      "name": "ce",
+      "oracle": "crates/codetopo-core/src/coupling.rs tests (hand-verified package metrics)",
+      "scope": "aggregate",
+      "title": "Efferent coupling"
+    },
+    {
+      "aggregate_kind": {
+        "membership": "id_prefix_one_segment",
+        "name": "package",
+        "node_kinds": [
+          "package"
+        ],
+        "membership_rule": "the package of an id is its first segment before the '::' separator (the profile's package rule); boundary-namespace ids belong to no package"
+      },
+      "citation": "Martin 1994; CODE_SCHEMA section 9",
+      "inputs": {
+        "edge_sets": [
+          "dependency"
+        ],
+        "measured_fields": []
+      },
+      "layer": "graph",
+      "measure_id": "code.instability",
+      "method_text": "instability (Martin 1994): Ce / (Ca + Ce); absent when the package has no measured coupling in either direction",
+      "name": "instability",
+      "oracle": "crates/codetopo-core/src/coupling.rs tests (hand-verified package metrics)",
+      "scope": "aggregate",
+      "title": "Instability"
+    },
+    {
+      "aggregate_kind": {
+        "membership": "id_prefix_one_segment",
+        "name": "package",
+        "node_kinds": [
+          "package"
+        ],
+        "membership_rule": "the package of an id is its first segment before the '::' separator (the profile's package rule); boundary-namespace ids belong to no package"
+      },
+      "citation": "CODE_SCHEMA section 9 (the B0.3 rule)",
+      "inputs": {
+        "edge_sets": [
+          "dependency"
+        ],
+        "measured_fields": []
+      },
+      "layer": "graph",
+      "measure_id": "code.external_ce",
+      "method_text": "external coupling: the number of distinct node-to-node dependency pairs from this package to external (third-party / stdlib) stub nodes, counted and named separately from ce (CODE_SCHEMA §9, the B0.3 rule) — never merged into it",
+      "name": "external_ce",
+      "oracle": "crates/codetopo-core/src/coupling.rs tests (hand-verified package metrics)",
+      "scope": "aggregate",
+      "title": "External coupling"
+    }
+  ],
+  "tier_rule": {
+    "class": "recommended",
+    "default": "optional",
+    "file": "core",
+    "interface": "recommended",
+    "module": "core",
+    "package": "core"
+  },
+  "title": "CODE — CODE_SCHEMA v1.2 as a profile",
+  "well_formedness": [
+    {
+      "diagnostic": "multi_definition",
+      "name": "single_definition",
+      "rule": "A non-boundary symbol is defined in at most one place; violations are first-class diagnostics, not silent merges (CODE_SCHEMA section 5.1)."
+    },
+    {
+      "diagnostic": "cycle",
+      "name": "cycles_reported",
+      "rule": "Cycles over the closure edge set are detected and reported as data; layouts must not hide them (CODE_SCHEMA section 5.2)."
+    },
+    {
+      "diagnostic": "unresolved_call",
+      "name": "resolvable_targets",
+      "resolvable_kinds": [
+        "calls",
+        "imports"
+      ],
+      "rule": "Every edge in the resolvable kinds must resolve to a node or to a boundary stub; unresolved targets are diagnostics, not dropped edges (CODE_SCHEMA section 5.3, generalised by the founding spec to the declared resolvable set)."
+    },
+    {
+      "diagnostic": "unknown_symbol",
+      "name": "containment_forest",
+      "rule": "Containment forms a forest: each node has at most one container (CODE_SCHEMA section 5.4)."
+    },
+    {
+      "diagnostic": "invalid_attribute",
+      "name": "attribute_allow_list",
+      "rule": "No edge kind may carry attributes outside its declared row (CODE_SCHEMA section 4)."
+    },
+    {
+      "diagnostic": "missing_provenance",
+      "name": "provenance_required",
+      "rule": "An edge whose provenance class requires provenance attributes is refused by the builder when any mandatory attribute is missing (founding spec section 4, R2)."
+    }
+  ],
+  "$comment": "CODE profile 1.0.0 — the CODE_SCHEMA v1.2 dictionary extracted as data (Domain-Profile Founding Spec, core schema 2.0). The engine consumes this profile; amendments are versioned + conformance re-run + gate verdict (build governing default 9)."
+}

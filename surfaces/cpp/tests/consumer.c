@@ -126,7 +126,7 @@ int main(int argc, char **argv) {
     const char *version = codetopo_version();
     check(version && version[0] != '\0', "consumer: codetopo_version answers");
     const char *schema = codetopo_schema_version();
-    check(schema && strcmp(schema, "1.2") == 0, "consumer: schema version is 1.2");
+    check(schema && strcmp(schema, "2.0") == 0, "consumer: schema version is 2.0");
     printf("consumer: core=%s schema=%s\n", version, schema);
 
     /* Index the quarry fixture through the ABI. */

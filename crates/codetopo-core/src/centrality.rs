@@ -188,10 +188,15 @@ mod tests {
                 end_line: None,
                 signature: None,
                 decisions: None,
+                measures: Default::default(),
             })
             .collect();
         let snap = Snapshot {
             schema_version: crate::snapshot::SCHEMA_VERSION.to_string(),
+            profile_id: "code".to_string(),
+            profile_version: "1.0.0".to_string(),
+            graph_class: "truths".to_string(),
+            provenance_summary: Default::default(),
             nodes,
             edges: edges
                 .iter()

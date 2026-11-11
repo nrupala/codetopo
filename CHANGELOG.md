@@ -10,6 +10,29 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Core schema 2.0 — the dictionary is a domain profile now.** The
+  node/edge dictionary that CODE_SCHEMA v1.2 embedded in the core is
+  extracted into `profiles/code.profile.json` (format
+  `codetopo.profile/1`, profile `code` version 1.0.0): node kinds,
+  edge kinds with their attribute rows and provenance classes, the
+  dependency/breakage/closure edge sets, the containment and
+  boundary declarations, the measured-field rules, the tier rule,
+  the sibling measure registry, and the history parameterisation.
+  The engine consumes the profile (`Graph`/`GraphBuilder` carry it);
+  CODE_SCHEMA v1.2 stands as the CODE profile's source document.
+  Snapshots stamp `profile_id`, `profile_version`, `graph_class`,
+  and `provenance_summary`; schema majors 1 and 2 both load (a 1.x
+  snapshot reads under the CODE profile, the only dictionary that
+  existed then). Node records gain a namespaced `measures` map for
+  non-reserved profile fields (empty for CODE; the store carries it
+  in a new `measures_json` column). The builder enforces provenance
+  rule R2 generically: an edge whose class mandates provenance
+  attributes it lacks is refused with a `missing_provenance`
+  diagnostic. Judged by the CODE-Profile Regression Contract: the
+  refactored engine over the Step-0 baseline inputs reproduces
+  7,328 nodes / 25,088 edges / 5,086 diagnostics and the canonical
+  content hash byte-identically.
+
 ## [0.9.1] — 2026-11-09
 
 A patch release over 0.9.0: the three hosted test-pass defects

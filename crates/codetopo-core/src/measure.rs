@@ -21,10 +21,12 @@ use crate::graph::Graph;
 use crate::schema::{Edge, EdgeKind, Node, NodeKind};
 
 impl Node {
-    /// Cyclomatic complexity of this symbol (CODE_SCHEMA §9):
-    /// **v = decision points + 1** (McCabe 1976), the decision points
-    /// counted per §3.2's enumeration. `None` when the symbol's
-    /// decisions were not measured — absence, never a default of 1.
+    /// Cyclomatic complexity of this symbol: **v = decision points
+    /// + 1** (McCabe 1976) — the `code.complexity` sibling's formula,
+    /// registered in the CODE profile with the decision points
+    /// counted per its `decisions` extraction rule. `None` when the
+    /// symbol's decisions were not measured — absence, never a
+    /// default of 1.
     pub fn complexity(&self) -> Option<u32> {
         self.decisions.map(|d| d + 1)
     }
@@ -44,7 +46,7 @@ impl Node {
 /// from the measured fields of its record. Each field is independently
 /// optional: a symbol can carry a span without a decision count (a
 /// struct) or, in a hand-built graph, the reverse.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SymbolMeasurements {
     /// Cyclomatic complexity, where decisions were measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -83,7 +85,7 @@ impl SymbolMeasurements {
 /// neighborhoods, closures — excludes it for the same reason. The node's
 /// own `loc` names the file that contains it. A self-loop edge appears in
 /// both directions, because it is both.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SymbolDossier {
     pub node: Node,
     /// Edges leaving the node (`from` == the node), grouped by the edge
@@ -117,7 +119,7 @@ impl Graph {
         let mut outgoing_count = 0usize;
         let mut incoming_count = 0usize;
         for e in self.edges() {
-            if e.kind == EdgeKind::Contains {
+            if self.profile().is_containment(&e.kind) {
                 continue;
             }
             if e.from == id {
@@ -162,7 +164,7 @@ impl Graph {
 /// are ordered by. Every metric carries its published definition; the
 /// surfaces state it beside the numbers (`method`), because a number
 /// without its method is a claim, not a measurement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RankMetric {
     /// Fan-in (Henry & Kafura, 1981): how much depends on this node —
@@ -252,76 +254,25 @@ impl RankMetric {
     /// the ranking is reported (the provenance rule: no number
     /// without its method). Parameters are fixed here, in the method
     /// text — they are not tunable per query (owner decision 2).
-    pub fn method(self) -> std::borrow::Cow<'static, str> {
-        use std::borrow::Cow;
+    pub fn method(self) -> String {
+        // Since schema 2.0 the method texts are profile data: the
+        // fan/blast texts are generated from the CODE profile's edge
+        // sets, complexity's text is the registered sibling's, and
+        // the centrality family keeps the core method texts the
+        // profile module carries. `RankMetric` is a core measure
+        // vocabulary (it names computations, not domain dictionary),
+        // so this surface stays CODE-profile-shaped; a graph under
+        // another profile states its own sets in its answers.
+        let profile = crate::profile::DomainProfile::code();
         match self {
-            Self::FanIn => Cow::Borrowed(
-                "fan-in (Henry & Kafura 1981): the number of incoming \
-                 dependency edges — every edge kind except contains; \
-                 external stub nodes are not ranked",
-            ),
-            Self::FanOut => Cow::Borrowed(
-                "fan-out (Henry & Kafura 1981): the number of outgoing \
-                 dependency edges — every edge kind except contains; \
-                 external stub nodes are not ranked",
-            ),
-            Self::BlastRadius => Cow::Borrowed(
-                "blast radius (CODE_SCHEMA §6): the number of \
-                 transitive dependents over calls, inherits, \
-                 implements, reads, and writes edges; \
-                 external stub nodes are not ranked",
-            ),
-            Self::Complexity => Cow::Borrowed(
-                "cyclomatic complexity (McCabe 1976; CODE_SCHEMA \
-                 §9): v = decision points + 1, decision points \
-                 counted per CODE_SCHEMA §3.2; only symbols whose \
-                 decisions were measured are ranked",
-            ),
-            Self::PageRank => Cow::Borrowed(
-                "PageRank (Brin & Page 1998): the stationary distribution of a \
-                 random walk with teleportation (damping 0.85, power iteration \
-                 from the uniform vector, max 100 iterations, stopping when \
-                 the L1 step falls below n x 1e-6 — the 1e-6 is the stopping \
-                 rule, not an accuracy bound) over the CODE_SCHEMA §9 \
-                 dependency projection as a simple graph (parallel edges \
-                 collapse, self-loops dropped, external stubs excluded); \
-                 every node in the projection is ranked",
-            ),
-            Self::Betweenness => Cow::Owned(format!(
-                "betweenness centrality (Freeman 1977; Brandes 2001): the \
-                 fraction of all-pairs shortest paths through the node, \
-                 endpoints excluded, normalized, exact (no sampling), over \
-                 the CODE_SCHEMA §9 dependency projection as a simple graph; \
-                 every node in the projection is ranked and 0.0 is a measured \
-                 value; graphs over {} nodes are declined, with the ceiling \
-                 as the stated reason",
-                crate::centrality::BETWEENNESS_NODE_CEILING
-            )),
-            Self::Closeness => Cow::Borrowed(
-                "closeness centrality, Wasserman-Faust form (Wasserman & Faust \
-                 1994): (reachable-1)/(n-1) x (reachable-1)/(sum of distances), \
-                 unweighted BFS distances over the CODE_SCHEMA §9 dependency \
-                 projection as a simple graph; every node in the projection is \
-                 ranked and a node that nothing reaches measures 0.0",
-            ),
-            Self::Eigenvector => Cow::Borrowed(
-                "eigenvector centrality (Bonacich 1972): the dominant \
-                 eigenvector of the adjacency matrix of the CODE_SCHEMA §9 \
-                 dependency projection, L2-normalized, sign fixed by positive \
-                 sum, power iteration tolerance 1e-6, max 100 iterations; \
-                 nodes outside the dominant strongly connected region can \
-                 measure 0 (the method's result — Katz does not collapse); \
-                 non-convergence is reported as an absence, never a partial \
-                 vector",
-            ),
-            Self::Katz => Cow::Borrowed(
-                "Katz centrality (Katz 1953): all walks counted, attenuated by \
-                 alpha = 0.1 per step plus beta = 1.0 bias, over the \
-                 CODE_SCHEMA §9 dependency projection as a simple graph, \
-                 power iteration tolerance 1e-6, max 100 iterations, \
-                 L2-normalized; non-convergence is reported as an absence, \
-                 never a partial vector",
-            ),
+            Self::Complexity => profile
+                .sibling("complexity")
+                .expect("complexity sibling registered")
+                .method_text
+                .clone(),
+            _ => profile
+                .core_method(self.as_str())
+                .expect("core method registered"),
         }
     }
 }
@@ -404,7 +355,7 @@ impl Graph {
                 let mut tally: std::collections::HashMap<&str, usize> =
                     std::collections::HashMap::new();
                 for e in self.edges() {
-                    if e.kind == EdgeKind::Contains {
+                    if self.profile().is_containment(&e.kind) {
                         continue;
                     }
                     let key = match metric {
@@ -442,7 +393,7 @@ impl Graph {
                     value: None,
                 }
             })
-            .filter(|r| r.kind != NodeKind::External)
+            .filter(|r| !self.profile().is_boundary(&r.kind, &r.id))
             .collect();
         let total = ranked.len();
         ranked.truncate(limit);
@@ -530,7 +481,7 @@ impl Graph {
 /// A node present in both graphs whose record changed (kind, label,
 /// location, tier, defines, or refs). Both records are carried so a
 /// consumer can show the change without re-reading either graph.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NodeChange {
     pub id: String,
     pub before: Node,
@@ -541,7 +492,7 @@ pub struct NodeChange {
 /// its radius in the before graph, in the after graph, and the signed
 /// delta (`after - before`). A node absent from one side has radius 0
 /// there — the closure over an unknown id is empty by definition.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImpactEntry {
     pub id: String,
     pub blast_radius_before: usize,
@@ -558,7 +509,7 @@ pub struct ImpactEntry {
 /// never as a silent edit. Every list is sorted (nodes by id, edges by
 /// `(from, to, kind)`) so two runs over the same pair agree byte for
 /// byte.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GraphDiff {
     pub added_nodes: Vec<Node>,
     pub removed_nodes: Vec<Node>,
@@ -572,7 +523,7 @@ pub struct GraphDiff {
 
 /// Sort key for the edge lists of a diff: `(from, to, kind rank, line)`.
 /// `(from, to, kind)` is unique within a graph, so the key is total.
-fn edge_key(e: &Edge) -> (String, String, u8, u32) {
+fn edge_key(e: &Edge) -> (String, String, (usize, &'static str), u32) {
     (
         e.from.clone(),
         e.to.clone(),
@@ -707,6 +658,7 @@ mod tests {
             end_line: None,
             signature: None,
             decisions: None,
+            measures: Default::default(),
         }
     }
 

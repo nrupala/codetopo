@@ -300,6 +300,7 @@ impl<'a> Walker<'a> {
             end_line,
             signature,
             decisions,
+            measures: Default::default(),
         });
         self.enclosing.push(id);
         let saved = self.in_assoc;

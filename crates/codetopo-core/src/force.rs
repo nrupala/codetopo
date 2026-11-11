@@ -33,7 +33,7 @@ use std::collections::{BTreeSet, HashMap};
 use serde::Serialize;
 
 use crate::graph::Graph;
-use crate::render::{edge_stroke, is_dependency, kind_fill, tarjan_scc, xml_escape, LayoutEdge};
+use crate::render::{edge_stroke, is_dependency_of, kind_fill, tarjan_scc, xml_escape, LayoutEdge};
 use crate::schema::{NodeKind, Tier};
 
 /// The force layout spec version. Consumers key on this; the v1
@@ -144,7 +144,7 @@ pub fn force_layout(graph: &Graph) -> ForceLayout {
     {
         let mut seen: BTreeSet<(usize, usize)> = BTreeSet::new();
         for edge in graph.edges() {
-            if !is_dependency(edge.kind) {
+            if !is_dependency_of(graph, &edge.kind) {
                 continue;
             }
             let (Some(&a), Some(&b)) = (
@@ -430,7 +430,7 @@ pub fn render_svg_v2(spec: &LayoutSpecV2) -> String {
 
     for node in &spec.nodes {
         let (fill, stroke) = kind_fill(node.kind);
-        let dash = if node.kind == NodeKind::External {
+        let dash = if node.kind.as_str() == "external" {
             " stroke-dasharray=\"4 3\""
         } else {
             ""
@@ -477,6 +477,10 @@ mod tests {
         }
         let snap = Snapshot {
             schema_version: crate::snapshot::SCHEMA_VERSION.to_string(),
+            profile_id: "code".to_string(),
+            profile_version: "1.0.0".to_string(),
+            graph_class: "truths".to_string(),
+            provenance_summary: Default::default(),
             nodes: names
                 .iter()
                 .map(|id| Node {
@@ -494,6 +498,7 @@ mod tests {
                     end_line: None,
                     signature: None,
                     decisions: None,
+                    measures: Default::default(),
                 })
                 .collect(),
             edges: calls

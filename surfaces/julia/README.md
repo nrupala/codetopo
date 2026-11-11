@@ -63,7 +63,7 @@ Default search, in order: `$CODETOPO_C_LIB`, then
 using Codetopo
 
 Codetopo.codetopo_version()   # "0.9.1" — the bound core
-Codetopo.schema_version()     # "1.2"   — CODE_SCHEMA
+Codetopo.schema_version()     # "2.0"   — core schema (CODE profile)
 
 report = Codetopo.index_repo("path/to/repo", "index.db"; package="mypkg")
 g = Codetopo.open_db("index.db")

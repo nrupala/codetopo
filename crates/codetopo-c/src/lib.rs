@@ -448,14 +448,14 @@ fn require_node_id(graph: &Graph, id: &str) -> Result<(), CError> {
 /// own kind tables.
 fn stats_value(graph: &Graph) -> Value {
     let mut node_kinds = serde_json::Map::new();
-    for kind in codetopo_cli::ALL_NODE_KINDS {
+    for kind in codetopo_cli::all_node_kinds() {
         let count = graph.nodes().filter(|n| n.kind == kind).count();
         if count > 0 {
             node_kinds.insert(codetopo_cli::node_kind_name(kind).to_string(), count.into());
         }
     }
     let mut edge_kinds = serde_json::Map::new();
-    for kind in codetopo_cli::ALL_EDGE_KINDS {
+    for kind in codetopo_cli::all_edge_kinds() {
         let count = graph.edge_count_by_kind(kind);
         if count > 0 {
             edge_kinds.insert(kind.as_str().to_string(), count.into());
@@ -921,7 +921,7 @@ mod tests {
             .to_str()
             .expect("schema version is UTF-8");
         assert_eq!(schema, codetopo_core::snapshot::SCHEMA_VERSION);
-        assert_eq!(schema, "1.2");
+        assert_eq!(schema, "2.0");
     }
 
     #[test]
@@ -938,14 +938,14 @@ mod tests {
         assert_eq!(verify["chain_valid"], true, "verify: {verify}");
 
         let snap1 = query(handle, "snapshot", "{}");
-        assert_eq!(snap1["schema_version"], "1.2");
+        assert_eq!(snap1["schema_version"], "2.0");
         assert_eq!(snap1["nodes"].as_array().expect("nodes").len(), 26);
 
         let search = query(handle, "search_symbols", r#"{"query": "Engine"}"#);
         assert!(search["total"].as_u64().expect("total") >= 1, "search: {search}");
 
         let schema = query(handle, "describe_schema", "{}");
-        assert_eq!(schema["schema_version"], "1.2");
+        assert_eq!(schema["schema_version"], "2.0");
 
         // F5: repeated queries are byte-identical.
         let mut err: *mut c_char = std::ptr::null_mut();

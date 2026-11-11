@@ -14,7 +14,7 @@ use crate::schema::{EdgeKind, Loc};
 ///
 /// All variants serialize with serde so diagnostics can travel with snapshots
 /// and query results.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Diagnostic {
     /// A non-external symbol defined in more than one place (CODE_SCHEMA §5.1).
     /// The builder keeps the first occurrence and ignores later ones;
@@ -48,6 +48,16 @@ pub enum Diagnostic {
     /// import whose `from_module_id` is unknown. The referencing edge is
     /// skipped.
     UnknownSymbol { id: String },
+    /// An edge whose provenance class requires provenance attributes
+    /// was offered without one (Domain-Profile Founding Spec §4, R2).
+    /// The edge is refused — it does not enter the graph — and this
+    /// diagnostic is the record of the refusal. `edge` is rendered as
+    /// `from->to`; `missing` names the absent attributes.
+    MissingProvenance {
+        edge: String,
+        kind: EdgeKind,
+        missing: Vec<String>,
+    },
 }
 
 impl fmt::Display for Diagnostic {
@@ -73,6 +83,15 @@ impl fmt::Display for Diagnostic {
             }
             Diagnostic::UnknownSymbol { id } => {
                 write!(f, "unknown symbol '{}'", id)
+            }
+            Diagnostic::MissingProvenance { edge, kind, missing } => {
+                write!(
+                    f,
+                    "missing provenance on {} edge {}: {}",
+                    kind,
+                    edge,
+                    missing.join(", ")
+                )
             }
         }
     }

@@ -169,7 +169,7 @@ int main(int argc, char **argv) {
     const char *version = codetopo_version();
     check(version && strncmp(version, "0.9", 3) == 0, "codetopo_version is the core's 0.9.x");
     const char *schema = codetopo_schema_version();
-    check(schema && strcmp(schema, "1.2") == 0, "codetopo_schema_version is 1.2");
+    check(schema && strcmp(schema, "2.0") == 0, "codetopo_schema_version is 2.0");
     printf("versions: core=%s schema=%s\n", version, schema);
 
     /* ---- F2: quarry through codetopo_index ----------------------- */

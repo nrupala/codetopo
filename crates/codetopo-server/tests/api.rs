@@ -411,7 +411,7 @@ async fn snapshot_verifies_over_http() {
         .get(&format!("/v1/graphs/{index_id}/snapshot"))
         .await;
     assert_eq!(status, StatusCode::OK, "snapshot failed: {snapshot}");
-    assert_eq!(snapshot["schema_version"], json!("1.2"));
+    assert_eq!(snapshot["schema_version"], json!("2.0"));
     assert_eq!(
         snapshot["nodes"].as_array().map(Vec::len),
         Some(graph.node_count())
@@ -831,7 +831,7 @@ async fn discovery_routes_match_the_core() {
     // schema needs no index
     let (status, schema) = harness.get("/v1/schema").await;
     assert_eq!(status, StatusCode::OK, "schema: {schema}");
-    assert_eq!(schema["schema_version"], "1.2");
+    assert_eq!(schema["schema_version"], "2.0");
     assert!(schema["node_kinds"]
         .as_array()
         .expect("node kinds")
@@ -1098,7 +1098,10 @@ async fn rank_route_matches_the_cli_value_and_finds_the_hub() {
     assert_eq!(status, StatusCode::OK, "rank default: {body}");
     assert_eq!(body["metric"], "blast_radius");
     assert!(
-        body["method"].as_str().expect("method").contains("CODE_SCHEMA"),
+        body["method"]
+            .as_str()
+            .expect("method")
+            .contains("transitive dependents"),
         "the method is stated beside the numbers: {body}"
     );
     assert_eq!(body["results"][0]["id"], "fixture::alpha::helper_b");

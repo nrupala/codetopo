@@ -20,7 +20,7 @@ use std::path::PathBuf;
 
 use codetopo_cli::{
     describe_schema, index_repo, load_graph_from_db, node_kind_name, require_node, CliError,
-    ALL_EDGE_KINDS, ALL_NODE_KINDS,
+    all_edge_kinds, all_node_kinds,
 };
 use codetopo_core::snapshot::Snapshot;
 use codetopo_store::Store;
@@ -606,14 +606,14 @@ fn tool_stats(args: &Value) -> Result<Value, ToolError> {
     // Kind names and tally order come from the CLI, so `codetopo_stats` and
     // `codetopo stats` break the same kinds down under the same names.
     let mut node_kinds: BTreeMap<&str, usize> = BTreeMap::new();
-    for kind in ALL_NODE_KINDS {
+    for kind in all_node_kinds() {
         let count = graph.nodes().filter(|node| node.kind == kind).count();
         if count > 0 {
             node_kinds.insert(node_kind_name(kind), count);
         }
     }
     let mut edge_kinds: BTreeMap<&str, usize> = BTreeMap::new();
-    for kind in ALL_EDGE_KINDS {
+    for kind in all_edge_kinds() {
         let count = graph.edge_count_by_kind(kind);
         if count > 0 {
             edge_kinds.insert(kind.as_str(), count);
@@ -1458,7 +1458,7 @@ mod tests {
 
         // describe_schema needs no database at all
         let schema = result_of("codetopo_describe_schema", &json!({}));
-        assert_eq!(schema["schema_version"], "1.2");
+        assert_eq!(schema["schema_version"], "2.0");
         assert!(schema["node_kinds"]
             .as_array()
             .expect("kinds")

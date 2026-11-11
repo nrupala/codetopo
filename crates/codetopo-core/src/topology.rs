@@ -4,8 +4,8 @@
 
 //! Topological ordering (SPEC — Rust analytics engine, §4d): the
 //! safe change order of the graph. Kahn's algorithm over the
-//! SCC-condensed §9 dependency DAG (components by the same
-//! iterative Tarjan the layout uses). Groups are emitted in
+//! SCC-condensed dependency DAG (the profile's dependency set;
+//! components by the same iterative Tarjan the layout uses). Groups are emitted in
 //! dependency order — a group's dependencies always appear in
 //! earlier groups — and a multi-node group is a cycle, flagged
 //! `cyclic: true`: a cycle is reported as a group, never disguised
@@ -20,19 +20,12 @@ use crate::graph::Graph;
 use crate::projection::AnalyticsProjection;
 use crate::render::tarjan_scc;
 
-/// The published method stated beside every topo-sort answer.
-pub const TOPO_SORT_METHOD: &str = "topological order of the SCC-condensed CODE_SCHEMA §9 \
-     dependency DAG (Kahn's algorithm; strongly connected components by Tarjan, \
-     the condensation the layered layout already uses): groups are emitted in \
-     dependency order — every dependency of a group appears in an earlier \
-     group — members are sorted by id, and ready groups are taken by smallest \
-     member id; a multi-node group is a cycle and is flagged cyclic, never \
-     disguised as an order; self-loops are dropped by the section-3 \
-     projection, so a self-referencing node appears as a singleton group";
+// The published method stated beside every topo-sort answer is the
+// profile-carried core method text (`crate::topo_sort_method()`).
 
 /// One emitted group of the order: a single node, or a strongly
 /// connected component (a cycle) with its members sorted by id.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TopoGroup {
     pub members: Vec<String>,
     /// True when the group has more than one member — it is a
@@ -42,7 +35,7 @@ pub struct TopoGroup {
 
 /// The full safe-order answer: groups in dependency order, plus the
 /// counts a reader needs before trusting it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TopoOrder {
     /// Number of groups (components) in the order.
     pub total_groups: usize,
@@ -159,10 +152,15 @@ mod tests {
                 end_line: None,
                 signature: None,
                 decisions: None,
+                measures: Default::default(),
             })
             .collect();
         let snap = Snapshot {
             schema_version: crate::snapshot::SCHEMA_VERSION.to_string(),
+            profile_id: "code".to_string(),
+            profile_version: "1.0.0".to_string(),
+            graph_class: "truths".to_string(),
+            provenance_summary: Default::default(),
             nodes,
             edges: edges
                 .iter()
