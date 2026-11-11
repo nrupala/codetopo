@@ -308,7 +308,7 @@ async function errorsAndStrictness() {
   assert.throws(
     () =>
       Codetopo.fromSnapshot(
-        JSON.stringify({ schema_version: '2.0', nodes: [], edges: [], audit_head: '', audit_log: [] })
+        JSON.stringify({ schema_version: '3.0', nodes: [], edges: [], audit_head: '', audit_log: [] })
       ),
     (err) => err.code === 'unsupported_schema_version'
   );
