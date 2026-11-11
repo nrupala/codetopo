@@ -1,0 +1,439 @@
+{
+  "$comment": "research-analyst \u2014 the Research Analyst domain profile (founding spec \u00a73, DOMAIN-PROFILE-SPEC-2026-11-09, ratified 2026-11-10): a financial model \u2014 a valuation / three-statement workbook \u2014 as the artifact. The dictionary is the transferability study's \u00a74 map as data. Provenance discipline (spec \u00a74): formula-derived edges are extracted_truth; market prices enter ONLY as source boundary nodes via sourced_from edges carrying source + as_of (both mandatory \u2014 the builder refuses an unsourced number); estimates enter ONLY through the estimates kind with method/window/error mandatory and never inside a core edge set; analyst judgment enters ONLY as a references edge carrying the claimant attr (declared_claim). RA is analysis-only, never advisory: this profile measures structure and arithmetic; it contains no recommendation, score, grade or verdict of any security. DATA DOCTRINE (settled, binding): Stooq is RA's declared production price source of truth; yfinance is development-only, never primary; no silent fallback \u2014 a missing Stooq series is an unmeasured field, never a number from another vendor; no production data routes to DeepSeek.",
+  "admission": {
+    "admitted_classes": [
+      "extracted_truth",
+      "sourced_fact",
+      "estimate",
+      "declared_claim"
+    ],
+    "connectivity": true,
+    "extractable_truths": true,
+    "logic_structure": true,
+    "notes": "The four conditions, in words (the format stores the verdicts as booleans; the reasoning lives here and in the founding spec \u00a73): (1) provable \u2014 a workbook's arithmetic is mechanically checkable, every output a function of declared inputs by formulas printed in the artifact, and the articulation identities are equalities that either hold or do not; (2) logic structure \u2014 double-entry articulation identities (assets = liabilities + equity; net income rolls to retained earnings; cash articulates across the three statements) and the formula dependency order are formal, checkable structure; (3) connectivity \u2014 the workbook is a formula graph by construction: every computed cell names the cells it reads, statements articulate by identity, scenarios bind to drivers, every market input binds to its source; (4) extractable truths \u2014 model-internally YES: every formula edge, containment edge and articulation identity is extractable from the artifact by rule, the formula text IS the rule. At the boundary the condition SPLITS honestly: a filed number is a sourced_fact (source + as_of), never an extracted truth; an analyst's forecast driver is an estimate with method/window/error; an analyst's judgmental link is a declared_claim with a claimant. Condition (4) therefore passes for the model's own arithmetic and is refused \u2014 by construction \u2014 for anything beyond it. inference is NOT admitted in v1: no edge in this profile may be inferred by a model or a heuristic; a correlation or factor loading is not a model-graph edge at all \u2014 it belongs to the separate estimates profile of the transferability study \u00a76.2, which registers its own dictionary. Mixed RA graphs answer as claims-bearing by construction (\u00a74.3): any answer whose walk crosses an estimates or declared_claim edge reports provenance_class per edge, and the graph as a whole classes claims-bearing under the engine's two-value \u00a74.3 vocabulary (truths | claims-bearing) whenever any non-truth class is present. RA DATA DOCTRINE (settled, binding), declared here because the boundary def carries no policy field: a source is never part of the model's own structure \u2014 it is the filing, price series or dataset a number came from, named so the number can be re-derived. Stooq is the declared production price source of truth \u2014 a price enters only as a source node naming the Stooq series; yfinance is development-only and never primary, so a source naming yfinance is a development artifact and must not appear in a production graph; there is NO silent fallback \u2014 when the declared source has no series, the field is unmeasured (absent), never substituted from another vendor; no production data routes to DeepSeek. Sources never acquire dependency edges of their own and never appear in any edge set.",
+    "provable": true
+  },
+  "boundary": {
+    "id_namespace": "source::",
+    "kind": "source"
+  },
+  "conformance": {
+    "corpus": [
+      "crates/codetopo-core/tests/ra_profile_probe.rs",
+      "RA-F1: SEC EDGAR, Apple Inc. (CIK 0000320193), FY2023 + FY2024 10-K statements as filed \u2014 captured by the extractor stage (named in the contract's capture list)",
+      "RA-F4: RA engine seven-track outputs over RA-F1 \u2014 captured by the extractor stage",
+      "RA-F2/RA-F3: hand-auditable three-statement + DCF model and its three scenarios \u2014 authored by the extractor stage",
+      "RA-F5/RA-F6: broken-model and provenance mutation sets over RA-F2 \u2014 authored by the extractor stage"
+    ],
+    "oracle": "The RA Regression Contract (domain-profile build, stage3-evidence/CONFORMANCE-PLAN.md): fixtures RA-F1 (Apple Inc. CIK 0000320193 FY2023+FY2024 statements as filed, SEC EDGAR) and RA-F4 (the RA engine's own seven-track outputs over RA-F1) for engine parity (C-RA3); RA-F2/RA-F3 (the hand-auditable model and its scenarios) with hand arithmetic as the oracle for extraction, identities and both siblings (C-RA1, C-RA2, C-RA4); RA-F5/RA-F6 mutation sets for diagnostics and provenance behaviour (C-RA2, C-RA6); this probe (crates/codetopo-core/tests/ra_profile_probe.rs) as the mechanism-level oracle for R2 refusal and \u00a74.3 taint until the extractor exists.",
+    "tolerances": "Exact for counts, sets, orders, filed values and hand-arithmetic expectations; ratio arithmetic \u2264 1e-9 relative (C-RA3); articulation identities within each fixture's own declared tolerance in currency units (C-RA2) \u2014 tolerances are fixture inputs, never chosen by the runner."
+  },
+  "containment": {
+    "edge_kind": "contains",
+    "forest": true,
+    "root_kind": "model"
+  },
+  "core_compat": {
+    "core_schema_major": 2
+  },
+  "edge_kinds": [
+    {
+      "attrs": {},
+      "emission": "live",
+      "from_kinds": [
+        "model",
+        "statement"
+      ],
+      "gloss": "Structural containment ONLY: a model contains its statements; a statement contains its line items, drivers, parameters, periods and outputs (founding spec \u00a71.4 \u2014 containment is never dependency and never enters an edge set).",
+      "name": "contains",
+      "provenance_attrs": [],
+      "provenance_class": "extracted_truth",
+      "to_kinds": [
+        "statement",
+        "line_item",
+        "driver",
+        "parameter",
+        "period",
+        "scenario",
+        "output"
+      ]
+    },
+    {
+      "attrs": {
+        "cell": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "emission": "live",
+      "from_kinds": [
+        "line_item",
+        "output"
+      ],
+      "gloss": "The formula edge \u2014 the calls analogue. The FROM cell's formula reads the TO cell: direction is reader \u2192 read, so dependents of a cell are the cells that read it (the hostage map: rank over computes_into answers 'which assumption is every output hostage to?'). The cell attr is the reading cell's own reference when the id does not already carry it.",
+      "name": "computes_into",
+      "provenance_attrs": [],
+      "provenance_class": "extracted_truth",
+      "to_kinds": [
+        "line_item",
+        "driver",
+        "parameter",
+        "output"
+      ]
+    },
+    {
+      "attrs": {
+        "identity": {
+          "required": true,
+          "type": "string"
+        },
+        "tolerance": {
+          "required": false,
+          "type": "number"
+        }
+      },
+      "emission": "live",
+      "from_kinds": [
+        "statement"
+      ],
+      "gloss": "A statement-to-statement accounting identity, emitted as a DIRECTED PAIR (one edge each way) because the schema has no undirected edges (D7): net income computed on the income statement IS the net income that rolls into equity on the balance sheet; the cash line on the balance sheet IS the closing cash of the cash-flow statement. The identity attr names the identity asserted (balance_sheet_equation | net_income_rollforward | cash_articulation); tolerance is the declared rounding slack, in the model's currency units. The builder checks the identity over the two statements' measured values and a failure is a well-formedness finding (articulation_identity), never a silent pass.",
+      "name": "articulates",
+      "provenance_attrs": [],
+      "provenance_class": "extracted_truth",
+      "to_kinds": [
+        "statement"
+      ]
+    },
+    {
+      "attrs": {},
+      "emission": "live",
+      "from_kinds": [
+        "scenario"
+      ],
+      "gloss": "A scenario binds the assumptions it sets: scenario \u2192 the drivers and parameters whose values it overrides. The scenario's own snapshot values live on the target nodes' measured fields in that scenario's graph; this edge records only the binding, so scenario_spread can diff the snapshots the bindings produce.",
+      "name": "assumes",
+      "provenance_attrs": [],
+      "provenance_class": "extracted_truth",
+      "to_kinds": [
+        "driver",
+        "parameter"
+      ]
+    },
+    {
+      "attrs": {
+        "as_of": {
+          "required": true,
+          "type": "string"
+        },
+        "source": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "emission": "live",
+      "from_kinds": [
+        "line_item",
+        "driver",
+        "parameter",
+        "output"
+      ],
+      "gloss": "An input cell \u2192 the source boundary node its value came from: a filed statement line (SEC EDGAR filing), a market price series (Stooq \u2014 RA's declared production source of truth), a rate table. source and as_of are BOTH mandatory by the core provenance law: the builder REFUSES a sourced_from edge missing either (MissingProvenance). An unsourced number never becomes an edge \u2014 it is an unmeasured field: absent, never estimated. This is RA's own data-lineage rule (every input shows source + as-of) enforced by the builder instead of by convention.",
+      "name": "sourced_from",
+      "provenance_attrs": [
+        "source",
+        "as_of"
+      ],
+      "provenance_class": "sourced_fact",
+      "to_kinds": [
+        "source"
+      ]
+    },
+    {
+      "attrs": {
+        "error": {
+          "required": true,
+          "type": "string"
+        },
+        "method": {
+          "required": true,
+          "type": "string"
+        },
+        "window": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "emission": "live",
+      "from_kinds": [
+        "driver",
+        "parameter"
+      ],
+      "gloss": "The ONE place an estimate enters a model graph: an analyst's forecast driver or parameter applied to the cells it feeds (a projected growth rate feeding projected revenue). Class estimate; method, window and error are ALL mandatory \u2014 an estimate that cannot state how it was made, over what window, and with what error does not enter the graph. estimates is in NO edge set: no default core measure ever ranges over it, so an estimate can never silently hold an output hostage in a core answer; a graph containing it classes claims-bearing (\u00a74.3).",
+      "name": "estimates",
+      "provenance_attrs": [
+        "method",
+        "window",
+        "error"
+      ],
+      "provenance_class": "estimate",
+      "to_kinds": [
+        "line_item",
+        "output"
+      ]
+    },
+    {
+      "attrs": {
+        "claimant": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "emission": "live",
+      "from_kinds": [
+        "*"
+      ],
+      "gloss": "RA's residue kind, live by its own declaration (D2): a reference the extractor found in the artifact that no rule above classifies \u2014 a cell mentioned in a note, a cross-reference in a model's text. When the reference is an analyst's judgmental link (this multiple is comparable to that peer's), the claimant attr is present and names who asserts it; the edge is then a declared_claim by the profile's per-edge rule and the graph classes claims-bearing while it is present. Without a claimant it is a found reference, class extracted_truth. Judgment is never dressed as truth either way: a claim is labelled a claim.",
+      "name": "references",
+      "provenance_attrs": [],
+      "provenance_class": "declared_claim",
+      "to_kinds": [
+        "*"
+      ]
+    }
+  ],
+  "edge_sets": {
+    "breakage": [
+      "computes_into",
+      "articulates"
+    ],
+    "closure": [
+      "computes_into",
+      "assumes"
+    ],
+    "dependency": [
+      "computes_into",
+      "articulates",
+      "assumes",
+      "sourced_from",
+      "estimates",
+      "references"
+    ]
+  },
+  "format": "codetopo.profile/1",
+  "history": {
+    "methods": {
+      "change_coupling": "Two cells (or two statements) that change together across workbook revisions are coupled, exactly as two files that change together are. The transaction unit is the model: one saved revision of the workbook is one transaction. Pair counts transfer unchanged; the hotspot factor does NOT \u2014 a workbook has no complexity analogue \u2014 so no hotspot sibling is registered for this profile (declared absence, founding spec \u00a71.4).",
+      "hotspot": "Not applicable to this profile: change coupling's pair counts transfer, its complexity factor does not. Declared absent rather than approximated."
+    },
+    "transaction_unit_kind": "model"
+  },
+  "id_grammar": {
+    "boundary_stub": "source::{source-name} \u2014 e.g. source::stooq:aapl.us:daily-close, source::sec-edgar:0000320193-25-000108 (an accession-numbered filing), source::filing:{cik}:{accession}",
+    "kinds": {
+      "driver": "{model-id}::{sheet}::{CellRef}",
+      "line_item": "{model-id}::{sheet}::{CellRef}",
+      "model": "The workbook's own name as filed (e.g. aapl-dcf-2025) \u2014 the graph root.",
+      "output": "{model-id}::{sheet}::{CellRef}",
+      "parameter": "{model-id}::{sheet}::{CellRef}",
+      "period": "{model-id}::period::{label} \u2014 e.g. fy2024, 2025q3; a period is a model-level node, not a cell.",
+      "scenario": "{model-id}::scenario::{name} \u2014 e.g. base, bull, bear; a model-level node, not a cell.",
+      "statement": "{model-id}::{sheet-name} \u2014 the sheet IS the statement (income | balance | cashflow | valuation), named by its role in the label."
+    },
+    "notes": "A cell id is the artifact's own coordinates, so the id and the location record never disagree: {model}::{sheet}::{CellRef}. Period and scenario are axes of the model, not cells, and carry their own segments. Source stubs live only under the boundary namespace source:: (per-profile namespace, governing default 7)."
+  },
+  "location": {
+    "kind": "workbook_cell",
+    "record": "{artifact, sheet, cell}: artifact = the workbook/file name as ingested; sheet = the worksheet name; cell = the A1 reference (e.g. C42). For model-level nodes (model, period, scenario) sheet and cell are empty and the artifact alone locates the node. For source stubs the artifact is the source name and sheet/cell are empty.",
+    "unlocated": "A node with an empty artifact has no physical location \u2014 the model root itself."
+  },
+  "measured_fields": [
+    {
+      "absence": "not_measured",
+      "extraction_rule": "The formula text exactly as stored in the cell (the workbook's own formula, verbatim, whitespace collapsed) \u2014 the signature analogue: it is the rule by which the cell's value derives, printed in the artifact. A hard-coded input cell has no formula and the field is absent \u2014 absent is never an empty string presented as a formula.",
+      "name": "formula",
+      "on_kinds": [
+        "line_item",
+        "driver",
+        "parameter",
+        "output"
+      ],
+      "type": "string"
+    },
+    {
+      "absence": "not_measured",
+      "extraction_rule": "The cell's computed value at extraction time, recomputed by the extractor's evaluator from the artifact's own formulas \u2014 never the workbook's cached display value alone, and never a value the extractor supplied. A cell whose formula cannot be evaluated (a function outside the evaluator's set, a broken reference) carries NO value: absence is not_measured, never zero and never an estimate. Values from filed statements are the filing's printed numbers, entered as inputs under sourced_from edges \u2014 they are sourced facts about the source, recorded here as the cell's value with the edge carrying the provenance.",
+      "name": "value",
+      "on_kinds": [
+        "line_item",
+        "driver",
+        "parameter",
+        "output"
+      ],
+      "type": "number"
+    },
+    {
+      "absence": "not_measured",
+      "extraction_rule": "The unit the artifact itself declares for the cell \u2014 its number-format currency (USD, CAD, EUR) or its sheet's declared scale (units | thousands | millions) \u2014 read from the artifact, never inferred from the ticker or the source. A model that declares no unit carries no unit: the field is absent and any cross-model comparison must say so.",
+      "name": "unit",
+      "on_kinds": [
+        "line_item",
+        "driver",
+        "parameter",
+        "output"
+      ],
+      "type": "string"
+    },
+    {
+      "absence": "not_measured",
+      "extraction_rule": "The period label the artifact assigns the cell's column (FY2024, 2025Q3, LTM-2025Q3) exactly as printed in the artifact's own period row/column. A cell the artifact does not place in a period carries no period field.",
+      "name": "period",
+      "on_kinds": [
+        "line_item",
+        "output"
+      ],
+      "type": "string"
+    }
+  ],
+  "node_kinds": [
+    {
+      "containment_role": "root",
+      "gloss": "The workbook itself \u2014 one financial model (a DCF, a three-statement model, a comps sheet) as ingested. The graph root and the history transaction unit: one saved revision of the model is one transaction.",
+      "name": "model",
+      "tier": "core"
+    },
+    {
+      "containment_role": "intermediate",
+      "gloss": "One financial statement or valuation sheet of the model: income statement, balance sheet, cash-flow statement, or the valuation sheet that gathers the outputs. Statements articulate into each other by accounting identity (the articulates edges).",
+      "name": "statement",
+      "tier": "core"
+    },
+    {
+      "containment_role": "leaf",
+      "gloss": "One row-cell of a statement: revenue, COGS, operating income, total assets, operating cash flow. A line item is either an input (hard-coded, sourced) or computed by a formula from other cells (computes_into edges).",
+      "name": "line_item",
+      "tier": "core"
+    },
+    {
+      "containment_role": "leaf",
+      "gloss": "An assumption cell the model's arithmetic reads: a growth rate, a price, a volume, a margin. Drivers are where scenarios bind (assumes) and where an analyst's forecast enters (estimates) \u2014 the most hostage-worthy nodes in the graph.",
+      "name": "driver",
+      "tier": "core"
+    },
+    {
+      "containment_role": "leaf",
+      "gloss": "A model-wide constant the valuation reads: WACC, tax rate, terminal growth, discount rate, share count. Distinct from a driver: a parameter prices the whole model rather than driving one line.",
+      "name": "parameter",
+      "tier": "core"
+    },
+    {
+      "containment_role": "intermediate",
+      "gloss": "A time axis node of the model (FY2024, 2025Q3, a forecast year). Periods organise columns; they carry no arithmetic of their own and sit outside every edge set \u2014 structure, not dependency.",
+      "name": "period",
+      "tier": "optional"
+    },
+    {
+      "containment_role": "intermediate",
+      "gloss": "A named assumption set (base / bull / bear, or an analyst's named case). A scenario binds the drivers and parameters it overrides (assumes); the spread of outputs across scenarios is the scenario_spread sibling's subject.",
+      "name": "scenario",
+      "tier": "recommended"
+    },
+    {
+      "containment_role": "leaf",
+      "gloss": "A cell the model exists to produce: equity value, per-share value, free cash flow, an implied multiple. An output is a MEASUREMENT of the model's arithmetic \u2014 never a recommendation: this profile records what the model computes, and nothing in it advises buying, selling or holding anything.",
+      "name": "output",
+      "tier": "core"
+    },
+    {
+      "containment_role": "none",
+      "gloss": "The boundary kind: a filing (SEC EDGAR), a price series (Stooq \u2014 the declared production source of truth), a rate table \u2014 anything outside the model that a number inside it came from. Sources are stubs under the source:: namespace; they are never contained and never carry the model's arithmetic.",
+      "name": "source",
+      "tier": "optional"
+    }
+  ],
+  "profile_id": "research-analyst",
+  "profile_version": "1.0.0",
+  "siblings": [
+    {
+      "citation": "Transferability study \u00a74 (RESEARCH-ANALYST-STUDY-2026-11-09): the sensitivity of an output to a driver is computed by re-evaluating the model's own arithmetic \u2014 perturbation of the input, re-evaluation of the formula graph \u2014 never by a fitted model of the output.",
+      "inputs": {
+        "edge_sets": [
+          "dependency"
+        ],
+        "measured_fields": [
+          "formula",
+          "value"
+        ]
+      },
+      "layer": "statistics",
+      "measure_id": "research-analyst.sensitivity",
+      "method_text": "For an (output, driver) pair: perturb the driver's value by a declared step (default \u00b11% of its measured value, or one declared unit where the driver is a rate), re-evaluate every formula on the computes_into path from the driver to the output USING THE ARTIFACT'S OWN FORMULAS, and report the finite difference \u0394output/\u0394driver and the elasticity (\u0394output/output)/(\u0394driver/driver). The re-evaluation is the model's own arithmetic \u2014 no regression, no fitted surface, no external data. A pair whose path crosses an estimates edge is reported with its provenance class (estimate) named; a driver or output with no measured value is not_measured for this sibling, never interpolated.",
+      "name": "sensitivity",
+      "oracle": "RA Regression Contract fixture RA-F2 (the hand-auditable three-statement model): every (output, driver) finite difference recomputed by hand arithmetic from the fixture's printed formulas; the sibling must match the hand values exactly at the declared steps.",
+      "scope": "Per (output, driver) pair connected by a computes_into path in one model's graph.",
+      "title": "Sensitivity (\u2202output/\u2202driver by re-evaluation)"
+    },
+    {
+      "citation": "Transferability study \u00a74 and RA's own scenario practice (bull/base/bear cases are assumption sets over one model): the spread is a diff-family statistic over scenario snapshots of the same model \u2014 the same differencing discipline as the core diff measure, applied across the scenario axis.",
+      "inputs": {
+        "edge_sets": [
+          "closure"
+        ],
+        "measured_fields": [
+          "value"
+        ]
+      },
+      "layer": "statistics",
+      "measure_id": "research-analyst.scenario_spread",
+      "method_text": "For each output of a model: take its measured value under every scenario snapshot of that model (each scenario's assumes bindings applied, the model's own formulas re-evaluated), and report the set of values, their range (max \u2212 min), and each scenario's signed deviation from the base scenario. A scenario with no snapshot, or an output unvalued under a scenario, is named not_measured for that scenario \u2014 the spread is computed over the scenarios that measured it and says which. The spread is a measurement of the model's own dispersion across its declared cases; it is never a confidence interval and never a price target.",
+      "name": "scenario_spread",
+      "oracle": "RA Regression Contract fixture RA-F3 (one model, three declared scenarios): the per-output scenario values and spreads computed by hand from the fixture's printed formulas and scenario bindings; the sibling must match exactly.",
+      "scope": "Per output, across all scenario snapshots of one model.",
+      "title": "Scenario spread (output range across scenarios)"
+    }
+  ],
+  "tier_rule": {
+    "default": "optional",
+    "driver": "core",
+    "line_item": "core",
+    "model": "core",
+    "output": "core",
+    "parameter": "core",
+    "period": "optional",
+    "scenario": "recommended",
+    "source": "optional",
+    "statement": "core"
+  },
+  "title": "Research Analyst \u2014 financial model structure (statements, drivers, valuation)",
+  "well_formedness": [
+    {
+      "diagnostic": "articulation_identity",
+      "name": "research-analyst.balance_sheet_equation",
+      "rule": "For every balance-sheet statement: total assets = total liabilities + total equity, over the statements' measured values, within the articulates edges' declared tolerance. A failure is a finding about the MODEL (its arithmetic does not articulate), reported with both sides' values \u2014 never silently repaired and never averaged away."
+    },
+    {
+      "diagnostic": "articulation_identity",
+      "name": "research-analyst.net_income_rollforward",
+      "rule": "Net income measured on the income statement equals the net income that rolls into retained earnings on the balance sheet, joined by the articulates pair carrying identity=net_income_rollforward, within its declared tolerance."
+    },
+    {
+      "diagnostic": "articulation_identity",
+      "name": "research-analyst.cash_articulation",
+      "rule": "The cash-flow statement's closing cash equals the balance sheet's cash line, joined by the articulates pair carrying identity=cash_articulation, within its declared tolerance; and opening cash + the statement's three section flows = closing cash inside the cash-flow statement itself."
+    },
+    {
+      "diagnostic": "multi_definition",
+      "name": "research-analyst.single_valuation_output",
+      "rule": "Core template: an output the model presents as THE equity value or THE per-share value is defined exactly once per (model, scenario). Two cells both presented as the model's per-share value are a multi_definition finding \u2014 the model contradicts itself, and the finding names both cells."
+    },
+    {
+      "diagnostic": "unresolved_call",
+      "name": "research-analyst.formula_resolution",
+      "rule": "Core template: every cell reference in every formula resolves to a node in the graph. An unresolved reference is the financial #REF! \u2014 reported by cell, never dropped; a reference INTO the source:: namespace resolves only via a sourced_from edge, never as a formula read."
+    },
+    {
+      "diagnostic": "cycle",
+      "name": "research-analyst.circular_reference",
+      "rule": "Core template: a cycle in computes_into is a circular reference (the interest\u2194debt loop is the classic case). The builder reports the strongly-connected component by name; a cycle the model declares intentional (an iteration switch cell inside the component, named in the model's own text) is reported as a declared circularity \u2014 still a cycle, labelled, never silently evaluated."
+    }
+  ]
+}
