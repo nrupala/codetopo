@@ -46,6 +46,7 @@ use serde::Serialize;
 
 use crate::coupling::is_dependency;
 use crate::graph::Graph;
+#[cfg(test)]
 use crate::schema::NodeKind;
 
 /// A frozen analytics projection of a [`Graph`] (SPEC §3). Built once

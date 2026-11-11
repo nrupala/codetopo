@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::diag::Diagnostic;
 use crate::emit::FileSymbols;
 use crate::profile::DomainProfile;
-use crate::schema::{Edge, EdgeKind, Loc, Node, NodeKind, Tier};
+use crate::schema::{Edge, EdgeKind, Loc, Node, NodeKind};
 
 // ---------------------------------------------------------------------------
 // GraphBuilder
@@ -34,17 +34,6 @@ struct PendingRef {
     name: String,
     line: u32,
     kind: EdgeKind,
-}
-
-/// Tier classification by node kind: the loaded profile's tier rule
-/// (founding spec §1.2 part 8). For the CODE profile this is §3's
-/// sentence — the package/module/file skeleton is `core`, class and
-/// interface are `recommended`, everything else is `optional`. One
-/// rule, applied in the builder, so every surface reports the same
-/// tier for the same node. This free form answers for the CODE
-/// profile; the builder itself asks its own loaded profile.
-fn tier_for(kind: NodeKind) -> Tier {
-    DomainProfile::code().tier_for(&kind)
 }
 
 /// Validate-then-apply builder for [`Graph`].
@@ -1263,7 +1252,7 @@ impl Graph {
 mod tests {
     use super::*;
     use crate::emit::{RawCall, RawImport, RawSymbol};
-    use crate::schema::NodeKind;
+    use crate::schema::{NodeKind, Tier};
 
     fn sym(id: &str, kind: NodeKind, line: u32) -> RawSymbol {
         RawSymbol {

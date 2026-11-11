@@ -29,6 +29,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeKind(&'static str);
 
+// The CODE constants keep the dictionary's own names (Package,
+// Calls, ...) so construction and pattern sites read exactly as they
+// did when the kinds were enum variants -- the naming is the API.
+#[allow(non_upper_case_globals)]
 impl NodeKind {
     pub const Package: NodeKind = NodeKind("package");
     pub const Module: NodeKind = NodeKind("module");
@@ -94,6 +98,7 @@ impl<'de> Deserialize<'de> for NodeKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct EdgeKind(&'static str);
 
+#[allow(non_upper_case_globals)]
 impl EdgeKind {
     pub const Imports: EdgeKind = EdgeKind("imports");
     pub const Calls: EdgeKind = EdgeKind("calls");

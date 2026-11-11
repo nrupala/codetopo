@@ -18,15 +18,17 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::graph::Graph;
-use crate::schema::{Edge, EdgeKind, Node, NodeKind};
+use crate::schema::{Edge, Node, NodeKind};
+#[cfg(test)]
+use crate::schema::EdgeKind;
 
 impl Node {
     /// Cyclomatic complexity of this symbol: **v = decision points
     /// + 1** (McCabe 1976) — the `code.complexity` sibling's formula,
-    /// registered in the CODE profile with the decision points
-    /// counted per its `decisions` extraction rule. `None` when the
-    /// symbol's decisions were not measured — absence, never a
-    /// default of 1.
+    ///   registered in the CODE profile with the decision points
+    ///   counted per its `decisions` extraction rule. `None` when the
+    ///   symbol's decisions were not measured — absence, never a
+    ///   default of 1.
     pub fn complexity(&self) -> Option<u32> {
         self.decisions.map(|d| d + 1)
     }
