@@ -37,7 +37,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Build the C ABI foundation (release)
         run: cargo build -p codetopo-c --release
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
           version: "1.11"
       - name: Run the Julia conformance suite (F1-F5, via ccall)
