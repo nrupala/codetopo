@@ -41,6 +41,31 @@ every call is routed, metered, and receipted.
 
 ## 60-second quickstart
 
+### No toolchain? Start with the prebuilt agent binaries
+
+Every GitHub release ships prebuilt `codetopo-mcp` (the MCP server) and
+`codetopo-acp` (the ACP agent) for Linux, macOS, and Windows — x86_64
+and ARM64 — each with a `.sha256` file beside it. No Rust toolchain, no
+source build:
+
+```sh
+# Linux x86_64 shown — pick your platform's asset on the releases page:
+# https://github.com/nrupala/codetopo/releases
+curl -LO https://github.com/nrupala/codetopo/releases/latest/download/codetopo-mcp-linux-x86_64.tar.gz
+tar xzf codetopo-mcp-linux-x86_64.tar.gz
+# put the extracted `codetopo-mcp` binary somewhere on your PATH, then
+# point your MCP client at it:
+```
+
+```json
+{ "mcpServers": { "codetopo": { "command": "codetopo-mcp" } } }
+```
+
+That is a working trial: ask your agent to `codetopo_index` a repository
+and answer a structural question about it.
+
+### The full surface (CLI + HTTP server)
+
 Requires a stable Rust toolchain (install via [rustup](https://rustup.rs)).
 
 ```sh
@@ -115,6 +140,26 @@ codetopo restore --snapshot g.json --db g2.db  # restore a snapshot into a fresh
 
 The `path` answer renders as typed steps, e.g. `a --calls--> x --imports--> b`
 (illustrative; exact ids depend on your index).
+
+## What the graph does not claim
+
+codetopo's answers cover exactly what its extractors resolved — and the
+output says what it did not cover, instead of omitting it silently:
+
+- **Parsed languages.** Extraction handles Rust, TypeScript/JavaScript,
+  and Python sources (tree-sitter). A file whose extension the extractor
+  does not handle contributes no symbols or edges; an extraction failure
+  is counted in the index run's `files failed` total, never hidden.
+- **Unresolved calls are diagnostics, not dropped edges.** Resolution is
+  syntactic. A call whose target cannot be resolved to a node is
+  recorded as a diagnostic (`UnresolvedCall`, alongside dependency
+  cycles and multi-definitions — `CODE_SCHEMA.md` §5). The `index` run
+  prints the diagnostics count; list them with the MCP
+  `codetopo_diagnostics` tool or `GET /v1/graphs/{id}/diagnostics`.
+- **Counts are resolved counts.** "5 callers" means five *resolved*
+  callers. Before treating a count as complete, check the diagnostics:
+  unresolved dynamic calls are exactly the part of the picture the graph
+  is telling you it could not resolve.
 
 ## Giving it to your agent
 
@@ -269,6 +314,7 @@ across this product line: a hash-chained, append-only record, verified by
 ## Docs
 
 - [Development log](https://codetopo.aimlds.org/log/) — how codetopo got here and where it is going, in plain words (kept with the releases; also linked from the demo site)
+- [`SKILL.md`](SKILL.md) — agent onboarding: when to reach for codetopo instead of grep, and the counts-first workflow
 - [`docs/render.md`](docs/render.md) — deterministic render: the frozen layout spec (JSON) + SVG rules behind `codetopo render`
 - [`docs/protocol-proof.md`](docs/protocol-proof.md) — MCP/ACP conformance evidence: strict stdio clients + official-schema validation
 - [`docs/scale-gate.md`](docs/scale-gate.md) — the 10,000-file scale gate and its measured record

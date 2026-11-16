@@ -21,15 +21,27 @@ Indexes are local SQLite databases; nothing leaves the machine.
 
 ## Prerequisites
 
-- A stable Rust toolchain — install via [rustup](https://rustup.rs) if
-  `cargo --version` fails. The server is installed from source with
-  Cargo; there is no prebuilt package yet.
-- `git` on `PATH` (Cargo fetches the repository with it).
 - No API key, account, or credentials are required.
+- **Fastest route — no toolchain:** every GitHub release ships a
+  prebuilt `codetopo-mcp` binary for Linux, macOS, and Windows (x86_64
+  and ARM64), each with a `.sha256` beside it. Use step 1A.
+- The Cargo route (step 1B) needs a stable Rust toolchain — install via
+  [rustup](https://rustup.rs) if `cargo --version` fails — and `git` on
+  `PATH` (Cargo fetches the repository with it).
 
 ## Installation
 
-### 1. Install the server binary
+### 1A. Install the prebuilt binary (no compile)
+
+```sh
+# Linux x86_64 shown — pick your platform's asset on the releases page:
+# https://github.com/nrupala/codetopo/releases
+curl -LO https://github.com/nrupala/codetopo/releases/latest/download/codetopo-mcp-linux-x86_64.tar.gz
+tar xzf codetopo-mcp-linux-x86_64.tar.gz
+# put the extracted `codetopo-mcp` binary on the PATH your MCP client sees
+```
+
+### 1B. Install from source with Cargo
 
 ```sh
 cargo install --git https://github.com/nrupala/codetopo codetopo-mcp
