@@ -90,6 +90,31 @@ export interface RankAnswer {
   reason?: string;
 }
 
+export interface DiagnoseHotspotAnswer {
+  metric: RankMetric;
+  method: string;
+  composite_method: string;
+  total?: number;
+  hotspots?: Array<{
+    id: string;
+    kind: NodeKind;
+    label: string;
+    rank_count?: number;
+    rank_value?: number;
+    blast_radius_size: number;
+    neighborhood_size: number;
+    unresolved_references: { total: number; outgoing: number; incoming: number };
+  }>;
+  diagnostics_summary: {
+    total: number;
+    by_kind: Record<string, number>;
+    unresolved_calls: number;
+  };
+  /** Present (false) only when the measure is absent on this graph. */
+  measured?: false;
+  reason?: string;
+}
+
 export interface Snapshot {
   schema_version: string;
   nodes: GraphNode[];
@@ -143,6 +168,7 @@ export declare class Codetopo {
   ): { node: string; depth: number; nodes: GraphNode[]; edges: GraphEdge[] };
   diagnostics(): { total: number; diagnostics: Array<Record<string, unknown>> };
   rank(options: { by: RankMetric; limit?: number }): Promise<RankAnswer>;
+  diagnoseHotspot(options: { by: RankMetric; limit?: number }): Promise<DiagnoseHotspotAnswer>;
   metrics(): Promise<JsonObject>;
   communities(limitOrOptions?: number | { limit?: number }): Promise<JsonObject>;
   topoSort(): JsonObject & {

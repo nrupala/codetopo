@@ -34,17 +34,20 @@ console.log(topo.verify());                           // audit chain: {entries, 
 
 ## The surface
 
-The twenty operations of the product, camelCase in JS, wire
+The twenty-one operations of the product, camelCase in JS, wire
 vocabulary unchanged: `index`, `open` / `fromSnapshot` / `restore`
 (the handle lifecycle), `describeSchema`, `stats`, `searchSymbols`,
 `getSymbol`, `descendants`, `ancestors`, `blastRadius`, `path`
 (`null` when no directed path exists — never a reversed-edge
-synthesis), `neighborhood`, `diagnostics`, `rank`, `metrics`,
+synthesis), `neighborhood`, `diagnostics`, `rank`,
+`diagnoseHotspot` (the one composite: a hotspot diagnosis composed
+from the atomic operations — it orchestrates and presents, and adds
+no measurement of its own), `metrics`,
 `communities`, `topoSort`, `render`, `history`, `diff`, `snapshot`,
 `verify`.
 
-Heavy operations (`index`, `rank`, `metrics`, `communities`,
-`history`) return Promises and run off the event loop. Absent
+Heavy operations (`index`, `rank`, `diagnoseHotspot`, `metrics`,
+`communities`, `history`) return Promises and run off the event loop. Absent
 measurements stay absent — a metric that does not converge answers
 `{measured: false, reason}`, never a partial result or a zero.
 

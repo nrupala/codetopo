@@ -303,6 +303,36 @@
         "openWorldHint": false,
         "readOnlyHint": true
       },
+      "description": "A composite over the atomic tools: the top-ranked symbols by the chosen measure, each with its blast-radius size, neighborhood size (depth 1), and the unresolved/external references touching it, plus the index-level diagnostics summary. Every number is an atomic query's output - the composite orchestrates and presents, it does not measure. What the graph could not resolve is stated per hotspot, never hidden.",
+      "inputSchema": {
+        "properties": {
+          "by": {
+            "description": "Metric to rank by: fan_in, fan_out, blast_radius (default), complexity, pagerank, betweenness, closeness, eigenvector, or katz.",
+            "type": "string"
+          },
+          "db_path": {
+            "description": "Path to the index database.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Maximum hotspots to return. Default 20.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "db_path"
+        ],
+        "type": "object"
+      },
+      "name": "codetopo_diagnose_hotspot",
+      "title": "Diagnose hotspots (composite)"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
       "description": "Compare two indexes (or two snapshot files): added, removed, and changed nodes and edges, plus the blast-radius movement of every touched symbol. Give exactly one before source and one after source.",
       "inputSchema": {
         "properties": {

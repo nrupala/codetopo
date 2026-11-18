@@ -793,8 +793,9 @@ pub fn describe_schema() -> serde_json::Value {
         },
         "queries": ["descendants", "ancestors", "blast_radius", "path",
                     "neighborhood", "search", "symbol", "stats", "verify",
-                    "diagnostics", "rank", "diff", "metrics", "history",
-                    "communities", "topo_sort", "render"],
+                    "diagnostics", "rank", "diagnose_hotspot", "diff",
+                    "metrics", "history", "communities", "topo_sort",
+                    "render"],
     })
 }
 
@@ -936,6 +937,134 @@ pub fn rank_value(graph: &Graph, metric: RankMetric, limit: usize) -> serde_json
             "method": metric.method(),
             "measured": false,
             "reason": reason,
+        }),
+    }
+}
+
+/// Load the diagnostics recorded at index time from the store at
+/// `db_path` — the companion to [`load_graph_from_db`] for callers
+/// that need both halves of an index (the composite query below, whose
+/// diagnostics summary tallies exactly what this returns).
+pub fn load_diagnostics_from_db(db_path: &Path) -> Result<Vec<Diagnostic>, CliError> {
+    let store = Store::open(db_path)?;
+    Ok(store.load_diagnostics()?)
+}
+
+/// The wire name of a diagnostic kind, for by-kind tallies.
+fn diagnostic_kind_name(diag: &Diagnostic) -> &'static str {
+    match diag {
+        Diagnostic::MultiDefinition { .. } => "multi_definition",
+        Diagnostic::Cycle { .. } => "cycle",
+        Diagnostic::UnresolvedCall { .. } => "unresolved_call",
+        Diagnostic::InvalidAttribute { .. } => "invalid_attribute",
+        Diagnostic::UnknownSymbol { .. } => "unknown_symbol",
+        Diagnostic::MissingProvenance { .. } => "missing_provenance",
+        Diagnostic::ArticulationIdentity { .. } => "articulation_identity",
+    }
+}
+
+/// JSON form of the composite hotspot diagnosis — the shared shape
+/// behind the CLI's `diagnose-hotspot` command, the HTTP
+/// diagnose-hotspot route (which adds `index_id`), and the MCP
+/// `codetopo_diagnose_hotspot` tool. The first task-level query: one
+/// composite over the atomic queries, adding orchestration and
+/// presentation only — every number it reports is an atomic query's
+/// output, never a new measurement.
+///
+/// Composition: the ranking is [`Graph::rank_answer`] (the `rank`
+/// query, the chosen measure); each hotspot's blast radius is
+/// [`Graph::blast_radius`]; its neighborhood size is
+/// [`Graph::neighborhood`] at depth 1 (the atomic query's default
+/// depth); the diagnostics summary tallies the diagnostics recorded at
+/// index time — the same list the `diagnostics` query returns.
+///
+/// Explicit uncertainty is part of the shape: per hotspot,
+/// `unresolved_references` counts the incident edges whose other
+/// endpoint is an external stub (kind `external`) — the calls and
+/// references the graph could not resolve, named in both directions —
+/// and the index-level summary states the unresolved-call count for
+/// the whole index. Absence follows the ranking's discipline: when the
+/// metric cannot be measured on the graph, the answer is
+/// `measured: false` with the reason, and the diagnostics summary is
+/// still reported.
+pub fn diagnose_hotspot_value(
+    graph: &Graph,
+    diagnostics: &[Diagnostic],
+    metric: RankMetric,
+    limit: usize,
+) -> serde_json::Value {
+    let mut by_kind: std::collections::BTreeMap<&'static str, usize> =
+        std::collections::BTreeMap::new();
+    for diag in diagnostics {
+        *by_kind.entry(diagnostic_kind_name(diag)).or_default() += 1;
+    }
+    let diagnostics_summary = json!({
+        "total": diagnostics.len(),
+        "by_kind": by_kind,
+        "unresolved_calls": by_kind.get("unresolved_call").copied().unwrap_or(0),
+    });
+    let composite_method = "composite over the atomic queries — rank (the chosen \
+        measure), blast_radius, neighborhood at depth 1, and the diagnostics \
+        recorded at index time; unresolved_references counts a hotspot's \
+        incident edges whose other endpoint is an external stub (kind \
+        external): what the graph could not resolve, stated per hotspot, \
+        never hidden";
+    match graph.rank_answer(metric, limit) {
+        codetopo_core::RankAnswer::Ranked(ranking) => {
+            let hotspots: Vec<serde_json::Value> = ranking
+                .entries
+                .iter()
+                .map(|entry| {
+                    let mut unresolved_outgoing = 0usize;
+                    let mut unresolved_incoming = 0usize;
+                    for edge in graph.edges() {
+                        if edge.from == entry.id {
+                            if let Some(other) = graph.get(&edge.to) {
+                                if other.kind == NodeKind::External {
+                                    unresolved_outgoing += 1;
+                                }
+                            }
+                        } else if edge.to == entry.id {
+                            if let Some(other) = graph.get(&edge.from) {
+                                if other.kind == NodeKind::External {
+                                    unresolved_incoming += 1;
+                                }
+                            }
+                        }
+                    }
+                    json!({
+                        "id": entry.id,
+                        "kind": node_kind_name(entry.kind),
+                        "label": entry.label,
+                        "rank_count": entry.count,
+                        "rank_value": entry.value,
+                        "blast_radius_size": graph.blast_radius(&entry.id).len(),
+                        "neighborhood_size": graph.neighborhood(&entry.id, 1).nodes.len(),
+                        "unresolved_references": {
+                            "total": unresolved_outgoing + unresolved_incoming,
+                            "outgoing": unresolved_outgoing,
+                            "incoming": unresolved_incoming,
+                        },
+                    })
+                })
+                .collect();
+            json!({
+                "metric": metric.as_str(),
+                "method": metric.method(),
+                "composite_method": composite_method,
+                "total": ranking.total,
+                "hotspots": hotspots,
+                "diagnostics_summary": diagnostics_summary,
+            })
+        }
+        codetopo_core::RankAnswer::Absent { reason } => json!({
+            "metric": metric.as_str(),
+            "method": metric.method(),
+            "composite_method": composite_method,
+            "measured": false,
+            "reason": reason,
+            "hotspots": [],
+            "diagnostics_summary": diagnostics_summary,
         }),
     }
 }

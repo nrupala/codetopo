@@ -613,6 +613,61 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '504':
           $ref: '#/components/responses/RequestTimeout'
+  /v1/graphs/{id}/diagnose-hotspot:
+    get:
+      tags: [query]
+      operationId: diagnoseHotspot
+      summary: A composite hotspot diagnosis over the atomic queries.
+      description: |
+        The first task-level query: one composite over the atomic
+        queries, adding orchestration and presentation only — every
+        number in the response is an atomic query's output, never a
+        new measurement. The hotspots are the `rank` query's top
+        symbols by the chosen measure (default `blast_radius`), each
+        carrying its blast-radius size (the `blast_radius` query), its
+        neighborhood size at depth 1 (the `neighborhood` query's
+        default depth), and the unresolved/external references
+        touching it: the incident edges whose other endpoint is an
+        `external` stub — what the graph could not resolve, stated per
+        hotspot in both directions, never hidden. The
+        `diagnostics_summary` tallies the diagnostics recorded when
+        the index was built (the `diagnostics` query's list), with the
+        unresolved-call count named. When the chosen measure is absent
+        on the graph, the response carries `measured: false` with the
+        reason (the ranking's absence discipline) and still reports
+        the diagnostics summary. The same object serves the CLI's
+        `diagnose-hotspot` command and the MCP
+        `codetopo_diagnose_hotspot` tool. An unknown metric or
+        parameter is `400 invalid_param`.
+      parameters:
+        - $ref: '#/components/parameters/IndexId'
+        - name: by
+          in: query
+          required: false
+          description: The metric to rank by (default `blast_radius`).
+          schema:
+            type: string
+            enum: [fan_in, fan_out, blast_radius, complexity, pagerank, betweenness, closeness, eigenvector, katz]
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: The hotspot diagnosis (hotspots possibly truncated to `limit`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiagnoseHotspotResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Internal'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          $ref: '#/components/responses/RequestTimeout'
   /v1/graphs/{id}/diff:
     get:
       tags: [query]
@@ -1533,6 +1588,111 @@ components:
         value:
           type: number
           description: The node's measured value under the ranked metric (centrality metrics only).
+    DiagnoseHotspotResponse:
+      type: object
+      description: |
+        A composite over the atomic queries: the metric and its
+        published definition (`method`), the composition statement
+        (`composite_method`), the total number of ranked nodes, the
+        top hotspots, and the index-level diagnostics summary. For a
+        measure that is absent on the graph, the response instead
+        carries `measured: false` and a `reason`, an empty `hotspots`
+        list, and still the diagnostics summary — absence is reported
+        as absence.
+      required: [index_id, metric, method, composite_method, total, hotspots, diagnostics_summary]
+      properties:
+        index_id:
+          type: string
+        metric:
+          type: string
+          enum: [fan_in, fan_out, blast_radius, complexity, pagerank, betweenness, closeness, eigenvector, katz]
+        method:
+          type: string
+          description: The published definition of the measurement being ranked.
+        composite_method:
+          type: string
+          description: How the composite is composed from the atomic queries, and what its unresolved-reference counts mean.
+        measured:
+          type: boolean
+          description: Present and false only on the absence shape.
+        reason:
+          type: string
+          description: Present only on the absence shape — why the measure is absent.
+        total:
+          type: integer
+          minimum: 0
+          description: Ranked nodes (before `limit` truncation), as the rank query reports them.
+        hotspots:
+          type: array
+          items:
+            $ref: '#/components/schemas/Hotspot'
+        diagnostics_summary:
+          $ref: '#/components/schemas/DiagnosticsSummary'
+    Hotspot:
+      type: object
+      description: |
+        One ranked symbol with its atomic measurements. Exactly one of
+        `rank_count` / `rank_value` is present — the ranked entry's
+        count for the integer metrics, its value for the centrality
+        metrics.
+      required: [id, kind, label, blast_radius_size, neighborhood_size, unresolved_references]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          description: The node's kind (the schema's snake_case wire name).
+        label:
+          type: string
+        rank_count:
+          type: integer
+          minimum: 1
+          description: The node's count under the ranked metric (integer metrics only).
+        rank_value:
+          type: number
+          description: The node's measured value under the ranked metric (centrality metrics only).
+        blast_radius_size:
+          type: integer
+          minimum: 0
+          description: The size of the node's blast radius (the blast_radius query's count).
+        neighborhood_size:
+          type: integer
+          minimum: 0
+          description: The number of nodes in the node's neighborhood at depth 1 (the neighborhood query's count).
+        unresolved_references:
+          type: object
+          description: The incident edges whose other endpoint is an external stub — what the graph could not resolve, touching this hotspot.
+          required: [total, outgoing, incoming]
+          properties:
+            total:
+              type: integer
+              minimum: 0
+            outgoing:
+              type: integer
+              minimum: 0
+              description: Edges from this hotspot to an external stub.
+            incoming:
+              type: integer
+              minimum: 0
+              description: Edges from an external stub to this hotspot.
+    DiagnosticsSummary:
+      type: object
+      description: The diagnostics recorded when the index was built, tallied — the same list the diagnostics query returns, counted.
+      required: [total, by_kind, unresolved_calls]
+      properties:
+        total:
+          type: integer
+          minimum: 0
+        by_kind:
+          type: object
+          description: Counts by diagnostic kind (multi_definition, cycle, unresolved_call, invalid_attribute, unknown_symbol, missing_provenance, articulation_identity); kinds with no diagnostics are absent.
+          additionalProperties:
+            type: integer
+            minimum: 0
+        unresolved_calls:
+          type: integer
+          minimum: 0
+          description: How many of the diagnostics are unresolved calls — the index-level statement of what the graph could not resolve.
     DiffResponse:
       type: object
       description: |

@@ -10,6 +10,21 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **First composite query: `diagnose_hotspot`.** A task-level
+  hotspot diagnosis composed over the atomic queries — the
+  top-ranked symbols by the chosen measure (default
+  `blast_radius`), each with its blast-radius size, its
+  neighborhood size at depth 1, and the unresolved/external
+  references touching it, plus the index-level diagnostics
+  summary (total, by kind, unresolved-call count). Every number
+  is an atomic query's output; the composite adds orchestration
+  and presentation only, and states what the graph could not
+  resolve per hotspot rather than hiding it. Surfaces at parity:
+  CLI `codetopo diagnose-hotspot`, HTTP
+  `GET /v1/graphs/{id}/diagnose-hotspot`, MCP tool
+  `codetopo_diagnose_hotspot` — the twenty-first tool (twenty
+  atomic + one composite) and the twenty-first `/v1` endpoint.
+  The schema's query vocabulary gains `diagnose_hotspot`.
 - **Core schema 2.0 — the dictionary is a domain profile now.** The
   node/edge dictionary that CODE_SCHEMA v1.2 embedded in the core is
   extracted into `profiles/code.profile.json` (format
