@@ -243,6 +243,12 @@ enum Commands {
         /// `force` (Fruchterman-Reingold, layout spec v2).
         #[arg(long, default_value = "layered")]
         layout: String,
+        /// Which node universe to lay out: `full` (the default —
+        /// every node) or `structure` (the structural skeleton:
+        /// package/file/module/class/interface/doc, symbols rolled
+        /// up to their nearest structural ancestor; layered only).
+        #[arg(long, default_value = "full")]
+        scope: String,
     },
     /// Verify the tamper-evident audit chain.
     Verify {
@@ -337,12 +343,24 @@ enum Commands {
 
 fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
     match cli.command {
-        Commands::Index { repo, db, package, snapshot, hmac_key } => {
+        Commands::Index {
+            repo,
+            db,
+            package,
+            snapshot,
+            hmac_key,
+        } => {
             let package = package.unwrap_or_else(|| default_package_name(&repo));
             let key = resolve_hmac_key(hmac_key.as_deref());
             index_repo(&repo, &db, &package, snapshot.as_deref(), key.as_deref())?;
         }
-        Commands::Descendants { id, db, expand, limit, json } => {
+        Commands::Descendants {
+            id,
+            db,
+            expand,
+            limit,
+            json,
+        } => {
             let graph = load_graph_from_db(&db)?;
             require_node(&graph, &id)?;
             let ids = graph.descendants(&id);
@@ -352,7 +370,13 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 print_id_list(&format!("descendants of {id}"), &ids, expand, limit);
             }
         }
-        Commands::Ancestors { id, db, expand, limit, json } => {
+        Commands::Ancestors {
+            id,
+            db,
+            expand,
+            limit,
+            json,
+        } => {
             let graph = load_graph_from_db(&db)?;
             require_node(&graph, &id)?;
             let ids = graph.ancestors(&id);
@@ -362,7 +386,13 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 print_id_list(&format!("ancestors of {id}"), &ids, expand, limit);
             }
         }
-        Commands::BlastRadius { id, db, expand, limit, json } => {
+        Commands::BlastRadius {
+            id,
+            db,
+            expand,
+            limit,
+            json,
+        } => {
             let graph = load_graph_from_db(&db)?;
             require_node(&graph, &id)?;
             let ids = graph.blast_radius(&id);
@@ -378,7 +408,11 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
             require_node(&graph, &b)?;
             match graph.path(&a, &b) {
                 Some(steps) => {
-                    let rendered = if steps.is_empty() { a.clone() } else { render_path(&steps) };
+                    let rendered = if steps.is_empty() {
+                        a.clone()
+                    } else {
+                        render_path(&steps)
+                    };
                     if json {
                         println!(
                             "{}",
@@ -400,7 +434,12 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 }
             }
         }
-        Commands::Rank { db, by, limit, json } => {
+        Commands::Rank {
+            db,
+            by,
+            limit,
+            json,
+        } => {
             let metric = codetopo_core::RankMetric::parse(&by).ok_or_else(|| {
                 codetopo_cli::CliError::Usage(format!(
                     "unknown rank metric '{by}' (expected fan-in, fan-out, blast-radius, complexity, pagerank, betweenness, closeness, eigenvector, or katz)"
@@ -513,7 +552,6 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 }
                 println!("packages: {}", metrics.packages.len());
                 for p in &metrics.packages {
-
                     match p.instability {
                         Some(i) => println!(
                             "{}: ca {} · ce {} · external-ce {} · instability {i:.2}",
@@ -532,10 +570,8 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
             if json {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&codetopo_cli::communities_value(
-                        &graph, limit
-                    ))
-                    .expect("communities serialize")
+                    serde_json::to_string_pretty(&codetopo_cli::communities_value(&graph, limit))
+                        .expect("communities serialize")
                 );
             } else {
                 let part = graph.communities();
@@ -608,7 +644,10 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                     serde_json::to_string_pretty(&value).expect("history serializes")
                 );
             } else if value["measured"] == serde_json::json!(false) {
-                println!("history: not measured — {}", value["reason"].as_str().unwrap_or(""));
+                println!(
+                    "history: not measured — {}",
+                    value["reason"].as_str().unwrap_or("")
+                );
             } else {
                 println!(
                     "history: {} transactions · {} · {}",
@@ -686,7 +725,10 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 for c in &diff.changed_nodes {
                     println!(
                         "~ node {} ({}:{} -> {}:{})",
-                        c.id, c.before.loc.file, c.before.loc.line, c.after.loc.file,
+                        c.id,
+                        c.before.loc.file,
+                        c.before.loc.line,
+                        c.after.loc.file,
                         c.after.loc.line
                     );
                 }
@@ -712,11 +754,33 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 print_stats(&graph);
             }
         }
-        Commands::Render { db, out, svg, layout } => {
+        Commands::Render {
+            db,
+            out,
+            svg,
+            layout,
+            scope,
+        } => {
             let graph = load_graph_from_db(&db)?;
+            let scope = match scope.as_str() {
+                "full" => codetopo_core::RenderScope::Full,
+                "structure" => codetopo_core::RenderScope::Structure,
+                other => {
+                    return Err(codetopo_cli::CliError::Usage(format!(
+                        "--scope must be 'full' or 'structure', got '{other}'"
+                    )));
+                }
+            };
+            if layout == "force" && scope == codetopo_core::RenderScope::Structure {
+                return Err(codetopo_cli::CliError::Usage(
+                    "--scope 'structure' is defined for the layered layout; \
+                     the force layout always takes the full graph"
+                        .to_string(),
+                ));
+            }
             match layout.as_str() {
                 "layered" => {
-                    let spec = codetopo_core::layout(&graph);
+                    let spec = codetopo_core::layout_scoped(&graph, scope);
                     let spec_json = serde_json::to_string_pretty(&spec)?;
                     match &out {
                         Some(path) => {
@@ -787,7 +851,12 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 }
             }
         }
-        Commands::Neighborhood { id, db, depth, json } => {
+        Commands::Neighborhood {
+            id,
+            db,
+            depth,
+            json,
+        } => {
             let graph = load_graph_from_db(&db)?;
             require_node(&graph, &id)?;
             let sub = graph.neighborhood(&id, depth);
@@ -820,11 +889,14 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 if !node.loc.file.is_empty() {
                     println!("at: {}:{}", node.loc.file, node.loc.line);
                 }
-                println!("tier: {}", match node.tier {
-                    codetopo_core::Tier::Core => "core",
-                    codetopo_core::Tier::Recommended => "recommended",
-                    codetopo_core::Tier::Optional => "optional",
-                });
+                println!(
+                    "tier: {}",
+                    match node.tier {
+                        codetopo_core::Tier::Core => "core",
+                        codetopo_core::Tier::Recommended => "recommended",
+                        codetopo_core::Tier::Optional => "optional",
+                    }
+                );
                 println!("defines: {}", node.defines.len());
                 println!("refs: {}", node.refs.len());
                 if let Some(m) = &dossier.measurements {
@@ -855,7 +927,12 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                 }
             }
         }
-        Commands::Search { query, db, limit, json } => {
+        Commands::Search {
+            query,
+            db,
+            limit,
+            json,
+        } => {
             let graph = load_graph_from_db(&db)?;
             let hits = graph.search_symbols(&query, limit);
             if json {
@@ -866,16 +943,28 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
             } else {
                 println!("{} result(s) for '{query}'", hits.len());
                 for n in hits {
-                    println!("{}  ({}, {}:{})", n.id, node_kind_name(n.kind), n.loc.file, n.loc.line);
+                    println!(
+                        "{}  ({}, {}:{})",
+                        n.id,
+                        node_kind_name(n.kind),
+                        n.loc.file,
+                        n.loc.line
+                    );
                 }
             }
         }
         Commands::Schema { json } => {
             let schema = describe_schema();
             if json {
-                println!("{}", serde_json::to_string_pretty(&schema).expect("schema serializes"));
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&schema).expect("schema serializes")
+                );
             } else {
-                println!("schema version: {}", schema["schema_version"].as_str().unwrap_or(""));
+                println!(
+                    "schema version: {}",
+                    schema["schema_version"].as_str().unwrap_or("")
+                );
                 println!("node kinds: {}", schema["node_kinds"]);
                 println!("edge kinds: {}", schema["edge_kinds"]);
                 println!("queries: {}", schema["queries"]);
@@ -893,11 +982,20 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
             let key = resolve_hmac_key(hmac_key.as_deref());
             snapshot_db(&db, &out, key.as_deref())?;
         }
-        Commands::Restore { snapshot, db, hmac_key, allow_unverified } => {
+        Commands::Restore {
+            snapshot,
+            db,
+            hmac_key,
+            allow_unverified,
+        } => {
             let key = resolve_hmac_key(hmac_key.as_deref());
             restore_snapshot(&snapshot, &db, key.as_deref(), allow_unverified)?;
         }
-        Commands::VerifyProof { snapshot, hmac_key, allow_unverified } => {
+        Commands::VerifyProof {
+            snapshot,
+            hmac_key,
+            allow_unverified,
+        } => {
             let key = resolve_hmac_key(hmac_key.as_deref());
             verify_proof_file(&snapshot, key.as_deref(), allow_unverified)?;
         }

@@ -62,7 +62,9 @@ impl CliError {
 /// flag first, then the `CODETOPO_HMAC_KEY` environment variable, else `None`
 /// (the snapshot is written without a proof, with a stderr note).
 pub fn resolve_hmac_key(flag: Option<&str>) -> Option<Vec<u8>> {
-    let from_flag = flag.filter(|k| !k.is_empty()).map(|k| k.as_bytes().to_vec());
+    let from_flag = flag
+        .filter(|k| !k.is_empty())
+        .map(|k| k.as_bytes().to_vec());
     if from_flag.is_some() {
         return from_flag;
     }
@@ -147,7 +149,11 @@ fn cargo_package_name(text: &str) -> Option<String> {
 /// already a dependency of everything in this workspace.
 fn package_json_name(text: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
-    value.get("name")?.as_str().filter(|n| !n.is_empty()).map(str::to_string)
+    value
+        .get("name")?
+        .as_str()
+        .filter(|n| !n.is_empty())
+        .map(str::to_string)
 }
 
 /// The `name` from a pyproject.toml's `[project]` table (PEP 621),
@@ -513,7 +519,13 @@ pub fn snapshot_db(db_path: &Path, out: &Path, hmac_key: Option<&[u8]>) -> Resul
     let graph = store.load_graph()?;
     let audit = store.load_audit()?;
     let diagnostics = store.load_diagnostics()?;
-    write_snapshot_file(&graph, &audit.snapshot_entries(), &diagnostics, out, hmac_key)?;
+    write_snapshot_file(
+        &graph,
+        &audit.snapshot_entries(),
+        &diagnostics,
+        out,
+        hmac_key,
+    )?;
     eprintln!("snapshot written: {}", out.display());
     Ok(())
 }
@@ -728,13 +740,19 @@ pub fn load_graph_from_db(db_path: &Path) -> Result<Graph, CliError> {
 
 /// Fetch a node or fail with exit-code-2 [`CliError::UnknownId`].
 pub fn require_node<'g>(graph: &'g Graph, id: &str) -> Result<&'g Node, CliError> {
-    graph.get(id).ok_or_else(|| CliError::UnknownId(id.to_string()))
+    graph
+        .get(id)
+        .ok_or_else(|| CliError::UnknownId(id.to_string()))
 }
 
 /// Aggregate-first id list: the total count, then the top-`limit` ids by
 /// default or every id with `--expand`.
 pub fn print_id_list(title: &str, ids: &[String], expand: bool, limit: usize) {
-    let shown: &[String] = if expand { ids } else { &ids[..ids.len().min(limit)] };
+    let shown: &[String] = if expand {
+        ids
+    } else {
+        &ids[..ids.len().min(limit)]
+    };
     println!("{} {title}", ids.len());
     for id in shown {
         println!("{id}");
@@ -803,7 +821,11 @@ pub fn describe_schema() -> serde_json::Value {
 /// response minus `index_id` (the CLI has no index ids).
 pub fn print_id_list_json(relation: &str, node: &str, ids: &[String], expand: bool, limit: usize) {
     let total = ids.len();
-    let shown: &[String] = if expand { ids } else { &ids[..total.min(limit)] };
+    let shown: &[String] = if expand {
+        ids
+    } else {
+        &ids[..total.min(limit)]
+    };
     println!(
         "{}",
         serde_json::json!({
@@ -889,7 +911,10 @@ pub fn diagnostics_value(db_path: &Path) -> Result<serde_json::Value, CliError> 
 
 /// Print [`diagnostics_value`] as pretty JSON.
 pub fn print_diagnostics_json(db_path: &Path) -> Result<(), CliError> {
-    println!("{}", serde_json::to_string_pretty(&diagnostics_value(db_path)?)?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&diagnostics_value(db_path)?)?
+    );
     Ok(())
 }
 
@@ -1114,20 +1139,61 @@ pub fn topo_sort_value(graph: &Graph) -> serde_json::Value {
 /// (`{layout_version: 2, layout: "force", rendered: false,
 /// reason}`). An unknown layout name is an error.
 pub fn render_value(graph: &Graph, layout_name: &str) -> Result<serde_json::Value, String> {
+    render_value_scoped(graph, layout_name, "full")
+}
+
+/// [`render_value`] with an explicit render scope: `full` (the
+/// historic default — every node placed) or `structure` (the
+/// layered layout over the structure projection: structural kinds
+/// only, symbols rolled up to their nearest structural ancestor —
+/// see `docs/render.md`). The scope is recorded in the answer
+/// object (`scope`, plus `source_nodes` naming the full graph's
+/// node count) so a consumer can never mistake a structure map
+/// for the whole graph. The force layout takes the full graph;
+/// asking it for the structure scope is an error, not a silent
+/// substitution.
+pub fn render_value_scoped(
+    graph: &Graph,
+    layout_name: &str,
+    scope_name: &str,
+) -> Result<serde_json::Value, String> {
+    let scope = match scope_name {
+        "full" => codetopo_core::RenderScope::Full,
+        "structure" => codetopo_core::RenderScope::Structure,
+        other => {
+            return Err(format!(
+                "scope must be 'full' or 'structure', got '{other}'"
+            ))
+        }
+    };
     match layout_name {
-        "layered" => Ok(serde_json::to_value(codetopo_core::layout(graph))
-            .expect("layout spec serializes")),
-        "force" => Ok(match codetopo_core::force_layout(graph) {
-            codetopo_core::ForceLayout::Spec(spec) => {
-                serde_json::to_value(spec).expect("force spec serializes")
+        "layered" => {
+            let mut value = serde_json::to_value(codetopo_core::layout_scoped(graph, scope))
+                .expect("layout spec serializes");
+            if scope == codetopo_core::RenderScope::Structure {
+                value["scope"] = json!("structure");
+                value["source_nodes"] = json!(graph.node_count());
             }
-            codetopo_core::ForceLayout::Declined { reason, .. } => json!({
-                "layout_version": 2,
-                "layout": "force",
-                "rendered": false,
-                "reason": reason,
-            }),
-        }),
+            Ok(value)
+        }
+        "force" => {
+            if scope == codetopo_core::RenderScope::Structure {
+                return Err("scope 'structure' is defined for the layered layout; \
+                     the force layout always takes the full graph"
+                    .to_string());
+            }
+            Ok(match codetopo_core::force_layout(graph) {
+                codetopo_core::ForceLayout::Spec(spec) => {
+                    serde_json::to_value(spec).expect("force spec serializes")
+                }
+                codetopo_core::ForceLayout::Declined { reason, .. } => json!({
+                    "layout_version": 2,
+                    "layout": "force",
+                    "rendered": false,
+                    "reason": reason,
+                }),
+            })
+        }
         other => Err(format!(
             "layout must be 'layered' or 'force', got '{other}'"
         )),
@@ -1189,8 +1255,12 @@ pub fn repo_history_input(
     since: Option<&str>,
 ) -> Result<codetopo_core::HistoryInput, String> {
     let mut cmd = std::process::Command::new("git");
-    cmd.arg("-C").arg(repo)
-        .args(["log", "--no-merges", "--pretty=format:commit:%H", "--name-only"]);
+    cmd.arg("-C").arg(repo).args([
+        "log",
+        "--no-merges",
+        "--pretty=format:commit:%H",
+        "--name-only",
+    ]);
     if let Some(since) = since {
         cmd.args(["--since", since]);
     }
@@ -1243,9 +1313,7 @@ pub fn repo_history_input(
         .filter(|tx| !tx.is_empty())
         .collect();
     if transactions.is_empty() {
-        return Err(
-            "no commit in the window touches a file this index knows".to_string(),
-        );
+        return Err("no commit in the window touches a file this index knows".to_string());
     }
     Ok(codetopo_core::HistoryInput {
         source: "local git history (git log --no-merges)".to_string(),
@@ -1316,7 +1384,10 @@ mod tests {
             pyproject_package_name("[tool.black]\nname = \"nope\"\n"),
             None
         );
-        assert_eq!(pyproject_package_name("[project]\ndescription = \"x\"\n"), None);
+        assert_eq!(
+            pyproject_package_name("[project]\ndescription = \"x\"\n"),
+            None
+        );
     }
 
     #[test]

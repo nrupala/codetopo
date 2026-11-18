@@ -68,9 +68,7 @@ pub struct LayoutSpec {
 /// flattens both). For the CODE profile this is exactly the
 /// pre-2.0 set: calls, imports, inherits, implements, reads, writes.
 pub(crate) fn is_dependency(profile: &crate::profile::DomainProfile, kind: &EdgeKind) -> bool {
-    profile.is_dependency(kind)
-        && kind.as_str() != "defines"
-        && !profile.is_containment(kind)
+    profile.is_dependency(kind) && kind.as_str() != "defines" && !profile.is_containment(kind)
 }
 
 /// The same test for a graph's own profile.
@@ -78,25 +76,195 @@ pub(crate) fn is_dependency_of(graph: &Graph, kind: &EdgeKind) -> bool {
     is_dependency(graph.profile(), kind)
 }
 
+/// Which node universe a layout covers.
+///
+/// `Full` is the historic behaviour: every node in the graph is
+/// placed. `Structure` first projects the graph to its structural
+/// skeleton — the node kinds a reader navigates by (package, file,
+/// module, class, interface, doc) — keeping the edges that show
+/// how the system is organized (containment, imports, type
+/// hierarchy) with their endpoints rolled up to the nearest kept
+/// ancestor along containment edges. The projection is a pure
+/// function of the graph, exactly like the layout itself: same
+/// graph in, same spec out. See `docs/render.md` ("Scope").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderScope {
+    Full,
+    Structure,
+}
+
+/// The node kinds the structure scope keeps. Everything else
+/// (functions, methods, variables, external stubs) rolls up to the
+/// nearest kept ancestor — or drops out when it has none (an
+/// external stub is contained by nothing).
+const STRUCTURE_KINDS: [&str; 6] = ["package", "file", "module", "class", "interface", "doc"];
+
 /// Lay out `graph` deterministically (see the module docs and
 /// `docs/render.md` for the exact rules).
 pub fn layout(graph: &Graph) -> LayoutSpec {
-    let profile = graph.profile();
-    let ids: Vec<String> = graph.nodes().map(|n| n.id.clone()).collect();
-    let index_of: HashMap<&str, usize> =
-        ids.iter().enumerate().map(|(i, id)| (id.as_str(), i)).collect();
+    layout_scoped(graph, RenderScope::Full)
+}
 
-    // Dependency adjacency, deduplicated, targets ascending.
-    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); ids.len()];
-    let mut seen_edges: BTreeSet<(usize, usize)> = BTreeSet::new();
+/// Lay out `graph` under an explicit [`RenderScope`].
+/// `layout(graph)` is `layout_scoped(graph, RenderScope::Full)`
+/// and its output is byte-identical to the pre-scope renderer.
+pub fn layout_scoped(graph: &Graph, scope: RenderScope) -> LayoutSpec {
+    let profile = graph.profile();
+    match scope {
+        RenderScope::Full => {
+            let ids: Vec<String> = graph.nodes().map(|n| n.id.clone()).collect();
+            let edges: Vec<(String, String, EdgeKind)> = graph
+                .edges()
+                .map(|e| (e.from.clone(), e.to.clone(), e.kind))
+                .collect();
+            layout_from(graph, profile, &ids, &edges, None)
+        }
+        RenderScope::Structure => {
+            let (ids, edges) = structure_projection(graph);
+            // A structure map reads as a hierarchy: layers are
+            // containment depth (package over files over modules
+            // over classes), not dependency depth — under
+            // dependency layering every structural node sits at
+            // depth ~0 and the map collapses into one long row.
+            // The containment edges therefore drive this scope's
+            // layering; imports and hierarchy edges are drawn but
+            // do not layer.
+            let layer_edges: Vec<(String, String, EdgeKind)> = edges
+                .iter()
+                .filter(|(_, _, kind)| profile.is_containment(kind))
+                .cloned()
+                .collect();
+            layout_from(graph, profile, &ids, &edges, Some(&layer_edges))
+        }
+    }
+}
+
+/// The structure-scope projection: kept node ids (ascending — the
+/// graph's own node order, filtered) and the graph's *structural*
+/// edges (containment, imports, type hierarchy) with both
+/// endpoints resolved to their nearest kept ancestor.
+/// Self-edges created by the roll-up drop; duplicates are left in
+/// (the layout deduplicates both its adjacency and its edge list).
+fn structure_projection(graph: &Graph) -> (Vec<String>, Vec<(String, String, EdgeKind)>) {
+    let profile = graph.profile();
+    let kept: BTreeSet<&str> = graph
+        .nodes()
+        .filter(|n| STRUCTURE_KINDS.contains(&n.kind.as_str()))
+        .map(|n| n.id.as_str())
+        .collect();
+
+    // Containment parents per node, ascending (the graph's edge
+    // order is deterministic; sorting makes the walk independent
+    // of it anyway).
+    let mut parents: HashMap<&str, Vec<&str>> = HashMap::new();
     for edge in graph.edges() {
-        if !is_dependency(profile, &edge.kind) {
+        if profile.is_containment(&edge.kind) {
+            parents
+                .entry(edge.to.as_str())
+                .or_default()
+                .push(edge.from.as_str());
+        }
+    }
+    for list in parents.values_mut() {
+        list.sort_unstable();
+        list.dedup();
+    }
+
+    // Resolve a node to its nearest kept ancestor (itself when
+    // kept). Breadth-first over containment parents, ascending at
+    // each level, so the answer never depends on edge order. A
+    // node with no kept ancestor (an external stub, an orphan)
+    // resolves to nothing.
+    let resolve = |start: &str| -> Option<String> {
+        if kept.contains(start) {
+            return Some(start.to_string());
+        }
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        let mut frontier: Vec<&str> = vec![start];
+        seen.insert(start);
+        while !frontier.is_empty() {
+            let mut next: Vec<&str> = Vec::new();
+            for node in &frontier {
+                if let Some(ps) = parents.get(node) {
+                    for &p in ps {
+                        if kept.contains(p) {
+                            return Some(p.to_string());
+                        }
+                        if seen.insert(p) {
+                            next.push(p);
+                        }
+                    }
+                }
+            }
+            next.sort_unstable();
+            frontier = next;
+        }
+        None
+    };
+
+    let ids: Vec<String> = graph
+        .nodes()
+        .filter(|n| kept.contains(n.id.as_str()))
+        .map(|n| n.id.clone())
+        .collect();
+    let mut edges: Vec<(String, String, EdgeKind)> = Vec::new();
+    for edge in graph.edges() {
+        // Structure shows how the system is *organized*:
+        // containment, imports and type hierarchy. Behaviour
+        // edges (calls, reads, writes, …) roll up into long
+        // cross-cutting diagonals at this granularity and bury
+        // the skeleton; they belong to the full scope.
+        if !profile.is_containment(&edge.kind)
+            && !matches!(
+                edge.kind,
+                EdgeKind::Imports | EdgeKind::Inherits | EdgeKind::Implements
+            )
+        {
             continue;
         }
-        let (Some(&a), Some(&b)) = (
-            index_of.get(edge.from.as_str()),
-            index_of.get(edge.to.as_str()),
-        ) else {
+        let (Some(from), Some(to)) = (resolve(&edge.from), resolve(&edge.to)) else {
+            continue;
+        };
+        if from != to {
+            edges.push((from, to, edge.kind));
+        }
+    }
+    (ids, edges)
+}
+
+/// The shared layering core: SCC condensation + longest-path
+/// layering + placement over an explicit node/edge universe.
+/// `layout` feeds it the whole graph; the structure scope feeds
+/// it the projection. Node identity (label/kind/tier) is read
+/// from `graph`, so projected nodes keep their own presentation.
+///
+/// Layering adjacency comes from the universe's dependency edges
+/// (see [`is_dependency`]) unless `layer_edges` overrides it —
+/// the structure scope layers by containment instead (see
+/// [`layout_scoped`]). The override changes only which edges
+/// layer; every edge of the universe is still drawn.
+fn layout_from(
+    graph: &Graph,
+    profile: &crate::profile::DomainProfile,
+    ids: &[String],
+    edges: &[(String, String, EdgeKind)],
+    layer_edges: Option<&[(String, String, EdgeKind)]>,
+) -> LayoutSpec {
+    let ids: Vec<String> = ids.to_vec();
+    let index_of: HashMap<&str, usize> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect();
+
+    // Layering adjacency, deduplicated, targets ascending.
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); ids.len()];
+    let mut seen_edges: BTreeSet<(usize, usize)> = BTreeSet::new();
+    for (from, to, kind) in layer_edges.unwrap_or(edges) {
+        if layer_edges.is_none() && !is_dependency(profile, kind) {
+            continue;
+        }
+        let (Some(&a), Some(&b)) = (index_of.get(from.as_str()), index_of.get(to.as_str())) else {
             continue;
         };
         if a != b && seen_edges.insert((a, b)) {
@@ -186,11 +354,12 @@ pub fn layout(graph: &Graph) -> LayoutSpec {
         width = width.max(x);
     }
 
-    // All graph edges, deduplicated on (from, to, kind) — a
-    // BTreeSet gives the spec's sort order for free.
-    let layout_edges: Vec<LayoutEdge> = graph
-        .edges()
-        .map(|e| (e.from.clone(), e.to.clone(), e.kind))
+    // All edges of the universe being laid out, deduplicated on
+    // (from, to, kind) — a BTreeSet gives the spec's sort order
+    // for free.
+    let layout_edges: Vec<LayoutEdge> = edges
+        .iter()
+        .map(|(from, to, kind)| (from.clone(), to.clone(), *kind))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .map(|(from, to, kind)| LayoutEdge { from, to, kind })
@@ -350,7 +519,12 @@ pub fn render_svg(spec: &LayoutSpec) -> String {
     let pos: HashMap<&str, (u32, u32)> = spec
         .nodes
         .iter()
-        .map(|n| (n.id.as_str(), (MARGIN + n.x * X_STEP, MARGIN + n.y * Y_STEP)))
+        .map(|n| {
+            (
+                n.id.as_str(),
+                (MARGIN + n.x * X_STEP, MARGIN + n.y * Y_STEP),
+            )
+        })
         .collect();
 
     let mut out = String::new();
@@ -490,8 +664,15 @@ mod tests {
     fn a_cycle_shares_one_layer() {
         let g = graph_with(&[("a", "b"), ("b", "a"), ("b", "c")], &[]);
         let spec = layout(&g);
-        assert_eq!(y_of(&spec, "a"), y_of(&spec, "b"), "SCC members share a layer");
-        assert!(y_of(&spec, "b") < y_of(&spec, "c"), "the callee sits below the cycle");
+        assert_eq!(
+            y_of(&spec, "a"),
+            y_of(&spec, "b"),
+            "SCC members share a layer"
+        );
+        assert!(
+            y_of(&spec, "b") < y_of(&spec, "c"),
+            "the callee sits below the cycle"
+        );
     }
 
     #[test]
@@ -500,7 +681,11 @@ mod tests {
         let spec = layout(&g);
         let cells: BTreeSet<(u32, u32)> = spec.nodes.iter().map(|n| (n.x, n.y)).collect();
         assert_eq!(cells.len(), spec.nodes.len(), "no two nodes share a cell");
-        assert_eq!(spec.nodes.len(), g.node_count(), "every graph node is placed");
+        assert_eq!(
+            spec.nodes.len(),
+            g.node_count(),
+            "every graph node is placed"
+        );
     }
 
     #[test]
@@ -512,7 +697,10 @@ mod tests {
         assert_eq!(render_svg(&one), render_svg(&two));
         let svg = render_svg(&one);
         assert!(svg.starts_with("<?xml version=\"1.0\""));
-        assert!(svg.contains("<title>a</title>"), "node ids ride along as titles: {svg}");
+        assert!(
+            svg.contains("<title>a</title>"),
+            "node ids ride along as titles: {svg}"
+        );
         // Spec JSON serializes stably too.
         assert_eq!(
             serde_json::to_string(&one).unwrap(),
@@ -524,9 +712,82 @@ mod tests {
     fn labels_are_escaped_and_truncated() {
         let g = graph_with(&[], &[("x", "<script>alert(1)</script> & \"friends\"")]);
         let svg = render_svg(&layout(&g));
-        assert!(!svg.contains("<script>"), "no raw markup from labels: {svg}");
+        assert!(
+            !svg.contains("<script>"),
+            "no raw markup from labels: {svg}"
+        );
         assert!(svg.contains("&lt;script&gt;"));
         assert!(svg.contains("…"), "long labels truncate with an ellipsis");
+    }
+
+    #[test]
+    fn structure_scope_keeps_only_structural_kinds() {
+        // The fixture graph holds a package, a module, a file and
+        // function symbols. The full layout places them all; the
+        // structure layout keeps only the structural kinds and
+        // rolls the functions up into their containers.
+        let g = graph_with(&[("a", "b"), ("b", "c")], &[]);
+        let full = layout(&g);
+        assert!(full.nodes.iter().any(|n| n.kind == NodeKind::Function));
+        let structure = layout_scoped(&g, RenderScope::Structure);
+        assert!(!structure.nodes.is_empty());
+        for node in &structure.nodes {
+            assert!(
+                STRUCTURE_KINDS.contains(&node.kind.as_str()),
+                "structure spec holds only structural kinds, found {}",
+                node.kind.as_str()
+            );
+        }
+        // Every structure edge joins two placed nodes.
+        let placed: BTreeSet<&str> = structure.nodes.iter().map(|n| n.id.as_str()).collect();
+        for edge in &structure.edges {
+            assert!(placed.contains(edge.from.as_str()));
+            assert!(placed.contains(edge.to.as_str()));
+            assert_ne!(edge.from, edge.to, "roll-up self-edges drop");
+            // Only organizational edges: containment, imports,
+            // type hierarchy. The fixture's calls must not appear.
+            assert!(
+                matches!(
+                    edge.kind,
+                    EdgeKind::Contains
+                        | EdgeKind::Imports
+                        | EdgeKind::Inherits
+                        | EdgeKind::Implements
+                ),
+                "structure scope holds no behaviour edges, found {}",
+                edge.kind.as_str()
+            );
+        }
+        assert!(
+            structure.edges.iter().any(|e| e.kind == EdgeKind::Contains),
+            "the containment skeleton itself is present"
+        );
+        // Layers are containment depth: the package sits on the
+        // top row and at least one kept node sits below it — the
+        // map is a hierarchy, not the single row dependency
+        // layering would produce.
+        let package = structure
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Package)
+            .expect("the fixture graph has a package node");
+        assert_eq!(package.y, 0, "the package roots the hierarchy");
+        assert!(
+            structure.nodes.iter().any(|n| n.y > package.y),
+            "contained nodes layer below the package"
+        );
+        // Deterministic, like everything else on this path.
+        assert_eq!(structure, layout_scoped(&g, RenderScope::Structure));
+        assert_eq!(
+            render_svg(&structure),
+            render_svg(&layout_scoped(&g, RenderScope::Structure))
+        );
+    }
+
+    #[test]
+    fn full_scope_is_the_historic_layout() {
+        let g = graph_with(&[("a", "b"), ("b", "a"), ("b", "c")], &[]);
+        assert_eq!(layout(&g), layout_scoped(&g, RenderScope::Full));
     }
 
     #[test]

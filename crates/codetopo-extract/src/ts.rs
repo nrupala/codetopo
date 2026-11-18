@@ -124,8 +124,47 @@ fn field_text(node: Node, field: &str, src: &[u8]) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// One step of the walker's explicit work stack. The walker used
+/// to recurse over the syntax tree; a generated file whose value
+/// is a single expression nested tens of thousands of levels deep
+/// (a base64 blob written as `"…" + "…" + …`) overflowed the call
+/// stack and aborted the whole index. The walk now runs on this
+/// heap stack instead: `Enter` visits a node, `LeaveSymbol` /
+/// `LeavePath` replay the scope pops the recursion used to do on
+/// return. Visit order is unchanged (children are pushed in
+/// reverse so they pop in source order), so extraction output is
+/// byte-identical for every input the recursive walker survived.
+enum Step<'t> {
+    Enter(Node<'t>),
+    LeaveSymbol { in_assoc: bool },
+    LeavePath,
+}
+
 impl<'a> Walker<'a> {
-    fn walk(&mut self, node: Node) {
+    fn walk<'t>(&mut self, root: Node<'t>) {
+        let mut stack = vec![Step::Enter(root)];
+        while let Some(step) = stack.pop() {
+            match step {
+                Step::LeaveSymbol { in_assoc } => {
+                    self.enclosing.pop();
+                    self.path.pop();
+                    self.in_assoc = in_assoc;
+                }
+                Step::LeavePath => {
+                    self.path.pop();
+                }
+                Step::Enter(node) => self.visit(node, &mut stack),
+            }
+        }
+    }
+
+    fn push_children<'t>(&self, stack: &mut Vec<Step<'t>>, node: Node<'t>) {
+        for child in children(node).into_iter().rev() {
+            stack.push(Step::Enter(child));
+        }
+    }
+
+    fn visit<'t>(&mut self, node: Node<'t>, stack: &mut Vec<Step<'t>>) {
         match node.kind() {
             "function_declaration" | "generator_function_declaration" => {
                 if let Some(name) = field_text(node, "name", self.src) {
@@ -137,9 +176,9 @@ impl<'a> Walker<'a> {
                     } else {
                         NodeKind::Function
                     };
-                    self.with_symbol_writes(kind, &name, node, defines, refs, writes, body, false);
+                    self.emit_symbol(stack, kind, &name, node, defines, refs, writes, body, false);
                 } else {
-                    self.walk_children(node);
+                    self.push_children(stack, node);
                 }
             }
             "class_declaration" | "abstract_class_declaration" => {
@@ -147,10 +186,20 @@ impl<'a> Walker<'a> {
                     self.heritage_of(node, &name);
                     let body = node.child_by_field_name("body");
                     let refs = self.body_refs(body);
-                    self.with_symbol(NodeKind::Class, &name, node, vec![], refs, body, true);
+                    self.emit_symbol(
+                        stack,
+                        NodeKind::Class,
+                        &name,
+                        node,
+                        vec![],
+                        refs,
+                        vec![],
+                        body,
+                        true,
+                    );
                 } else {
                     // Anonymous default-exported class: walk members without a scope name.
-                    self.walk_children(node);
+                    self.push_children(stack, node);
                 }
             }
             "interface_declaration" => {
@@ -158,9 +207,19 @@ impl<'a> Walker<'a> {
                     self.heritage_of(node, &name);
                     let body = node.child_by_field_name("body");
                     let refs = self.body_refs(body);
-                    self.with_symbol(NodeKind::Interface, &name, node, vec![], refs, body, true);
+                    self.emit_symbol(
+                        stack,
+                        NodeKind::Interface,
+                        &name,
+                        node,
+                        vec![],
+                        refs,
+                        vec![],
+                        body,
+                        true,
+                    );
                 } else {
-                    self.walk_children(node);
+                    self.push_children(stack, node);
                 }
             }
             "method_definition" => {
@@ -173,9 +232,9 @@ impl<'a> Walker<'a> {
                     } else {
                         NodeKind::Function
                     };
-                    self.with_symbol_writes(kind, &name, node, defines, refs, writes, body, false);
+                    self.emit_symbol(stack, kind, &name, node, defines, refs, writes, body, false);
                 } else {
-                    self.walk_children(node);
+                    self.push_children(stack, node);
                 }
             }
             "method_signature" => {
@@ -183,7 +242,17 @@ impl<'a> Walker<'a> {
                 if let Some(name) = field_text(node, "name", self.src) {
                     let params = node.child_by_field_name("parameters");
                     let (defines, _, _) = self.fn_body_info(params, None);
-                    self.with_symbol(NodeKind::Method, &name, node, defines, vec![], None, false);
+                    self.emit_symbol(
+                        stack,
+                        NodeKind::Method,
+                        &name,
+                        node,
+                        defines,
+                        vec![],
+                        vec![],
+                        None,
+                        false,
+                    );
                 }
             }
             "enum_declaration" => {
@@ -193,18 +262,38 @@ impl<'a> Walker<'a> {
                 if let Some(name) = field_text(node, "name", self.src) {
                     let body = node.child_by_field_name("body");
                     let refs = self.body_refs(body);
-                    self.with_symbol(NodeKind::Class, &name, node, vec![], refs, None, false);
+                    self.emit_symbol(
+                        stack,
+                        NodeKind::Class,
+                        &name,
+                        node,
+                        vec![],
+                        refs,
+                        vec![],
+                        None,
+                        false,
+                    );
                 } else {
-                    self.walk_children(node);
+                    self.push_children(stack, node);
                 }
             }
             "type_alias_declaration" => {
                 if let Some(name) = field_text(node, "name", self.src) {
                     let value = node.child_by_field_name("value");
                     let refs = self.body_refs(value);
-                    self.with_symbol(NodeKind::Class, &name, node, vec![], refs, None, false);
+                    self.emit_symbol(
+                        stack,
+                        NodeKind::Class,
+                        &name,
+                        node,
+                        vec![],
+                        refs,
+                        vec![],
+                        None,
+                        false,
+                    );
                 } else {
-                    self.walk_children(node);
+                    self.push_children(stack, node);
                 }
             }
             "lexical_declaration" => {
@@ -212,63 +301,70 @@ impl<'a> Walker<'a> {
                 if self.enclosing.is_empty() {
                     for child in children(node) {
                         if child.kind() == "variable_declarator" {
-                            self.handle_declarator(child);
+                            self.handle_declarator(child, stack);
                         }
                     }
                 } else {
-                    self.walk_children(node);
+                    self.push_children(stack, node);
                 }
             }
             "import_statement" => self.handle_import(node),
             "call_expression" => {
                 self.handle_call(node, "function");
-                self.walk_children(node);
+                self.push_children(stack, node);
             }
             // `new Server()` is a dependency on the constructor; record it
             // as a call so blast-radius analysis sees it.
             "new_expression" => {
                 self.handle_call(node, "constructor");
-                self.walk_children(node);
+                self.push_children(stack, node);
             }
-            "export_statement" => self.walk_children(node),
+            "export_statement" => self.push_children(stack, node),
             // `namespace N { ... }` scopes ids like a module; not a symbol itself.
             "module" => {
                 if let Some(name) = field_text(node, "name", self.src) {
                     self.path.push(name);
+                    stack.push(Step::LeavePath);
                     if let Some(body) = node.child_by_field_name("body") {
-                        self.walk_children(body);
+                        self.push_children(stack, body);
                     }
-                    self.path.pop();
                 } else {
-                    self.walk_children(node);
+                    self.push_children(stack, node);
                 }
             }
-            _ => self.walk_children(node),
+            _ => self.push_children(stack, node),
         }
     }
 
-    fn walk_children(&mut self, node: Node) {
-        for child in children(node) {
-            self.walk(child);
-        }
-    }
-
+    /// Emit a symbol and schedule its body's visit: the scope the
+    /// recursive walker opened with `with_symbol` is opened here,
+    /// and the matching `LeaveSymbol` step (pushed *before* the
+    /// body's children, so it pops after them) closes it.
     #[allow(clippy::too_many_arguments)]
-    fn with_symbol(
+    fn emit_symbol<'t>(
         &mut self,
+        stack: &mut Vec<Step<'t>>,
         kind: NodeKind,
         name: &str,
-        node: Node,
+        node: Node<'t>,
         defines: Vec<String>,
         refs: Vec<String>,
-        body: Option<Node>,
+        writes: Vec<String>,
+        body: Option<Node<'t>>,
         assoc_scope: bool,
     ) {
-        self.with_symbol_writes(kind, name, node, defines, refs, Vec::new(), body, assoc_scope);
+        let saved = self.begin_symbol(kind, name, node, defines, refs, writes, assoc_scope);
+        stack.push(Step::LeaveSymbol { in_assoc: saved });
+        if let Some(b) = body {
+            self.push_children(stack, b);
+        }
     }
 
+    /// Push the symbol record and open its scope (path + enclosing
+    /// + assoc flag). Returns the saved `in_assoc` for the
+    ///   `LeaveSymbol` step that closes the scope.
     #[allow(clippy::too_many_arguments)]
-    fn with_symbol_writes(
+    fn begin_symbol(
         &mut self,
         kind: NodeKind,
         name: &str,
@@ -276,9 +372,8 @@ impl<'a> Walker<'a> {
         defines: Vec<String>,
         refs: Vec<String>,
         writes: Vec<String>,
-        body: Option<Node>,
         assoc_scope: bool,
-    ) {
+    ) -> bool {
         self.path.push(name.to_string());
         let id = format!("{}::{}", self.module_id, self.path.join("::"));
         let (end_line, signature) = measured_fields(node, self.src);
@@ -308,12 +403,7 @@ impl<'a> Walker<'a> {
         if assoc_scope {
             self.in_assoc = true;
         }
-        if let Some(b) = body {
-            self.walk_children(b);
-        }
-        self.in_assoc = saved;
-        self.enclosing.pop();
-        self.path.pop();
+        saved
     }
 
     /// Count decision points in a body subtree — the TypeScript /
@@ -324,50 +414,67 @@ impl<'a> Walker<'a> {
     /// are *not* declarations — they are descended into, their
     /// branches counting toward the enclosing symbol.
     fn count_decisions(&self, node: Node) -> u32 {
-        match node.kind() {
-            "function_declaration" | "generator_function_declaration" | "class_declaration"
-            | "abstract_class_declaration" | "interface_declaration" | "method_definition"
-            | "method_signature" | "enum_declaration" | "type_alias_declaration" => return 0,
-            _ => {}
-        }
-        let mut n = match node.kind() {
-            "if_statement" | "for_statement" | "for_in_statement" | "while_statement"
-            | "do_statement" | "ternary_expression" | "catch_clause" => 1,
-            "switch_statement" => {
-                // Each `case` is one decision against the implicit
-                // fall-through path; `default` is that path and is
-                // not counted. Cases are the switch_body's children.
-                children(node)
-                    .into_iter()
-                    .filter(|c| c.kind() == "switch_body")
-                    .flat_map(children)
-                    .filter(|c| c.kind() == "switch_case")
-                    .count() as u32
+        // Iterative form of the recursive count (see the Step note
+        // on the walker): the count is a sum, so visit order does
+        // not matter; the prune rule — a nested declaration
+        // contributes 0 and is not descended into — is applied when
+        // a node is popped, exactly where the recursion applied it
+        // on entry. A deeply nested expression (a generated
+        // string-concat chain) now costs heap, not call stack.
+        let mut n = 0u32;
+        let mut stack = vec![node];
+        while let Some(node) = stack.pop() {
+            match node.kind() {
+                "function_declaration"
+                | "generator_function_declaration"
+                | "class_declaration"
+                | "abstract_class_declaration"
+                | "interface_declaration"
+                | "method_definition"
+                | "method_signature"
+                | "enum_declaration"
+                | "type_alias_declaration" => continue,
+                _ => {}
             }
-            "binary_expression" => {
-                match node
-                    .child_by_field_name("operator")
-                    .and_then(|op| text_of(op, self.src))
-                {
-                    Some("&&") | Some("||") | Some("??") => 1,
-                    _ => 0,
+            n += match node.kind() {
+                "if_statement" | "for_statement" | "for_in_statement" | "while_statement"
+                | "do_statement" | "ternary_expression" | "catch_clause" => 1,
+                "switch_statement" => {
+                    // Each `case` is one decision against the implicit
+                    // fall-through path; `default` is that path and is
+                    // not counted. Cases are the switch_body's children.
+                    children(node)
+                        .into_iter()
+                        .filter(|c| c.kind() == "switch_body")
+                        .flat_map(children)
+                        .filter(|c| c.kind() == "switch_case")
+                        .count() as u32
                 }
+                "binary_expression" => {
+                    match node
+                        .child_by_field_name("operator")
+                        .and_then(|op| text_of(op, self.src))
+                    {
+                        Some("&&") | Some("||") | Some("??") => 1,
+                        _ => 0,
+                    }
+                }
+                _ => 0,
+            };
+            for child in children(node) {
+                stack.push(child);
             }
-            _ => 0,
-        };
-        for child in children(node) {
-            n += self.count_decisions(child);
         }
         n
     }
 
-    fn handle_declarator(&mut self, node: Node) {
+    fn handle_declarator<'t>(&mut self, node: Node<'t>, stack: &mut Vec<Step<'t>>) {
         let Some(name_node) = node.child_by_field_name("name") else {
             return;
         };
         if name_node.kind() != "identifier" {
             // Destructuring at top level: still walk the value for calls.
-            self.walk_children(node);
+            self.push_children(stack, node);
             return;
         }
         let name = match text_of(name_node, self.src) {
@@ -376,7 +483,17 @@ impl<'a> Walker<'a> {
         };
         let value = node.child_by_field_name("value");
         let refs = self.body_refs(value);
-        self.with_symbol(NodeKind::Variable, &name, node, vec![], refs, value, false);
+        self.emit_symbol(
+            stack,
+            NodeKind::Variable,
+            &name,
+            node,
+            vec![],
+            refs,
+            vec![],
+            value,
+            false,
+        );
     }
 
     /// Heritage clauses of a class/interface declaration become
@@ -502,68 +619,101 @@ impl<'a> Walker<'a> {
     /// identifiers into `refs`. Nested declarations are skipped: their
     /// bindings belong to their own symbols. JSX subtrees are skipped to
     /// keep tag names (`div`, `span`) out of refs.
-    fn scan_w(&self, node: Node, defines: &mut Vec<String>, refs: &mut Vec<String>, writes: &mut Vec<String>) {
-        match node.kind() {
-            "function_declaration" | "generator_function_declaration" | "class_declaration"
-            | "abstract_class_declaration" | "interface_declaration" | "import_statement"
-            | "method_definition" | "method_signature" => return,
-            "jsx_element" | "jsx_self_closing_element" | "jsx_fragment" => return,
-            "variable_declarator" => {
-                if let Some(n) = node.child_by_field_name("name") {
+    ///
+    /// Iterative, on an explicit stack (see the Step note on the
+    /// walker): children are pushed in reverse so pops reproduce
+    /// the recursive pre-order exactly — `finalize` dedupes but
+    /// does not sort, so first-occurrence order is output.
+    fn scan_w<'t>(
+        &self,
+        root: Node<'t>,
+        defines: &mut Vec<String>,
+        refs: &mut Vec<String>,
+        writes: &mut Vec<String>,
+    ) {
+        enum Act<'t> {
+            Scan(Node<'t>),
+            Pattern(Node<'t>),
+        }
+        let mut stack = vec![Act::Scan(root)];
+        while let Some(act) = stack.pop() {
+            let node = match act {
+                Act::Pattern(n) => {
                     self.collect_pattern(n, defines);
+                    continue;
                 }
-                if let Some(v) = node.child_by_field_name("value") {
-                    self.scan_w(v, defines, refs, writes);
-                }
-                return;
-            }
-            "arrow_function" => {
-                for child in children(node) {
-                    if child.kind() == "formal_parameters" {
-                        for p in children(child) {
-                            self.collect_pattern(p, defines);
-                        }
-                    } else {
-                        self.scan_w(child, defines, refs, writes);
+                Act::Scan(n) => n,
+            };
+            match node.kind() {
+                "function_declaration"
+                | "generator_function_declaration"
+                | "class_declaration"
+                | "abstract_class_declaration"
+                | "interface_declaration"
+                | "import_statement"
+                | "method_definition"
+                | "method_signature" => continue,
+                "jsx_element" | "jsx_self_closing_element" | "jsx_fragment" => continue,
+                "variable_declarator" => {
+                    // The recursion collected the pattern before
+                    // scanning the value; the value is pushed first
+                    // so the pattern pops first.
+                    if let Some(v) = node.child_by_field_name("value") {
+                        stack.push(Act::Scan(v));
                     }
+                    if let Some(n) = node.child_by_field_name("name") {
+                        stack.push(Act::Pattern(n));
+                    }
+                    continue;
                 }
-                return;
-            }
-            "assignment_expression" => {
-                // `target = value` / `target op= value`: the target is
-                // written, the value side is read.
-                if let Some(left) = node.child_by_field_name("left") {
-                    match left.kind() {
-                        "identifier" => {
-                            if let Some(t) = text_of(left, self.src) {
-                                writes.push(t.to_string());
+                "arrow_function" => {
+                    for child in children(node).into_iter().rev() {
+                        if child.kind() == "formal_parameters" {
+                            for p in children(child).into_iter().rev() {
+                                stack.push(Act::Pattern(p));
                             }
+                        } else {
+                            stack.push(Act::Scan(child));
                         }
-                        "member_expression" => {
-                            if let Some(prop) = left.child_by_field_name("property") {
-                                if let Some(t) = text_of(prop, self.src) {
+                    }
+                    continue;
+                }
+                "assignment_expression" => {
+                    // `target = value` / `target op= value`: the target is
+                    // written, the value side is read.
+                    if let Some(left) = node.child_by_field_name("left") {
+                        match left.kind() {
+                            "identifier" => {
+                                if let Some(t) = text_of(left, self.src) {
                                     writes.push(t.to_string());
                                 }
                             }
+                            "member_expression" => {
+                                if let Some(prop) = left.child_by_field_name("property") {
+                                    if let Some(t) = text_of(prop, self.src) {
+                                        writes.push(t.to_string());
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
+                    if let Some(right) = node.child_by_field_name("right") {
+                        stack.push(Act::Scan(right));
+                    }
+                    continue;
                 }
-                if let Some(right) = node.child_by_field_name("right") {
-                    self.scan_w(right, defines, refs, writes);
+                "identifier" => {
+                    if let Some(t) = text_of(node, self.src) {
+                        refs.push(t.to_string());
+                    }
+                    continue;
                 }
-                return;
+                _ => {}
             }
-            "identifier" => {
-                if let Some(t) = text_of(node, self.src) {
-                    refs.push(t.to_string());
-                }
-                return;
+            for child in children(node).into_iter().rev() {
+                stack.push(Act::Scan(child));
             }
-            _ => {}
-        }
-        for child in children(node) {
-            self.scan_w(child, defines, refs, writes);
         }
     }
 
@@ -693,8 +843,7 @@ fn unquote(s: &str) -> String {
     let t = s.trim();
     let b = t.as_bytes();
     if t.len() >= 2
-        && ((b[0] == b'\'' && b[t.len() - 1] == b'\'')
-            || (b[0] == b'"' && b[t.len() - 1] == b'"'))
+        && ((b[0] == b'\'' && b[t.len() - 1] == b'\'') || (b[0] == b'"' && b[t.len() - 1] == b'"'))
     {
         t[1..t.len() - 1].to_string()
     } else {
@@ -737,6 +886,23 @@ export function boot(): void {
 
     fn ids(fs: &FileSymbols) -> Vec<(&str, NodeKind)> {
         fs.symbols.iter().map(|s| (s.id.as_str(), s.kind)).collect()
+    }
+
+    #[test]
+    fn ts_deep_expression_chain_does_not_overflow() {
+        // Regression (E-1, found by the 2026-11-18 estate sweep):
+        // a generated module whose value is one expression nested
+        // tens of thousands of levels deep — a base64 blob written
+        // as `"…" + "…" + …` — overflowed the recursive walker's
+        // call stack and aborted the whole index. The walker is
+        // iterative now; the chain must extract to the one variable.
+        let chain = vec!["\"AAAA\""; 50_000].join(" + ");
+        let src = format!("export const BLOB = {chain};\n");
+        let fs = extract_file("mypkg", Path::new("src/blob.ts"), &src).unwrap();
+        assert_eq!(
+            ids(&fs),
+            vec![("mypkg::src::blob::BLOB", NodeKind::Variable)]
+        );
     }
 
     #[test]
@@ -790,11 +956,23 @@ export function boot(): void {
             .iter()
             .map(|c| (c.from_id.as_str(), c.to_name.as_str()))
             .collect();
-        assert!(calls.contains(&("mypkg::src::app::Server::start", "helper")), "{calls:?}");
-        assert!(calls.contains(&("mypkg::src::app::Server::start", "console.log")), "{calls:?}");
+        assert!(
+            calls.contains(&("mypkg::src::app::Server::start", "helper")),
+            "{calls:?}"
+        );
+        assert!(
+            calls.contains(&("mypkg::src::app::Server::start", "console.log")),
+            "{calls:?}"
+        );
         // `new Server()` is recorded as a constructor call.
-        assert!(calls.contains(&("mypkg::src::app::boot", "Server")), "{calls:?}");
-        assert!(calls.contains(&("mypkg::src::app::boot", "s.start")), "{calls:?}");
+        assert!(
+            calls.contains(&("mypkg::src::app::boot", "Server")),
+            "{calls:?}"
+        );
+        assert!(
+            calls.contains(&("mypkg::src::app::boot", "s.start")),
+            "{calls:?}"
+        );
     }
 
     #[test]
@@ -802,16 +980,33 @@ export function boot(): void {
         let fs = extract_file("mypkg", Path::new("src/app.ts"), SRC).unwrap();
         let by_id = |id: &str| fs.symbols.iter().find(|s| s.id == id).unwrap();
         let start = by_id("mypkg::src::app::Server::start");
-        assert!(start.defines.contains(&"port".to_string()), "{:?}", start.defines);
-        assert!(start.defines.contains(&"addr".to_string()), "{:?}", start.defines);
-        assert!(start.refs.contains(&"helper".to_string()), "{:?}", start.refs);
-        assert!(start.refs.contains(&"console".to_string()), "{:?}", start.refs);
+        assert!(
+            start.defines.contains(&"port".to_string()),
+            "{:?}",
+            start.defines
+        );
+        assert!(
+            start.defines.contains(&"addr".to_string()),
+            "{:?}",
+            start.defines
+        );
+        assert!(
+            start.refs.contains(&"helper".to_string()),
+            "{:?}",
+            start.refs
+        );
+        assert!(
+            start.refs.contains(&"console".to_string()),
+            "{:?}",
+            start.refs
+        );
         assert!(!start.refs.contains(&"addr".to_string()));
     }
 
     #[test]
     fn ts_top_level_const_is_variable() {
-        let src = "export const VERSION = '1.0';\n\nexport interface Config {\n    port: number;\n}\n";
+        let src =
+            "export const VERSION = '1.0';\n\nexport interface Config {\n    port: number;\n}\n";
         let fs = extract_file("mypkg", Path::new("src/cfg.ts"), src).unwrap();
         assert_eq!(
             ids(&fs),
@@ -836,9 +1031,18 @@ export function boot(): void {
                 )
             })
             .collect();
-        assert!(tos.contains(&("mypkg::src::shared::a", vec!["a"])), "{tos:?}");
-        assert!(tos.contains(&("mypkg::src::sub::deep", vec!["b"])), "{tos:?}");
-        assert!(tos.contains(&("mypkg::src::sub::def", vec!["def"])), "{tos:?}");
+        assert!(
+            tos.contains(&("mypkg::src::shared::a", vec!["a"])),
+            "{tos:?}"
+        );
+        assert!(
+            tos.contains(&("mypkg::src::sub::deep", vec!["b"])),
+            "{tos:?}"
+        );
+        assert!(
+            tos.contains(&("mypkg::src::sub::def", vec!["def"])),
+            "{tos:?}"
+        );
     }
 
     #[test]
@@ -867,13 +1071,28 @@ function bump() { counter = 2; }
             "class implements -> implements: {:?}",
             fs.heritage
         );
-        assert!(fs.symbols.iter().any(|x| x.label == "Color" && x.kind == NodeKind::Class),
-            "enum extracted");
-        assert!(fs.symbols.iter().any(|x| x.label == "Alias" && x.kind == NodeKind::Class),
-            "type alias extracted");
-        let bump = fs.symbols.iter().find(|x| x.label == "bump").expect("bump fn");
-        assert!(bump.writes.contains(&"counter".to_string()),
-            "assignment target recorded as a write: {:?}", bump.writes);
+        assert!(
+            fs.symbols
+                .iter()
+                .any(|x| x.label == "Color" && x.kind == NodeKind::Class),
+            "enum extracted"
+        );
+        assert!(
+            fs.symbols
+                .iter()
+                .any(|x| x.label == "Alias" && x.kind == NodeKind::Class),
+            "type alias extracted"
+        );
+        let bump = fs
+            .symbols
+            .iter()
+            .find(|x| x.label == "bump")
+            .expect("bump fn");
+        assert!(
+            bump.writes.contains(&"counter".to_string()),
+            "assignment target recorded as a write: {:?}",
+            bump.writes
+        );
     }
 
     #[test]
@@ -949,11 +1168,19 @@ export const LIMIT = 100;
             plain.signature.as_deref(),
             Some("function plain(x: number): number")
         );
-        assert_eq!(plain.decisions, Some(0), "branch-free body counts zero decisions");
+        assert_eq!(
+            plain.decisions,
+            Some(0),
+            "branch-free body counts zero decisions"
+        );
 
         // if(1) + &&(1) + else-if(1) + for(1) + switch 2 cases(2) = 6.
         let branchy = measured(&fs, "branchy");
-        assert_eq!((branchy.line, branchy.end_line), (5, Some(23)), "branchy span");
+        assert_eq!(
+            (branchy.line, branchy.end_line),
+            (5, Some(23)),
+            "branchy span"
+        );
         assert_eq!(branchy.decisions, Some(6), "hand-counted decision points");
     }
 
@@ -963,7 +1190,11 @@ export const LIMIT = 100;
 
         let counter = measured(&fs, "Counter");
         assert_eq!(counter.kind, NodeKind::Class);
-        assert_eq!((counter.line, counter.end_line), (25, Some(36)), "class span");
+        assert_eq!(
+            (counter.line, counter.end_line),
+            (25, Some(36)),
+            "class span"
+        );
         assert_eq!(counter.signature.as_deref(), Some("class Counter"));
         assert_eq!(counter.decisions, None, "types carry no decision count");
 
@@ -1006,5 +1237,4 @@ export const LIMIT = 100;
         assert_eq!(f.signature.as_deref(), Some("function safeParse(text)"));
         assert_eq!((f.line, f.end_line), (1, Some(7)), "span");
     }
-
 }
