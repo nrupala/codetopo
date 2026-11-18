@@ -45,8 +45,10 @@ every call is routed, metered, and receipted.
 
 Every GitHub release ships prebuilt `codetopo-mcp` (the MCP server) and
 `codetopo-acp` (the ACP agent) for Linux, macOS, and Windows — x86_64
-and ARM64 — each with a `.sha256` file beside it. No Rust toolchain, no
-source build:
+and ARM64 — each with a `.sha256` file beside it. From the 0.9.2
+release, the prebuilt set also includes `codetopo` (the CLI) and
+`codetopo-server` (the HTTP API) on the same five platforms, packaged
+and attested the same way. No Rust toolchain, no source build:
 
 ```sh
 # Linux x86_64 shown — pick your platform's asset on the releases page:
