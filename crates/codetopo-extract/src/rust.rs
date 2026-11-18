@@ -361,7 +361,7 @@ impl<'a> Walker<'a> {
 
     /// Push the symbol record and open its scope (path + enclosing
     /// + assoc flag). Returns the saved `in_assoc` for the
-    /// `LeaveSymbol` step that closes the scope.
+    ///   `LeaveSymbol` step that closes the scope.
     #[allow(clippy::too_many_arguments)]
     fn begin_symbol(
         &mut self,
