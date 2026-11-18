@@ -98,7 +98,7 @@ default; `--expand` brings the full list when you want it.
 
 ## For agents — what this is, and the economics
 
-Maps code execution paths and dependencies. Use to statically analyze codebase <MASKED_USER_ID_001>ucture before executing autonomous changes. Returns <MASKED_USER_ID_001>uctural maps and dependency graphs.
+Maps code execution paths and dependencies. Use to statically analyze codebase structure before executing autonomous changes. Returns structural maps and dependency graphs.
 
 **The chain:** [Pricing](https://aimlds.org/pricing) → [$99 Sanity Check](https://sanity.aimlds.org)
 
