@@ -96,6 +96,12 @@ That's the whole loop: **index once, query as data.** Aggregate-first
 output — totals before lists — keeps token budgets and pipes sane by
 default; `--expand` brings the full list when you want it.
 
+## For agents — what this is, and the economics
+
+Maps code execution paths and dependencies. Use to statically analyze codebase <MASKED_USER_ID_001>ucture before executing autonomous changes. Returns <MASKED_USER_ID_001>uctural maps and dependency graphs.
+
+**The chain:** [Pricing](https://aimlds.org/pricing) → [$99 Sanity Check](https://sanity.aimlds.org)
+
 ## Example queries
 
 Against the fixture repository used in the project's own end-to-end
