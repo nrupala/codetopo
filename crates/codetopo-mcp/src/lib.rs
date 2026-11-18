@@ -19,8 +19,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use codetopo_cli::{
-    describe_schema, index_repo, load_graph_from_db, node_kind_name, require_node, CliError,
-    all_edge_kinds, all_node_kinds,
+    all_edge_kinds, all_node_kinds, describe_schema, index_repo, load_graph_from_db,
+    node_kind_name, require_node, CliError,
 };
 use codetopo_core::snapshot::Snapshot;
 use codetopo_store::Store;
@@ -393,6 +393,7 @@ pub fn tool_catalog() -> Vec<Value> {
                 "properties": {
                     "db_path": {"type": "string", "description": "Path to the index database."},
                     "layout": {"type": "string", "enum": ["layered", "force"], "description": "Which layout to compute. Default: layered."},
+                    "scope": {"type": "string", "enum": ["full", "structure"], "description": "Which node universe to lay out: 'full' (default, every node) or 'structure' (structural kinds only — package/file/module/class/interface/doc — with symbols rolled up to their nearest structural ancestor; layered layout only). A structure answer records scope and the full graph's node count in the object."},
                 },
                 "required": ["db_path"],
             },
@@ -675,7 +676,8 @@ fn tool_snapshot(args: &Value) -> Result<Value, ToolError> {
     let graph = store.load_graph().map_err(store_failure)?;
     let audit = store.load_audit().map_err(store_failure)?;
     let diagnostics = store.load_diagnostics().map_err(store_failure)?;
-    let snapshot = Snapshot::from_graph_with_diagnostics(&graph, &audit.snapshot_entries(), &diagnostics);
+    let snapshot =
+        Snapshot::from_graph_with_diagnostics(&graph, &audit.snapshot_entries(), &diagnostics);
     serde_json::to_value(snapshot).map_err(|err| ToolError::MissingParam(err.to_string()))
 }
 
@@ -799,7 +801,8 @@ fn tool_render(args: &Value) -> Result<Value, ToolError> {
         .get("layout")
         .and_then(Value::as_str)
         .unwrap_or("layered");
-    codetopo_cli::render_value(&graph, layout).map_err(ToolError::MissingParam)
+    let scope = args.get("scope").and_then(Value::as_str).unwrap_or("full");
+    codetopo_cli::render_value_scoped(&graph, layout, scope).map_err(ToolError::MissingParam)
 }
 
 /// `codetopo_history` — change-history measurements, in the shared
@@ -809,18 +812,11 @@ fn tool_render(args: &Value) -> Result<Value, ToolError> {
 /// history) the answer is the unmeasured report with the reason.
 fn tool_history(args: &Value) -> Result<Value, ToolError> {
     let graph = open_graph(args)?;
-    let min_support = args
-        .get("min_support")
-        .and_then(Value::as_u64)
-        .unwrap_or(2) as usize;
+    let min_support = args.get("min_support").and_then(Value::as_u64).unwrap_or(2) as usize;
     let (input, reason) = match optional_str(args, "repo_path")? {
         Some(repo) => {
             let path = PathBuf::from(repo);
-            match codetopo_cli::repo_history_input(
-                &graph,
-                &path,
-                optional_str(args, "since")?,
-            ) {
+            match codetopo_cli::repo_history_input(&graph, &path, optional_str(args, "since")?) {
                 Ok(input) => (Some(input), String::new()),
                 Err(reason) => (None, reason),
             }
@@ -832,7 +828,12 @@ fn tool_history(args: &Value) -> Result<Value, ToolError> {
                 .to_string(),
         ),
     };
-    Ok(codetopo_cli::history_value(&graph, input, min_support, &reason))
+    Ok(codetopo_cli::history_value(
+        &graph,
+        input,
+        min_support,
+        &reason,
+    ))
 }
 
 /// `codetopo_diagnostics` — the diagnostics recorded when the index was
@@ -1471,7 +1472,10 @@ mod tests {
 
         // get_symbol returns the dossier (the node under `node`, plus its
         // incident edges and counts); unknown ids are unknown_node
-        let fetched = result_of("codetopo_get_symbol", &args(&db_path, json!({"node": node})));
+        let fetched = result_of(
+            "codetopo_get_symbol",
+            &args(&db_path, json!({"node": node})),
+        );
         assert_eq!(fetched["node"]["id"], node);
         let err = call_tool(
             "codetopo_get_symbol",
@@ -1549,7 +1553,10 @@ mod tests {
                     .expect("variant tag")
             })
             .collect();
-        assert!(kinds.contains(&"Cycle"), "planted cycle reported: {kinds:?}");
+        assert!(
+            kinds.contains(&"Cycle"),
+            "planted cycle reported: {kinds:?}"
+        );
         assert!(
             kinds.contains(&"MultiDefinition"),
             "planted duplicate reported: {kinds:?}"
@@ -1651,7 +1658,10 @@ mod tests {
         assert_eq!(via_tool["hotspots"].as_array().expect("hotspots").len(), 0);
         assert_eq!(via_tool["coupling"].as_array().expect("coupling").len(), 0);
         assert!(
-            via_tool["methods"]["hotspot"].as_str().expect("method").contains("Tornhill"),
+            via_tool["methods"]["hotspot"]
+                .as_str()
+                .expect("method")
+                .contains("Tornhill"),
             "the methods travel with the answer"
         );
     }
@@ -1693,7 +1703,10 @@ mod tests {
             "MCP topo_sort == CLI topo_sort for the same database"
         );
         assert!(
-            via_tool["method"].as_str().expect("method").contains("Kahn"),
+            via_tool["method"]
+                .as_str()
+                .expect("method")
+                .contains("Kahn"),
             "the method travels with the answer"
         );
     }
@@ -1709,7 +1722,10 @@ mod tests {
             "MCP communities == CLI communities for the same database"
         );
         assert!(
-            via_tool["method"].as_str().expect("method").contains("Leiden"),
+            via_tool["method"]
+                .as_str()
+                .expect("method")
+                .contains("Leiden"),
             "the method travels with the numbers"
         );
     }
@@ -1725,7 +1741,10 @@ mod tests {
             "MCP metrics == CLI metrics for the same database"
         );
         assert!(
-            via_tool["methods"]["cbo"].as_str().expect("method").contains("Chidamber"),
+            via_tool["methods"]["cbo"]
+                .as_str()
+                .expect("method")
+                .contains("Chidamber"),
             "the methods travel with the numbers"
         );
     }
@@ -1777,7 +1796,10 @@ mod tests {
                 "after_snapshot": snap2.display().to_string(),
             }),
         );
-        assert_eq!(via_snaps, expected, "MCP diff (snapshot pair) == shared diff");
+        assert_eq!(
+            via_snaps, expected,
+            "MCP diff (snapshot pair) == shared diff"
+        );
 
         // Exactly one source per side: neither and both are refused.
         assert!(call_tool("codetopo_diff", &json!({})).is_err());
@@ -1797,8 +1819,10 @@ mod tests {
         let (_dir, db_path) = fixture_index();
         let graph = load_graph_from_db(&db_path).expect("graph loads");
         for node in graph.nodes() {
-            let fetched =
-                result_of("codetopo_get_symbol", &args(&db_path, json!({"node": node.id})));
+            let fetched = result_of(
+                "codetopo_get_symbol",
+                &args(&db_path, json!({"node": node.id})),
+            );
             let core = serde_json::to_value(graph.dossier(&node.id).expect("dossier"))
                 .expect("dossier serializes");
             assert_eq!(fetched, core, "dossier parity for {}", node.id);

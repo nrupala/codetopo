@@ -449,6 +449,14 @@
               "force"
             ],
             "type": "string"
+          },
+          "scope": {
+            "description": "Which node universe to lay out: 'full' (default, every node) or 'structure' (structural kinds only \u2014 package/file/module/class/interface/doc \u2014 with symbols rolled up to their nearest structural ancestor; layered layout only). A structure answer records scope and the full graph's node count in the object.",
+            "enum": [
+              "full",
+              "structure"
+            ],
+            "type": "string"
           }
         },
         "required": [

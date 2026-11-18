@@ -129,7 +129,11 @@ impl AppState {
 /// * Expired record: refused the same way, and cleaned up on the spot —
 ///   the record is dropped and the database file deleted — so expiry is
 ///   enforced even between the startup sweeps in `Config::prepare`.
-pub(crate) fn enforce_tenancy(state: &AppState, index_id: &str, key: &KeyId) -> Result<(), ApiError> {
+pub(crate) fn enforce_tenancy(
+    state: &AppState,
+    index_id: &str,
+    key: &KeyId,
+) -> Result<(), ApiError> {
     let Some(record) = state.tenancy.lookup(index_id)? else {
         if crate::tenancy::ownerless_readable(
             state.config.deny_ownerless_indexes,
@@ -327,7 +331,11 @@ fn non_empty(field: Option<String>) -> Option<String> {
 
 /// Reads a request body up to `limit`, mapping any failure (including
 /// passing the limit) to `invalid_body` with the caller's wording.
-async fn read_body(request: Request, limit: usize, failure: &str) -> Result<axum::body::Bytes, ApiError> {
+async fn read_body(
+    request: Request,
+    limit: usize,
+    failure: &str,
+) -> Result<axum::body::Bytes, ApiError> {
     axum::body::to_bytes(request.into_body(), limit)
         .await
         .map_err(|_| ApiError::invalid_body(failure))
@@ -478,8 +486,7 @@ async fn index(
                 })
                 .await
                 .map_err(|err| ApiError::internal(format!("clone task failed: {err}")))??;
-                let package =
-                    non_empty(body.package).unwrap_or_else(|| validated.package_name());
+                let package = non_empty(body.package).unwrap_or_else(|| validated.package_name());
                 (workdir.clone(), package, Some(workdir))
             }
         }
@@ -491,9 +498,7 @@ async fn index(
         )
         .await?;
         let kind = ingest::archive_kind(content_type.as_deref(), &bytes).ok_or_else(|| {
-            ApiError::invalid_body(
-                "unrecognized archive body: send a .zip or .tar.gz archive",
-            )
+            ApiError::invalid_body("unrecognized archive body: send a .zip or .tar.gz archive")
         })?;
         let workdir = state.config.index_workdir_path(&index_id);
         let extract_dir = workdir.clone();
@@ -546,7 +551,9 @@ async fn index(
             if let Some(workdir) = &workdir {
                 let _ = std::fs::remove_dir_all(workdir);
             }
-            return Err(ApiError::internal(format!("cannot index repository: {err}")));
+            return Err(ApiError::internal(format!(
+                "cannot index repository: {err}"
+            )));
         }
     };
 
@@ -687,7 +694,15 @@ async fn descendants(
     Query(query): Query<ClosureQuery>,
 ) -> Result<Json<ClosureResponse>, ApiError> {
     reject_unknown_params(raw_query.as_deref(), "/descendants", &CLOSURE_PARAMS)?;
-    closure(state, &key, index_id, query, "descendants", Direction::Downstream).await
+    closure(
+        state,
+        &key,
+        index_id,
+        query,
+        "descendants",
+        Direction::Downstream,
+    )
+    .await
 }
 
 /// `GET /v1/graphs/{id}/ancestors?node=&expand=&limit=`.
@@ -701,7 +716,15 @@ async fn ancestors(
     Query(query): Query<ClosureQuery>,
 ) -> Result<Json<ClosureResponse>, ApiError> {
     reject_unknown_params(raw_query.as_deref(), "/ancestors", &CLOSURE_PARAMS)?;
-    closure(state, &key, index_id, query, "ancestors", Direction::Upstream).await
+    closure(
+        state,
+        &key,
+        index_id,
+        query,
+        "ancestors",
+        Direction::Upstream,
+    )
+    .await
 }
 
 /// `GET /v1/graphs/{id}/blast-radius?node=&expand=&limit=`.
@@ -1056,7 +1079,10 @@ async fn neighborhood(
     let depth: u32 = match query.depth.as_deref().map(str::trim) {
         None | Some("") => 1,
         Some(raw) => raw.parse().map_err(|_| {
-            ApiError::invalid_param("depth", &format!("expected a non-negative integer, got '{raw}'"))
+            ApiError::invalid_param(
+                "depth",
+                &format!("expected a non-negative integer, got '{raw}'"),
+            )
         })?,
     };
     let db = state.db_path(&index_id);
@@ -1414,11 +1440,15 @@ pub struct RenderQuery {
     /// `json` (the spec object, default) or `svg` (the rendered
     /// drawing, `image/svg+xml`).
     pub format: Option<String>,
+    /// `full` (default — every node) or `structure` (the
+    /// structural skeleton only, symbols rolled up; layered only).
+    pub scope: Option<String>,
 }
 
 /// `GET /v1/graphs/{id}/render` — the graph's layout specification
-/// (the shared [`codetopo_cli::render_value`] object), or with
-/// `format=svg` the rendered drawing of that spec. When the force
+/// (the shared [`codetopo_cli::render_value_scoped`] object), or with
+/// `format=svg` the rendered drawing of that spec. `scope=structure`
+/// asks for the structural skeleton (layered only). When the force
 /// layout declines above its ceilings, the answer is the stated
 /// decline object in either format — never a partial drawing.
 async fn render(
@@ -1429,7 +1459,11 @@ async fn render(
     Query(query): Query<RenderQuery>,
 ) -> Result<axum::response::Response, ApiError> {
     use axum::response::IntoResponse;
-    reject_unknown_params(raw_query.as_deref(), "/render", &["layout", "format"])?;
+    reject_unknown_params(
+        raw_query.as_deref(),
+        "/render",
+        &["layout", "format", "scope"],
+    )?;
     enforce_tenancy(&state, &index_id, &key)?;
     let layout_name = query.layout.as_deref().unwrap_or("layered");
     let format = query.format.as_deref().unwrap_or("json");
@@ -1439,14 +1473,26 @@ async fn render(
             message: format!("format must be 'json' or 'svg', got '{format}'"),
         });
     }
+    let scope_name = query.scope.as_deref().unwrap_or("full");
+    let scope = match scope_name {
+        "full" => codetopo_core::RenderScope::Full,
+        "structure" => codetopo_core::RenderScope::Structure,
+        other => {
+            return Err(ApiError::BadRequest {
+                code: "invalid_param",
+                message: format!("scope must be 'full' or 'structure', got '{other}'"),
+            })
+        }
+    };
     let db = state.db_path(&index_id);
     let graph = load_graph_blocking(&db, &index_id)?;
-    let value = codetopo_cli::render_value(&graph, layout_name).map_err(|message| {
-        ApiError::BadRequest {
-            code: "invalid_param",
-            message,
-        }
-    })?;
+    let value =
+        codetopo_cli::render_value_scoped(&graph, layout_name, scope_name).map_err(|message| {
+            ApiError::BadRequest {
+                code: "invalid_param",
+                message,
+            }
+        })?;
     if format == "json" || value["rendered"] == json!(false) {
         let mut value = value;
         value["index_id"] = json!(index_id);
@@ -1455,7 +1501,7 @@ async fn render(
     // format=svg over a real spec: render the spec directly (the
     // spec types are serialize-only; the renderers consume them).
     let svg = if layout_name == "layered" {
-        codetopo_core::render_svg(&codetopo_core::layout(&graph))
+        codetopo_core::render_svg(&codetopo_core::layout_scoped(&graph, scope))
     } else {
         match codetopo_core::force_layout(&graph) {
             codetopo_core::ForceLayout::Spec(spec) => codetopo_core::render_svg_v2(&spec),
@@ -1559,7 +1605,10 @@ async fn search(
     let limit: usize = match query.limit.as_deref().map(str::trim) {
         None | Some("") => 20,
         Some(raw) => raw.parse().map_err(|_| {
-            ApiError::invalid_param("limit", &format!("expected a positive integer, got '{raw}'"))
+            ApiError::invalid_param(
+                "limit",
+                &format!("expected a positive integer, got '{raw}'"),
+            )
         })?,
     };
     let db = state.db_path(&index_id);

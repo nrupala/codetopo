@@ -134,8 +134,54 @@ fn field_text(node: Node, field: &str, src: &[u8]) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// One step of the walker's explicit work stack. The walker used
+/// to recurse over the syntax tree; a generated file whose value
+/// is a single expression nested tens of thousands of levels deep
+/// (a base64 blob written as `"…" + "…" + …`) overflowed the call
+/// stack and aborted the whole index. The walk now runs on this
+/// heap stack instead: `Enter` visits a node; the `Leave*` steps
+/// replay the scope pops the recursion used to do on return.
+/// Visit order is unchanged (children are pushed in reverse so
+/// they pop in source order), so extraction output is
+/// byte-identical for every input the recursive walker survived.
+/// (The TypeScript and Python walkers carry the same note.)
+enum Step<'t> {
+    Enter(Node<'t>),
+    LeaveSymbol { in_assoc: bool },
+    LeaveImpl { in_assoc: bool },
+    LeaveMod,
+}
+
 impl<'a> Walker<'a> {
-    fn walk(&mut self, node: Node) {
+    fn walk<'t>(&mut self, root: Node<'t>) {
+        let mut stack = vec![Step::Enter(root)];
+        while let Some(step) = stack.pop() {
+            match step {
+                Step::LeaveSymbol { in_assoc } => {
+                    self.enclosing.pop();
+                    self.path.pop();
+                    self.in_assoc = in_assoc;
+                }
+                Step::LeaveImpl { in_assoc } => {
+                    self.in_assoc = in_assoc;
+                    self.path.pop();
+                }
+                Step::LeaveMod => {
+                    self.modpath.pop();
+                    self.path.pop();
+                }
+                Step::Enter(node) => self.visit(node, &mut stack),
+            }
+        }
+    }
+
+    fn push_children<'t>(&self, stack: &mut Vec<Step<'t>>, node: Node<'t>) {
+        for child in children(node).into_iter().rev() {
+            stack.push(Step::Enter(child));
+        }
+    }
+
+    fn visit<'t>(&mut self, node: Node<'t>, stack: &mut Vec<Step<'t>>) {
         match node.kind() {
             "function_item" => {
                 let name = field_text(node, "name", self.src);
@@ -148,9 +194,9 @@ impl<'a> Walker<'a> {
                         NodeKind::Function
                     };
                     let (defines, refs, writes) = self.fn_body_info(params, body);
-                    self.with_symbol_writes(kind, &name, node, defines, refs, writes, body, false);
+                    self.emit_symbol(stack, kind, &name, node, defines, refs, writes, body, false);
                 } else {
-                    self.walk_children(node);
+                    self.push_children(stack, node);
                 }
             }
             "function_signature_item" => {
@@ -158,16 +204,36 @@ impl<'a> Walker<'a> {
                 if let Some(name) = field_text(node, "name", self.src) {
                     let params = node.child_by_field_name("parameters");
                     let (defines, _, _) = self.fn_body_info(params, None);
-                    self.with_symbol(NodeKind::Method, &name, node, defines, vec![], None, false);
+                    self.emit_symbol(
+                        stack,
+                        NodeKind::Method,
+                        &name,
+                        node,
+                        defines,
+                        vec![],
+                        vec![],
+                        None,
+                        false,
+                    );
                 }
             }
             "struct_item" | "enum_item" | "union_item" => {
                 if let Some(name) = field_text(node, "name", self.src) {
                     let body = node.child_by_field_name("body");
                     let refs = self.body_refs(body);
-                    self.with_symbol(NodeKind::Class, &name, node, vec![], refs, body, false);
+                    self.emit_symbol(
+                        stack,
+                        NodeKind::Class,
+                        &name,
+                        node,
+                        vec![],
+                        refs,
+                        vec![],
+                        body,
+                        false,
+                    );
                 } else {
-                    self.walk_children(node);
+                    self.push_children(stack, node);
                 }
             }
             "trait_item" => {
@@ -190,9 +256,19 @@ impl<'a> Walker<'a> {
                     let body = node.child_by_field_name("body");
                     let refs = self.body_refs(body);
                     // Interface scope: members walked with in_assoc set.
-                    self.with_symbol(NodeKind::Interface, &name, node, vec![], refs, body, true);
+                    self.emit_symbol(
+                        stack,
+                        NodeKind::Interface,
+                        &name,
+                        node,
+                        vec![],
+                        refs,
+                        vec![],
+                        body,
+                        true,
+                    );
                 } else {
-                    self.walk_children(node);
+                    self.push_children(stack, node);
                 }
             }
             "type_item" => {
@@ -202,12 +278,22 @@ impl<'a> Walker<'a> {
                 if let Some(name) = field_text(node, "name", self.src) {
                     let ty = node.child_by_field_name("type");
                     let refs = self.body_refs(ty);
-                    self.with_symbol(NodeKind::Class, &name, node, vec![], refs, None, false);
+                    self.emit_symbol(
+                        stack,
+                        NodeKind::Class,
+                        &name,
+                        node,
+                        vec![],
+                        refs,
+                        vec![],
+                        None,
+                        false,
+                    );
                 } else {
-                    self.walk_children(node);
+                    self.push_children(stack, node);
                 }
             }
-            "impl_item" => self.handle_impl(node),
+            "impl_item" => self.handle_impl(node, stack),
             "mod_item" => {
                 let body = node.child_by_field_name("body");
                 match (field_text(node, "name", self.src), body) {
@@ -215,56 +301,69 @@ impl<'a> Walker<'a> {
                         // Inline module: nest symbol path and module path.
                         self.path.push(name.clone());
                         self.modpath.push(name);
-                        self.walk_children(body);
-                        self.modpath.pop();
-                        self.path.pop();
+                        stack.push(Step::LeaveMod);
+                        self.push_children(stack, body);
                     }
-                    _ => self.walk_children(node),
+                    _ => self.push_children(stack, node),
                 }
             }
             "const_item" | "static_item" => {
                 if let Some(name) = field_text(node, "name", self.src) {
                     let value = node.child_by_field_name("value");
                     let refs = self.body_refs(value);
-                    self.with_symbol(NodeKind::Variable, &name, node, vec![], refs, value, false);
+                    self.emit_symbol(
+                        stack,
+                        NodeKind::Variable,
+                        &name,
+                        node,
+                        vec![],
+                        refs,
+                        vec![],
+                        value,
+                        false,
+                    );
                 } else {
-                    self.walk_children(node);
+                    self.push_children(stack, node);
                 }
             }
             "use_declaration" => self.handle_use(node),
             "call_expression" => {
                 self.handle_call(node);
-                self.walk_children(node);
+                self.push_children(stack, node);
             }
-            _ => self.walk_children(node),
+            _ => self.push_children(stack, node),
         }
     }
 
-    fn walk_children(&mut self, node: Node) {
-        for child in children(node) {
-            self.walk(child);
-        }
-    }
-
-    /// Emit a symbol, walk `body`'s children with it as the enclosing scope,
-    /// then restore path/enclosing. When `assoc_scope` is set, `fn` items in
-    /// the body become methods.
+    /// Emit a symbol and schedule its body's visit: the scope the
+    /// recursive walker opened with `with_symbol` is opened here,
+    /// and the matching `LeaveSymbol` step (pushed *before* the
+    /// body's children, so it pops after them) closes it.
     #[allow(clippy::too_many_arguments)]
-    fn with_symbol(
+    fn emit_symbol<'t>(
         &mut self,
+        stack: &mut Vec<Step<'t>>,
         kind: NodeKind,
         name: &str,
-        node: Node,
+        node: Node<'t>,
         defines: Vec<String>,
         refs: Vec<String>,
-        body: Option<Node>,
+        writes: Vec<String>,
+        body: Option<Node<'t>>,
         assoc_scope: bool,
     ) {
-        self.with_symbol_writes(kind, name, node, defines, refs, Vec::new(), body, assoc_scope);
+        let saved = self.begin_symbol(kind, name, node, defines, refs, writes, assoc_scope);
+        stack.push(Step::LeaveSymbol { in_assoc: saved });
+        if let Some(b) = body {
+            self.push_children(stack, b);
+        }
     }
 
+    /// Push the symbol record and open its scope (path + enclosing
+    /// + assoc flag). Returns the saved `in_assoc` for the
+    /// `LeaveSymbol` step that closes the scope.
     #[allow(clippy::too_many_arguments)]
-    fn with_symbol_writes(
+    fn begin_symbol(
         &mut self,
         kind: NodeKind,
         name: &str,
@@ -272,9 +371,8 @@ impl<'a> Walker<'a> {
         defines: Vec<String>,
         refs: Vec<String>,
         writes: Vec<String>,
-        body: Option<Node>,
         assoc_scope: bool,
-    ) {
+    ) -> bool {
         self.path.push(name.to_string());
         let id = format!("{}::{}", self.module_id, self.path.join("::"));
         let (end_line, signature) = measured_fields(node, self.src);
@@ -304,12 +402,7 @@ impl<'a> Walker<'a> {
         if assoc_scope {
             self.in_assoc = true;
         }
-        if let Some(b) = body {
-            self.walk_children(b);
-        }
-        self.in_assoc = saved;
-        self.enclosing.pop();
-        self.path.pop();
+        saved
     }
 
     /// Parameter names → defines; identifier/type references in the
@@ -355,42 +448,58 @@ impl<'a> Walker<'a> {
     /// items — they are descended into, their branches counting toward
     /// the enclosing symbol.
     fn count_decisions(&self, node: Node) -> u32 {
-        match node.kind() {
-            "function_item" | "function_signature_item" | "struct_item" | "enum_item"
-            | "union_item" | "trait_item" | "impl_item" | "mod_item" | "const_item"
-            | "static_item" | "type_item" => return 0,
-            _ => {}
-        }
-        let mut n = match node.kind() {
-            "if_expression" | "while_expression" | "for_expression" | "loop_expression"
-            | "try_expression" => 1,
-            "match_expression" => {
-                // A k-way match contributes k−1 decisions: every arm
-                // past the first adds one binary branch. Arms are the
-                // match_block's named children.
-                let arms = children(node)
-                    .into_iter()
-                    .filter(|c| c.kind() == "match_block")
-                    .flat_map(children)
-                    .filter(|c| c.kind() == "match_arm")
-                    .count();
-                arms.saturating_sub(1) as u32
+        // Iterative form of the recursive count (see the Step note
+        // on the walker): a sum is order-independent, and the prune
+        // rule is applied when a node is popped, exactly where the
+        // recursion applied it on entry.
+        let mut total = 0u32;
+        let mut stack = vec![node];
+        while let Some(node) = stack.pop() {
+            match node.kind() {
+                "function_item"
+                | "function_signature_item"
+                | "struct_item"
+                | "enum_item"
+                | "union_item"
+                | "trait_item"
+                | "impl_item"
+                | "mod_item"
+                | "const_item"
+                | "static_item"
+                | "type_item" => continue,
+                _ => {}
             }
-            "binary_expression" => {
-                match node
-                    .child_by_field_name("operator")
-                    .and_then(|op| text_of(op, self.src))
-                {
-                    Some("&&") | Some("||") => 1,
-                    _ => 0,
+            total += match node.kind() {
+                "if_expression" | "while_expression" | "for_expression" | "loop_expression"
+                | "try_expression" => 1,
+                "match_expression" => {
+                    // A k-way match contributes k−1 decisions: every arm
+                    // past the first adds one binary branch. Arms are the
+                    // match_block's named children.
+                    let arms = children(node)
+                        .into_iter()
+                        .filter(|c| c.kind() == "match_block")
+                        .flat_map(children)
+                        .filter(|c| c.kind() == "match_arm")
+                        .count();
+                    arms.saturating_sub(1) as u32
                 }
+                "binary_expression" => {
+                    match node
+                        .child_by_field_name("operator")
+                        .and_then(|op| text_of(op, self.src))
+                    {
+                        Some("&&") | Some("||") => 1,
+                        _ => 0,
+                    }
+                }
+                _ => 0,
+            };
+            for child in children(node) {
+                stack.push(child);
             }
-            _ => 0,
-        };
-        for child in children(node) {
-            n += self.count_decisions(child);
         }
-        n
+        total
     }
 
     /// Collect identifiers bound by a pattern (`let` patterns, fn params).
@@ -420,62 +529,84 @@ impl<'a> Walker<'a> {
     /// Walk a body collecting `let`-bound names into `defines` and other
     /// identifiers / type names into `refs`. Nested items are skipped: their
     /// bindings belong to their own symbols.
-    fn scan_w(&self, node: Node, defines: &mut Vec<String>, refs: &mut Vec<String>, writes: &mut Vec<String>) {
-        match node.kind() {
-            "function_item" | "function_signature_item" | "struct_item" | "enum_item"
-            | "union_item" | "trait_item" | "impl_item" | "mod_item" | "const_item"
-            | "static_item" | "use_declaration" => return,
-            "let_declaration" => {
-                if let Some(pat) = node.child_by_field_name("pattern") {
-                    self.collect_pattern(pat, defines);
-                }
-                // The value and type can still reference outer names.
-                for field in ["value", "type"] {
-                    if let Some(ch) = node.child_by_field_name(field) {
-                        self.scan_w(ch, defines, refs, writes);
+    ///
+    /// Iterative, on an explicit stack (see the Step note on the
+    /// walker): children are pushed in reverse so pops reproduce
+    /// the recursive pre-order exactly — `finalize` dedupes but
+    /// does not sort, so first-occurrence order is output.
+    fn scan_w<'t>(
+        &self,
+        root: Node<'t>,
+        defines: &mut Vec<String>,
+        refs: &mut Vec<String>,
+        writes: &mut Vec<String>,
+    ) {
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            match node.kind() {
+                "function_item"
+                | "function_signature_item"
+                | "struct_item"
+                | "enum_item"
+                | "union_item"
+                | "trait_item"
+                | "impl_item"
+                | "mod_item"
+                | "const_item"
+                | "static_item"
+                | "use_declaration" => continue,
+                "let_declaration" => {
+                    if let Some(pat) = node.child_by_field_name("pattern") {
+                        self.collect_pattern(pat, defines);
                     }
-                }
-                return;
-            }
-            "assignment_expression" => {
-                // `target = value`: the target name is written, the
-                // value side is read. Field targets write the field.
-                if let Some(left) = node.child_by_field_name("left") {
-                    match left.kind() {
-                        "identifier" => {
-                            if let Some(t) = text_of(left, self.src) {
-                                writes.push(t.to_string());
-                            }
+                    // The value and type can still reference outer names.
+                    for field in ["value", "type"] {
+                        if let Some(ch) = node.child_by_field_name(field) {
+                            stack.push(ch);
                         }
-                        "field_expression" => {
-                            if let Some(f) = left.child_by_field_name("field") {
-                                if let Some(t) = text_of(f, self.src) {
+                    }
+                    continue;
+                }
+                "assignment_expression" => {
+                    // `target = value`: the target name is written, the
+                    // value side is read. Field targets write the field.
+                    if let Some(left) = node.child_by_field_name("left") {
+                        match left.kind() {
+                            "identifier" => {
+                                if let Some(t) = text_of(left, self.src) {
                                     writes.push(t.to_string());
                                 }
                             }
+                            "field_expression" => {
+                                if let Some(f) = left.child_by_field_name("field") {
+                                    if let Some(t) = text_of(f, self.src) {
+                                        writes.push(t.to_string());
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
+                    if let Some(right) = node.child_by_field_name("right") {
+                        stack.push(right);
+                    }
+                    continue;
                 }
-                if let Some(right) = node.child_by_field_name("right") {
-                    self.scan_w(right, defines, refs, writes);
+                "identifier" | "type_identifier" => {
+                    if let Some(t) = text_of(node, self.src) {
+                        refs.push(t.to_string());
+                    }
+                    continue;
                 }
-                return;
+                _ => {}
             }
-            "identifier" | "type_identifier" => {
-                if let Some(t) = text_of(node, self.src) {
-                    refs.push(t.to_string());
-                }
-                return;
+            for child in children(node).into_iter().rev() {
+                stack.push(child);
             }
-            _ => {}
-        }
-        for child in children(node) {
-            self.scan_w(child, defines, refs, writes);
         }
     }
 
-    fn handle_impl(&mut self, node: Node) {
+    fn handle_impl<'t>(&mut self, node: Node<'t>, stack: &mut Vec<Step<'t>>) {
         let trait_node = node.child_by_field_name("trait");
         let body = node.child_by_field_name("body");
         // Self type: the named child that is neither the trait nor the body.
@@ -510,22 +641,17 @@ impl<'a> Walker<'a> {
         self.path.push(name);
         let saved = self.in_assoc;
         self.in_assoc = true;
+        stack.push(Step::LeaveImpl { in_assoc: saved });
         if let Some(b) = body {
-            self.walk_children(b);
+            self.push_children(stack, b);
         }
-        self.in_assoc = saved;
-        self.path.pop();
     }
 
     /// `Client` from `Client`, `Client<T>`, or a plain path fallback.
     fn base_type_name(&self, node: Node) -> Option<String> {
         match node.kind() {
-            "type_identifier" | "identifier" => {
-                text_of(node, self.src).map(|s| s.to_string())
-            }
-            "generic_type" => node
-                .named_child(0)
-                .and_then(|c| self.base_type_name(c)),
+            "type_identifier" | "identifier" => text_of(node, self.src).map(|s| s.to_string()),
+            "generic_type" => node.named_child(0).and_then(|c| self.base_type_name(c)),
             "scoped_type_identifier" => node
                 .child_by_field_name("name")
                 .and_then(|c| self.base_type_name(c)),
@@ -712,8 +838,12 @@ impl<'a> Walker<'a> {
         match root {
             UseRoot::Crate => join_id(&self.pkg, segs),
             UseRoot::Slf => {
-                let full: Vec<String> =
-                    self.modpath.iter().cloned().chain(segs.iter().cloned()).collect();
+                let full: Vec<String> = self
+                    .modpath
+                    .iter()
+                    .cloned()
+                    .chain(segs.iter().cloned())
+                    .collect();
                 join_id(&self.pkg, &full)
             }
             UseRoot::Super => {
@@ -808,6 +938,20 @@ pub fn ping(c: &Client) -> bool {
     }
 
     #[test]
+    fn rust_deep_expression_chain_does_not_overflow() {
+        // Regression (E-1, found by the 2026-11-18 estate sweep):
+        // a generated module whose value is one expression nested
+        // tens of thousands of levels deep — a base64 blob written
+        // as `"…" + "…" + …` — overflowed the recursive walker's
+        // call stack and aborted the whole index. The walker is
+        // iterative now; the chain must extract to the one variable.
+        let chain = vec!["\"AAAA\""; 50_000].join(" + ");
+        let src = format!("pub const BLOB: &str = {chain};\n");
+        let fs = extract_file("mypkg", Path::new("src/blob.rs"), &src).unwrap();
+        assert_eq!(ids(&fs), vec![("mypkg::blob::BLOB", NodeKind::Variable)]);
+    }
+
+    #[test]
     fn rust_heritage_writes_and_type_alias() {
         let src = r#"
 trait Store { fn get(&self); }
@@ -833,11 +977,22 @@ type Count = u32;
             "trait supertrait -> inherits: {:?}",
             fs.heritage
         );
-        assert!(fs.symbols.iter().any(|s| s.label == "Count" && s.kind == NodeKind::Class),
-            "type alias extracted as a type symbol");
-        let bump = fs.symbols.iter().find(|s| s.label == "bump").expect("bump fn");
-        assert!(bump.writes.contains(&"TOTAL".to_string()),
-            "assignment target recorded as a write: {:?}", bump.writes);
+        assert!(
+            fs.symbols
+                .iter()
+                .any(|s| s.label == "Count" && s.kind == NodeKind::Class),
+            "type alias extracted as a type symbol"
+        );
+        let bump = fs
+            .symbols
+            .iter()
+            .find(|s| s.label == "bump")
+            .expect("bump fn");
+        assert!(
+            bump.writes.contains(&"TOTAL".to_string()),
+            "assignment target recorded as a write: {:?}",
+            bump.writes
+        );
     }
 
     #[test]
@@ -893,11 +1048,23 @@ type Count = u32;
             .iter()
             .map(|c| (c.from_id.as_str(), c.to_name.as_str()))
             .collect();
-        assert!(calls.contains(&("mycrate::client::Client::new", "Config::default")), "{calls:?}");
-        assert!(calls.contains(&("mycrate::client::Client::connect", "TcpStream::connect")), "{calls:?}");
-        assert!(calls.contains(&("mycrate::client::ping", "c.connect")), "{calls:?}");
+        assert!(
+            calls.contains(&("mycrate::client::Client::new", "Config::default")),
+            "{calls:?}"
+        );
+        assert!(
+            calls.contains(&("mycrate::client::Client::connect", "TcpStream::connect")),
+            "{calls:?}"
+        );
+        assert!(
+            calls.contains(&("mycrate::client::ping", "c.connect")),
+            "{calls:?}"
+        );
         // `stream.set_timeout(...)` is also a call, from the method.
-        assert!(calls.contains(&("mycrate::client::Client::connect", "stream.set_timeout")), "{calls:?}");
+        assert!(
+            calls.contains(&("mycrate::client::Client::connect", "stream.set_timeout")),
+            "{calls:?}"
+        );
     }
 
     #[test]
@@ -905,12 +1072,28 @@ type Count = u32;
         let fs = extract_file("mycrate", Path::new("src/client.rs"), SRC).unwrap();
         let by_id = |id: &str| fs.symbols.iter().find(|s| s.id == id).unwrap();
         let new = by_id("mycrate::client::Client::new");
-        assert!(new.defines.contains(&"timeout".to_string()), "{:?}", new.defines);
-        assert!(new.defines.contains(&"cfg".to_string()), "{:?}", new.defines);
+        assert!(
+            new.defines.contains(&"timeout".to_string()),
+            "{:?}",
+            new.defines
+        );
+        assert!(
+            new.defines.contains(&"cfg".to_string()),
+            "{:?}",
+            new.defines
+        );
         assert!(new.refs.contains(&"Config".to_string()), "{:?}", new.refs);
         let connect = by_id("mycrate::client::Client::connect");
-        assert!(connect.defines.contains(&"stream".to_string()), "{:?}", connect.defines);
-        assert!(connect.refs.contains(&"TcpStream".to_string()), "{:?}", connect.refs);
+        assert!(
+            connect.defines.contains(&"stream".to_string()),
+            "{:?}",
+            connect.defines
+        );
+        assert!(
+            connect.refs.contains(&"TcpStream".to_string()),
+            "{:?}",
+            connect.refs
+        );
         // A defined name is not also reported as a ref.
         assert!(!connect.refs.contains(&"stream".to_string()));
     }
@@ -940,9 +1123,15 @@ use mycrate::top::Thing;
         // super::sib from mycrate::mid::inner -> mycrate::mid::sib
         assert!(tos.contains(&("mycrate::mid::sib", vec!["sib"])), "{tos:?}");
         // self::here -> mycrate::mid::inner::here
-        assert!(tos.contains(&("mycrate::mid::inner::here", vec!["here"])), "{tos:?}");
+        assert!(
+            tos.contains(&("mycrate::mid::inner::here", vec!["here"])),
+            "{tos:?}"
+        );
         // explicit crate name == package -> self-crate
-        assert!(tos.contains(&("mycrate::top::Thing", vec!["Thing"])), "{tos:?}");
+        assert!(
+            tos.contains(&("mycrate::top::Thing", vec!["Thing"])),
+            "{tos:?}"
+        );
     }
 
     #[test]
@@ -1034,18 +1223,36 @@ pub const LIMIT: u32 = 100;
 
         let plain = measured(&fs, "plain");
         assert_eq!((plain.line, plain.end_line), (1, Some(3)), "plain span");
-        assert_eq!(plain.signature.as_deref(), Some("pub fn plain(x: u32) -> u32"));
-        assert_eq!(plain.decisions, Some(0), "branch-free body counts zero decisions");
+        assert_eq!(
+            plain.signature.as_deref(),
+            Some("pub fn plain(x: u32) -> u32")
+        );
+        assert_eq!(
+            plain.decisions,
+            Some(0),
+            "branch-free body counts zero decisions"
+        );
 
         // if(1) + &&(1) + for(1) + while(1) + match 3 arms -> 2 = 6.
         let branchy = measured(&fs, "branchy");
-        assert_eq!((branchy.line, branchy.end_line), (5, Some(21)), "branchy span");
-        assert_eq!(branchy.signature.as_deref(), Some("pub fn branchy(x: u32) -> u32"));
+        assert_eq!(
+            (branchy.line, branchy.end_line),
+            (5, Some(21)),
+            "branchy span"
+        );
+        assert_eq!(
+            branchy.signature.as_deref(),
+            Some("pub fn branchy(x: u32) -> u32")
+        );
         assert_eq!(branchy.decisions, Some(6), "hand-counted decision points");
 
         // ?(1) + if(1) = 2.
         let fallible = measured(&fs, "fallible");
-        assert_eq!((fallible.line, fallible.end_line), (23, Some(26)), "fallible span");
+        assert_eq!(
+            (fallible.line, fallible.end_line),
+            (23, Some(26)),
+            "fallible span"
+        );
         assert_eq!(fallible.decisions, Some(2), "? and if");
     }
 
@@ -1055,7 +1262,11 @@ pub const LIMIT: u32 = 100;
 
         let counter = measured(&fs, "Counter");
         assert_eq!(counter.kind, NodeKind::Class);
-        assert_eq!((counter.line, counter.end_line), (28, Some(30)), "struct span");
+        assert_eq!(
+            (counter.line, counter.end_line),
+            (28, Some(30)),
+            "struct span"
+        );
         assert_eq!(counter.signature.as_deref(), Some("pub struct Counter"));
         assert_eq!(counter.decisions, None, "types carry no decision count");
 
@@ -1107,7 +1318,10 @@ pub const LIMIT: u32 = 100;
         );
         let inner = measured(&fs, "inner");
         assert_eq!(inner.id, "mycrate::m::outer::inner");
-        assert_eq!(inner.decisions, Some(1), "nested item measured on its own symbol");
+        assert_eq!(
+            inner.decisions,
+            Some(1),
+            "nested item measured on its own symbol"
+        );
     }
-
 }

@@ -838,8 +838,10 @@ paths:
         the force layout's node ceilings the answer is a stated
         decline object (`rendered: false`, with the reason naming
         the ceiling) in either format, never a partial drawing.
-        The same spec objects serve the CLI's `render` command and
-        the MCP `codetopo_render` tool.
+        With `scope=structure` the layered layout covers the
+        graph's structural skeleton instead of every node (see the
+        `scope` parameter). The same spec objects serve the CLI's
+        `render` command and the MCP `codetopo_render` tool.
       parameters:
         - $ref: '#/components/parameters/IndexId'
         - name: layout
@@ -856,6 +858,21 @@ paths:
             type: string
             enum: [json, svg]
           description: The spec object (json) or the drawing (svg). Default json.
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [full, structure]
+          description: |
+            Which node universe to lay out: `full` (default, every
+            node) or `structure` (the structural skeleton —
+            package/file/module/class/interface/doc — with the
+            organizational edges rolled up to the nearest kept
+            ancestor, layered by containment depth). Layered
+            layout only; `structure` with `layout=force` is a 400.
+            A structure answer records `scope` and `source_nodes`
+            (the full graph's node count) in the object.
       responses:
         '200':
           description: The layout spec object, the decline object, or the SVG drawing.

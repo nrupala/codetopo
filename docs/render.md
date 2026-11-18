@@ -60,6 +60,52 @@ codetopo artifact.
    member id; members order by id. Columns are assigned left to
    right in that order. Ties are impossible — ids are unique.
 
+## Scope — `full` (default) and `structure`
+
+`codetopo render --scope structure` (HTTP
+`GET /v1/graphs/{id}/render?scope=structure`, MCP `codetopo_render`
+with `scope: "structure"`) lays out the graph's **structural
+skeleton** instead of every node:
+
+- **Kept kinds:** package, file, module, class, interface, doc —
+  the kinds a reader navigates by.
+- **Edges:** only the edges that show how the system is
+  *organized* — containment, imports, and type hierarchy
+  (inherits/implements). Their endpoints roll up to the nearest
+  kept ancestor along containment edges, so an import declared
+  inside a file appears between the kept nodes that contain its
+  endpoints. Edges whose endpoints roll up to the same node
+  drop; a node with no kept ancestor (an external stub is
+  contained by nothing) drops out. Behaviour edges (calls,
+  reads, writes) are excluded on purpose: rolled up to file
+  granularity they become long cross-cutting diagonals that
+  bury the skeleton — they remain in the full scope and in
+  every query/stats surface.
+- **Layers are containment depth.** The full scope layers by
+  dependency depth; a structure map layered that way collapses
+  into one long row (structural nodes have almost no dependency
+  edges between them). The structure scope therefore layers by
+  the containment tree — package over files over modules over
+  classes — while imports and hierarchy edges are drawn without
+  layering. Within a layer, nodes order by id, as everywhere.
+- **The spec stays v1.** The answer is a layout spec exactly as
+  above, computed over the projected node/edge universe —
+  deterministic in the same way. The shared JSON answer records
+  `"scope": "structure"` and `"source_nodes"` (the full graph's
+  node count) so a consumer can never mistake the map for the
+  whole graph; the SVG carries the projected counts in its
+  `<title>`.
+- **Layered only.** The force layout always takes the full
+  graph; asking it for the structure scope is an error naming
+  the reason, never a silent substitution.
+
+Why this exists: the full layout of a real graph is a faithful
+but unreadable drawing — thousands of symbol boxes at one
+dependency depth. The structure scope is the map a person (or an
+agent writing about the system) actually reads: the machine's
+shape, with every edge in it still a measured edge of the graph,
+rolled up — never invented.
+
 ## The SVG
 
 `render_svg` consumes the spec alone (any consumer can do the
@@ -101,15 +147,18 @@ fills and edge strokes) over the float coordinates.
 
 Output is linear in the graph (`nodes + edges` elements). A
 10,000-file workspace produces a spec of ~46k nodes — valid, and
-large; for human viewing, render a stored neighbourhood-sized
-index or expect a multi-megabyte SVG. Layout time on the scale
+large; for human viewing, use `--scope structure` (above) or
+render a stored neighbourhood-sized index rather than expecting
+a multi-megabyte SVG to be readable. Layout time on the scale
 fixture is dominated by the graph load, not the layout.
 
 ## Tests
 
 - `codetopo-core` render unit tests: layering direction, cycle
   sharing, unique placement, byte determinism of spec + SVG,
-  escaping/truncation, empty canvas.
+  escaping/truncation, empty canvas, the structure scope's
+  roll-up (structural kinds only, no self-edges, determinism),
+  and `full` scope equalling the historic layout.
 - `codetopo-cli` render integration tests: the shipped binary
   renders a fixture twice to byte-identical files, and the stdout
   default carries the spec.

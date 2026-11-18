@@ -24,10 +24,10 @@ pub mod centrality;
 pub mod communities;
 pub mod coupling;
 pub mod diag;
-pub mod history;
 pub mod emit;
 pub mod force;
 pub mod graph;
+pub mod history;
 pub mod measure;
 pub mod profile;
 pub mod projection;
@@ -79,28 +79,28 @@ pub fn topo_sort_method() -> String {
         .expect("core method registered")
 }
 pub use coupling::{GraphMetrics, PackageMetrics, TypeMetrics};
-pub use history::{graph_history, CoupledFiles, FileHotspot, HistoryInput, HistoryReport};
 pub use diag::Diagnostic;
 pub use emit::{FileSymbols, RawCall, RawHeritage, RawImport, RawSymbol};
+pub use force::{force_layout, render_svg_v2, ForceLayout, ForceNode, ForceParams, LayoutSpecV2};
 pub use graph::{Graph, GraphBuilder, PathStep, Subgraph};
+pub use history::{graph_history, CoupledFiles, FileHotspot, HistoryInput, HistoryReport};
 pub use measure::{
-    diff_graphs, GraphDiff, ImpactEntry, NodeChange, RankAnswer, RankMetric, RankedSymbol,
-    Ranking, SymbolDossier, SymbolMeasurements,
+    diff_graphs, GraphDiff, ImpactEntry, NodeChange, RankAnswer, RankMetric, RankedSymbol, Ranking,
+    SymbolDossier, SymbolMeasurements,
+};
+pub use profile::{
+    Admission, AggregateKindDef, AttrDef, BoundaryDef, ConformanceDef, ContainmentDef, CoreCompat,
+    DomainProfile, EdgeKindDef, EdgeSets, HistoryDef, MeasureFieldDef, NodeKindDef,
+    ProvenanceClass, SiblingDef, SiblingInputs, WellFormednessDef, CODE_PROFILE_JSON,
+    PROFILE_FORMAT,
 };
 pub use projection::{AnalyticsProjection, CommunityDetector};
-pub use force::{
-    force_layout, render_svg_v2, ForceLayout, ForceNode, ForceParams, LayoutSpecV2,
+pub use render::{
+    layout, layout_scoped, render_svg, LayoutEdge, LayoutNode, LayoutSpec, RenderScope,
 };
-pub use render::{layout, render_svg, LayoutEdge, LayoutNode, LayoutSpec};
-pub use profile::{
-    Admission, AggregateKindDef, AttrDef, BoundaryDef, ConformanceDef, ContainmentDef,
-    CoreCompat, DomainProfile, EdgeKindDef, EdgeSets, HistoryDef, MeasureFieldDef,
-    NodeKindDef, ProvenanceClass, SiblingDef, SiblingInputs, WellFormednessDef,
-    PROFILE_FORMAT, CODE_PROFILE_JSON,
-};
-pub use topology::{TopoGroup, TopoOrder};
 pub use schema::{Edge, EdgeKind, Loc, Node, NodeKind, Tier};
 pub use snapshot::Snapshot;
+pub use topology::{TopoGroup, TopoOrder};
 
 /// Shared test harness (SPEC §7 determinism proofs): a computation run
 /// twice must produce byte-identical serialized output.

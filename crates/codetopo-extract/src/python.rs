@@ -48,7 +48,11 @@ fn txt(node: Node, src: &[u8]) -> String {
     text_of(node, src).unwrap_or("").to_string()
 }
 
-pub(crate) fn extract(package: &str, rel_path: &Path, source: &str) -> Result<FileSymbols, ExtractError> {
+pub(crate) fn extract(
+    package: &str,
+    rel_path: &Path,
+    source: &str,
+) -> Result<FileSymbols, ExtractError> {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_python::LANGUAGE.into())
@@ -64,7 +68,10 @@ pub(crate) fn extract(package: &str, rel_path: &Path, source: &str) -> Result<Fi
         src: source.as_bytes(),
         pkg: package.to_string(),
         module_id: module_id.clone(),
-        is_init: rel_path.file_stem().map(|s| s == "__init__").unwrap_or(false),
+        is_init: rel_path
+            .file_stem()
+            .map(|s| s == "__init__")
+            .unwrap_or(false),
         path: Vec::new(),
         enclosing: Vec::new(),
         in_class: false,
@@ -128,54 +135,112 @@ struct Walker<'a> {
     heritage: Vec<RawHeritage>,
 }
 
+/// One step of the walker's explicit work stack. The walker used
+/// to recurse over the syntax tree; a generated file whose value
+/// is a single expression nested tens of thousands of levels deep
+/// (a base64 blob written as `"…" + "…" + …`) overflowed the call
+/// stack and aborted the whole index. The walk now runs on this
+/// heap stack instead: `Enter` visits a node, `Decorator` runs a
+/// decorator in the enclosing scope, `OpenSymbol` pushes a
+/// prepared symbol and opens its scope, `LeaveSymbol` closes it —
+/// replaying, in order, exactly what the recursion did on entry
+/// and return. (The TypeScript walker carries the same note.)
+enum Step<'t> {
+    Enter(Node<'t>),
+    Decorator(Node<'t>),
+    OpenSymbol {
+        kind: NodeKind,
+        name: String,
+        node: Node<'t>,
+        defines: Vec<String>,
+        refs: Vec<String>,
+        writes: Vec<String>,
+        end_line: Option<u32>,
+        signature: Option<String>,
+        decisions: Option<u32>,
+        in_class: bool,
+    },
+    LeaveSymbol {
+        in_class: bool,
+    },
+}
+
 impl<'a> Walker<'a> {
     fn text(&self, n: Node) -> String {
         txt(n, self.src)
     }
 
-    fn walk_children(&mut self, node: Node) {
-        for i in 0..node.named_child_count() {
-            if let Some(c) = node.named_child(i) {
-                self.walk(c);
+    fn walk<'t>(&mut self, root: Node<'t>) {
+        let mut stack = vec![Step::Enter(root)];
+        while let Some(step) = stack.pop() {
+            match step {
+                Step::Enter(node) => self.visit(node, &mut stack),
+                Step::Decorator(node) => self.run_decorator(node, &mut stack),
+                Step::OpenSymbol {
+                    kind,
+                    name,
+                    node,
+                    defines,
+                    refs,
+                    writes,
+                    end_line,
+                    signature,
+                    decisions,
+                    in_class,
+                } => {
+                    self.push_symbol(
+                        kind, &name, node, defines, refs, writes, end_line, signature, decisions,
+                    );
+                    self.in_class = in_class;
+                }
+                Step::LeaveSymbol { in_class } => {
+                    self.in_class = in_class;
+                    self.pop_symbol();
+                }
             }
         }
     }
 
-    fn walk(&mut self, node: Node) {
+    fn push_children<'t>(&self, stack: &mut Vec<Step<'t>>, node: Node<'t>) {
+        for c in children(node).into_iter().rev() {
+            stack.push(Step::Enter(c));
+        }
+    }
+
+    fn visit<'t>(&mut self, node: Node<'t>, stack: &mut Vec<Step<'t>>) {
         match node.kind() {
-            "function_definition" => self.handle_function(node),
-            "class_definition" => self.handle_class(node),
+            "function_definition" => self.schedule_function(node, stack),
+            "class_definition" => self.schedule_class(node, stack),
             "decorated_definition" => {
                 // Decorators are evaluated in the ENCLOSING scope
                 // (spec D3): their calls record against it, and a bare
                 // decorator (name or attribute, not a call) becomes a
                 // ref on the decorated symbol. The symbol itself is
                 // the inner definition — line and span come from it.
-                for i in 0..node.named_child_count() {
-                    if let Some(c) = node.named_child(i) {
-                        if c.kind() == "decorator" {
-                            self.handle_decorator(c);
-                        }
-                    }
-                }
+                // The definition's steps are pushed first so the
+                // decorator steps, pushed on top of them, run first.
                 if let Some(def) = node.child_by_field_name("definition") {
                     match def.kind() {
-                        "function_definition" => self.handle_function(def),
-                        "class_definition" => self.handle_class(def),
-                        _ => self.walk_children(node),
+                        "function_definition" | "class_definition" => stack.push(Step::Enter(def)),
+                        _ => self.push_children(stack, node),
+                    }
+                }
+                for c in children(node).into_iter().rev() {
+                    if c.kind() == "decorator" {
+                        stack.push(Step::Decorator(c));
                     }
                 }
             }
             "type_alias_statement" => self.handle_type_alias(node),
-            "assignment" if self.enclosing.is_empty() => self.handle_module_assignment(node),
+            "assignment" if self.enclosing.is_empty() => self.handle_module_assignment(node, stack),
             "import_statement" => self.handle_import(node),
             "future_import_statement" => self.handle_future_import(node),
             "import_from_statement" => self.handle_from_import(node),
             "call" => {
                 self.record_call(node);
-                self.walk_children(node);
+                self.push_children(stack, node);
             }
-            _ => self.walk_children(node),
+            _ => self.push_children(stack, node),
         }
     }
 
@@ -206,11 +271,11 @@ impl<'a> Walker<'a> {
     /// A `decorator` node: a call inside it records against the
     /// enclosing scope; a bare name/attribute becomes a pending ref
     /// on the decorated symbol (spec D3).
-    fn handle_decorator(&mut self, node: Node) {
+    fn run_decorator<'t>(&mut self, node: Node<'t>, stack: &mut Vec<Step<'t>>) {
         for i in 0..node.named_child_count() {
             if let Some(expr) = node.named_child(i) {
                 match expr.kind() {
-                    "call" => self.walk(expr),
+                    "call" => stack.push(Step::Enter(expr)),
                     "identifier" => self.pending_refs.push(self.text(expr)),
                     "attribute" => {
                         if let Some(attr) = expr.child_by_field_name("attribute") {
@@ -281,7 +346,12 @@ impl<'a> Walker<'a> {
         self.path.pop();
     }
 
-    fn handle_function(&mut self, node: Node) {
+    /// Schedule a function definition: everything about the symbol
+    /// is computed now (the scans are self-contained); the stack
+    /// then replays the recursive order — parameter defaults walk
+    /// in the enclosing scope, the symbol opens, the body walks,
+    /// the scope closes.
+    fn schedule_function<'t>(&mut self, node: Node<'t>, stack: &mut Vec<Step<'t>>) {
         let Some(name_node) = node.child_by_field_name("name") else {
             return;
         };
@@ -304,16 +374,17 @@ impl<'a> Walker<'a> {
             refs.sort();
         }
         self.take_pending_refs(&mut refs, &defines);
-        // Default values are evaluated at definition time, in the
-        // enclosing scope: their calls belong to that scope (§3.4).
-        if let Some(p) = node.child_by_field_name("parameters") {
-            self.walk_children(p);
-        }
         let (end_line, signature) = py_measured(node, self.src);
         let decisions = node.child_by_field_name("body").map(count_decisions);
-        self.push_symbol(
+        stack.push(Step::LeaveSymbol {
+            in_class: self.in_class,
+        });
+        if let Some(body) = node.child_by_field_name("body") {
+            self.push_children(stack, body);
+        }
+        stack.push(Step::OpenSymbol {
             kind,
-            &name,
+            name,
             node,
             defines,
             refs,
@@ -321,17 +392,21 @@ impl<'a> Walker<'a> {
             end_line,
             signature,
             decisions,
-        );
-        let prev_class = self.in_class;
-        self.in_class = false;
-        if let Some(body) = node.child_by_field_name("body") {
-            self.walk_children(body);
+            in_class: false,
+        });
+        // Default values are evaluated at definition time, in the
+        // enclosing scope: their calls belong to that scope (§3.4) —
+        // pushed last so they run before the symbol opens.
+        if let Some(p) = node.child_by_field_name("parameters") {
+            self.push_children(stack, p);
         }
-        self.in_class = prev_class;
-        self.pop_symbol();
     }
 
-    fn handle_class(&mut self, node: Node) {
+    /// Schedule a class definition, on the same pattern as
+    /// `schedule_function`: heritage and refs are computed now;
+    /// the superclass expressions walk in the enclosing scope
+    /// before the symbol opens; the body walks with `in_class` set.
+    fn schedule_class<'t>(&mut self, node: Node<'t>, stack: &mut Vec<Step<'t>>) {
         let Some(name_node) = node.child_by_field_name("name") else {
             return;
         };
@@ -341,8 +416,6 @@ impl<'a> Walker<'a> {
         // flips the kind to interface (decision D2).
         let mut targets: Vec<String> = Vec::new();
         if let Some(supers) = node.child_by_field_name("superclasses") {
-            // Base expressions are evaluated in the enclosing scope.
-            self.walk_children(supers);
             for i in 0..supers.named_child_count() {
                 if let Some(c) = supers.named_child(i) {
                     if let Some(t) = base_name(c, self.src) {
@@ -368,24 +441,29 @@ impl<'a> Walker<'a> {
         let mut refs = body.map(|b| body_refs(b, self.src)).unwrap_or_default();
         self.take_pending_refs(&mut refs, &[]);
         let (end_line, signature) = py_measured(node, self.src);
-        self.push_symbol(
+        stack.push(Step::LeaveSymbol {
+            in_class: self.in_class,
+        });
+        if let Some(b) = body {
+            self.push_children(stack, b);
+        }
+        stack.push(Step::OpenSymbol {
             kind,
-            &name,
+            name,
             node,
-            Vec::new(),
+            defines: Vec::new(),
             refs,
-            Vec::new(),
+            writes: Vec::new(),
             end_line,
             signature,
-            None,
-        );
-        let prev_class = self.in_class;
-        self.in_class = true;
-        if let Some(b) = body {
-            self.walk_children(b);
+            decisions: None,
+            in_class: true,
+        });
+        // Base expressions are evaluated in the enclosing scope —
+        // pushed last so they run before the symbol opens.
+        if let Some(supers) = node.child_by_field_name("superclasses") {
+            self.push_children(stack, supers);
         }
-        self.in_class = prev_class;
-        self.pop_symbol();
     }
 
     /// PEP 695 `type X = …` — an alias is a class-kind symbol (spec §3.2).
@@ -419,7 +497,7 @@ impl<'a> Walker<'a> {
     /// (spec §3.2). Chained `a = b = …` yields one symbol per name;
     /// pattern/attribute/subscript targets yield none (the TS
     /// destructuring precedent).
-    fn handle_module_assignment(&mut self, mut node: Node) {
+    fn handle_module_assignment<'t>(&mut self, mut node: Node<'t>, stack: &mut Vec<Step<'t>>) {
         let final_right: Option<Node> = loop {
             let left = node.child_by_field_name("left");
             let right = node.child_by_field_name("right");
@@ -466,7 +544,7 @@ impl<'a> Walker<'a> {
         // assignment arm consumed the statement, so walk the final
         // right-hand side for them explicitly.
         if let Some(r) = final_right {
-            self.walk(r);
+            stack.push(Step::Enter(r));
         }
     }
 
@@ -496,7 +574,9 @@ impl<'a> Walker<'a> {
     fn handle_import(&mut self, node: Node) {
         let line = line_of(node);
         for i in 0..node.named_child_count() {
-            let Some(c) = node.named_child(i) else { continue };
+            let Some(c) = node.named_child(i) else {
+                continue;
+            };
             match c.kind() {
                 "dotted_name" => {
                     let dotted = self.text(c);
@@ -565,7 +645,9 @@ impl<'a> Walker<'a> {
         let mut bindings: Vec<String> = Vec::new();
         let mut glob = false;
         for i in 0..node.named_child_count() {
-            let Some(c) = node.named_child(i) else { continue };
+            let Some(c) = node.named_child(i) else {
+                continue;
+            };
             if c.id() == module_node.id() {
                 continue;
             }
@@ -627,9 +709,7 @@ impl<'a> Walker<'a> {
 fn base_name(node: Node, src: &[u8]) -> Option<String> {
     match node.kind() {
         "identifier" => Some(txt(node, src)),
-        "attribute" => node
-            .child_by_field_name("attribute")
-            .map(|a| txt(a, src)),
+        "attribute" => node.child_by_field_name("attribute").map(|a| txt(a, src)),
         "subscript" => node
             .child_by_field_name("value")
             .and_then(|v| base_name(v, src)),
@@ -659,39 +739,54 @@ fn py_measured(node: Node, src: &[u8]) -> (Option<u32>, Option<String>) {
 /// declarations are pruned — their decisions belong to their own
 /// symbols; lambdas and comprehensions are descended into.
 fn count_decisions(node: Node) -> u32 {
-    match node.kind() {
-        "function_definition" | "class_definition" | "decorated_definition" => return 0,
-        _ => {}
-    }
-    let mut n = match node.kind() {
-        "if_statement" | "elif_clause" | "for_statement" | "while_statement" | "except_clause"
-        | "conditional_expression" | "boolean_operator" | "for_in_clause" | "if_clause" => 1,
-        "match_statement" => node
-            .child_by_field_name("body")
-            .map(|b| {
-                children(b)
-                    .iter()
-                    .filter(|c| c.kind() == "case_clause")
-                    .count() as u32
-            })
-            .unwrap_or(0)
-            .saturating_sub(1),
-        _ => 0,
-    };
-    let guard = if node.kind() == "case_clause" {
-        node.child_by_field_name("guard")
-    } else {
-        None
-    };
-    for child in children(node) {
-        // A case guard is an if_clause node but is NOT counted
-        // (spec §3.7 — the switch-cases precedent).
-        if let Some(g) = guard {
-            if g.id() == child.id() {
-                continue;
-            }
+    // Iterative form of the recursive count (see the Step note on
+    // the walker): a sum is order-independent, and the prune rule
+    // is applied when a node is popped, exactly where the
+    // recursion applied it on entry.
+    let mut n = 0u32;
+    let mut stack = vec![node];
+    while let Some(node) = stack.pop() {
+        match node.kind() {
+            "function_definition" | "class_definition" | "decorated_definition" => continue,
+            _ => {}
         }
-        n += count_decisions(child);
+        n += match node.kind() {
+            "if_statement"
+            | "elif_clause"
+            | "for_statement"
+            | "while_statement"
+            | "except_clause"
+            | "conditional_expression"
+            | "boolean_operator"
+            | "for_in_clause"
+            | "if_clause" => 1,
+            "match_statement" => node
+                .child_by_field_name("body")
+                .map(|b| {
+                    children(b)
+                        .iter()
+                        .filter(|c| c.kind() == "case_clause")
+                        .count() as u32
+                })
+                .unwrap_or(0)
+                .saturating_sub(1),
+            _ => 0,
+        };
+        let guard = if node.kind() == "case_clause" {
+            node.child_by_field_name("guard")
+        } else {
+            None
+        };
+        for child in children(node) {
+            // A case guard is an if_clause node but is NOT counted
+            // (spec §3.7 — the switch-cases precedent).
+            if let Some(g) = guard {
+                if g.id() == child.id() {
+                    continue;
+                }
+            }
+            stack.push(child);
+        }
     }
     n
 }
@@ -709,28 +804,37 @@ struct Acc {
 
 /// Collect the binding names of a pattern (parameter or target):
 /// plain identifiers and every name inside list/tuple/splat patterns.
+/// Iterative (see count_decisions): the output is a set, so order
+/// cannot matter.
 fn collect_pattern(node: Node, src: &[u8], out: &mut HashSet<String>) {
-    if node.kind() == "identifier" {
-        out.insert(txt(node, src));
-        return;
-    }
-    for i in 0..node.named_child_count() {
-        if let Some(c) = node.named_child(i) {
-            collect_pattern(c, src, out);
+    let mut stack = vec![node];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "identifier" {
+            out.insert(txt(node, src));
+            continue;
+        }
+        for i in 0..node.named_child_count() {
+            if let Some(c) = node.named_child(i) {
+                stack.push(c);
+            }
         }
     }
 }
 
 /// Every identifier inside a type expression is a ref (spec D5 —
 /// annotation names are reads of the names they mention).
+/// Iterative, like collect_pattern.
 fn scan_type_refs(node: Node, src: &[u8], out: &mut HashSet<String>) {
-    if node.kind() == "identifier" {
-        out.insert(txt(node, src));
-        return;
-    }
-    for i in 0..node.named_child_count() {
-        if let Some(c) = node.named_child(i) {
-            scan_type_refs(c, src, out);
+    let mut stack = vec![node];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "identifier" {
+            out.insert(txt(node, src));
+            continue;
+        }
+        for i in 0..node.named_child_count() {
+            if let Some(c) = node.named_child(i) {
+                stack.push(c);
+            }
         }
     }
 }
@@ -783,7 +887,10 @@ fn record_target(node: Node, src: &[u8], acc: &mut Acc, binding_only: bool) {
                 }
             }
         }
-        "list_pattern" | "tuple_pattern" | "list_splat_pattern" | "dictionary_splat_pattern"
+        "list_pattern"
+        | "tuple_pattern"
+        | "list_splat_pattern"
+        | "dictionary_splat_pattern"
         | "splat_pattern" => {
             let mut names = HashSet::new();
             collect_pattern(node, src, &mut names);
@@ -805,146 +912,144 @@ fn record_target(node: Node, src: &[u8], acc: &mut Acc, binding_only: bool) {
 
 /// The marimo scan over a body: collect defines / refs / writes with
 /// nested declarations pruned (spec §3.6).
-fn scan_w(node: Node, src: &[u8], acc: &mut Acc) {
-    match node.kind() {
-        // Nested declarations are their own symbols.
-        "function_definition" | "class_definition" | "decorated_definition" | "import_statement"
-        | "import_from_statement" => {}
-        "identifier" => {
-            acc.refs.insert(txt(node, src));
-        }
-        // Only the root of an attribute chain is a read (spec §3.6).
-        "attribute" => {
-            if let Some(obj) = node.child_by_field_name("object") {
-                scan_w(obj, src, acc);
+///
+/// Iterative, on an explicit stack (see the Step note on the
+/// walker): every accumulator is a set, so the order subtrees are
+/// visited in cannot change the result — each arm below schedules
+/// exactly the sub-scans the recursive form ran.
+fn scan_w(root: Node, src: &[u8], acc: &mut Acc) {
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        match node.kind() {
+            // Nested declarations are their own symbols.
+            "function_definition"
+            | "class_definition"
+            | "decorated_definition"
+            | "import_statement"
+            | "import_from_statement" => {}
+            "identifier" => {
+                acc.refs.insert(txt(node, src));
             }
-        }
-        "assignment" => {
-            if let Some(t) = node.child_by_field_name("type") {
-                scan_type_refs(t, src, &mut acc.refs);
-            }
-            if let Some(l) = node.child_by_field_name("left") {
-                record_target(l, src, acc, false);
-            }
-            if let Some(r) = node.child_by_field_name("right") {
-                scan_w(r, src, acc);
-            }
-        }
-        // Augmented assignment: the target is READ, not written
-        // (spec §3.6, the disclosed limit shared with §9).
-        "augmented_assignment" => {
-            if let Some(l) = node.child_by_field_name("left") {
-                scan_w(l, src, acc);
-            }
-            if let Some(r) = node.child_by_field_name("right") {
-                scan_w(r, src, acc);
-            }
-        }
-        "for_statement" => {
-            if let Some(l) = node.child_by_field_name("left") {
-                record_target(l, src, acc, true);
-            }
-            for f in ["right", "body", "alternative"] {
-                if let Some(n) = node.child_by_field_name(f) {
-                    scan_w(n, src, acc);
+            // Only the root of an attribute chain is a read (spec §3.6).
+            "attribute" => {
+                if let Some(obj) = node.child_by_field_name("object") {
+                    stack.push(obj);
                 }
             }
-        }
-        "with_item" => {
-            // `open(…) as fh`: the alias field binds; anything else
-            // in the item is read.
-            let alias = node.child_by_field_name("alias");
-            if let Some(a) = alias {
-                collect_pattern(a, src, &mut acc.defines);
+            "assignment" => {
+                if let Some(t) = node.child_by_field_name("type") {
+                    scan_type_refs(t, src, &mut acc.refs);
+                }
+                if let Some(l) = node.child_by_field_name("left") {
+                    record_target(l, src, acc, false);
+                }
+                if let Some(r) = node.child_by_field_name("right") {
+                    stack.push(r);
+                }
             }
-            for i in 0..node.named_child_count() {
-                if let Some(c) = node.named_child(i) {
-                    if alias.map(|a| a.id() != c.id()).unwrap_or(true) {
-                        scan_w(c, src, acc);
+            // Augmented assignment: the target is READ, not written
+            // (spec §3.6, the disclosed limit shared with §9).
+            "augmented_assignment" => {
+                if let Some(l) = node.child_by_field_name("left") {
+                    stack.push(l);
+                }
+                if let Some(r) = node.child_by_field_name("right") {
+                    stack.push(r);
+                }
+            }
+            "for_statement" => {
+                if let Some(l) = node.child_by_field_name("left") {
+                    record_target(l, src, acc, true);
+                }
+                for f in ["right", "body", "alternative"] {
+                    if let Some(n) = node.child_by_field_name(f) {
+                        stack.push(n);
                     }
                 }
             }
-        }
-        "as_pattern" => {
-            // `expr as name` where the grammar wraps it (match arms,
-            // some with/except shapes): expression read, alias binds.
-            let alias = node.child_by_field_name("alias");
-            if let Some(a) = alias {
-                collect_pattern(a, src, &mut acc.defines);
-            }
-            for i in 0..node.named_child_count() {
-                if let Some(c) = node.named_child(i) {
-                    if alias.map(|a| a.id() != c.id()).unwrap_or(true) {
-                        scan_w(c, src, acc);
-                    }
+            "with_item" | "as_pattern" => {
+                // `open(…) as fh` / `expr as name`: the alias field
+                // binds; anything else in the item is read.
+                let alias = node.child_by_field_name("alias");
+                if let Some(a) = alias {
+                    collect_pattern(a, src, &mut acc.defines);
                 }
-            }
-        }
-        "except_clause" => {
-            if let Some(v) = node.child_by_field_name("value") {
-                scan_w(v, src, acc);
-            }
-            if let Some(a) = node.child_by_field_name("alias") {
-                collect_pattern(a, src, &mut acc.defines);
-            }
-            for i in 0..node.named_child_count() {
-                if let Some(c) = node.named_child(i) {
-                    if c.kind() == "block" {
-                        scan_w(c, src, acc);
-                    }
-                }
-            }
-        }
-        "list_comprehension" | "dictionary_comprehension" | "set_comprehension"
-        | "generator_expression" => {
-            for i in 0..node.named_child_count() {
-                if let Some(c) = node.named_child(i) {
-                    if c.kind() == "for_in_clause" {
-                        if let Some(l) = c.child_by_field_name("left") {
-                            record_target(l, src, acc, true);
+                for i in 0..node.named_child_count() {
+                    if let Some(c) = node.named_child(i) {
+                        if alias.map(|a| a.id() != c.id()).unwrap_or(true) {
+                            stack.push(c);
                         }
-                        if let Some(r) = c.child_by_field_name("right") {
-                            scan_w(r, src, acc);
+                    }
+                }
+            }
+            "except_clause" => {
+                if let Some(v) = node.child_by_field_name("value") {
+                    stack.push(v);
+                }
+                if let Some(a) = node.child_by_field_name("alias") {
+                    collect_pattern(a, src, &mut acc.defines);
+                }
+                for i in 0..node.named_child_count() {
+                    if let Some(c) = node.named_child(i) {
+                        if c.kind() == "block" {
+                            stack.push(c);
                         }
-                    } else {
-                        scan_w(c, src, acc);
                     }
                 }
             }
-        }
-        "named_expression" => {
-            if let Some(n) = node.child_by_field_name("name") {
-                record_target(n, src, acc, true);
-            }
-            if let Some(v) = node.child_by_field_name("value") {
-                scan_w(v, src, acc);
-            }
-        }
-        "global_statement" | "nonlocal_statement" => {
-            for i in 0..node.named_child_count() {
-                if let Some(c) = node.named_child(i) {
-                    if c.kind() == "identifier" {
-                        acc.excluded.insert(txt(c, src));
+            "list_comprehension"
+            | "dictionary_comprehension"
+            | "set_comprehension"
+            | "generator_expression" => {
+                for i in 0..node.named_child_count() {
+                    if let Some(c) = node.named_child(i) {
+                        if c.kind() == "for_in_clause" {
+                            if let Some(l) = c.child_by_field_name("left") {
+                                record_target(l, src, acc, true);
+                            }
+                            if let Some(r) = c.child_by_field_name("right") {
+                                stack.push(r);
+                            }
+                        } else {
+                            stack.push(c);
+                        }
                     }
                 }
             }
-        }
-        "lambda" => {
-            if let Some(p) = node.child_by_field_name("parameters") {
-                for i in 0..p.named_child_count() {
-                    if let Some(c) = p.named_child(i) {
-                        collect_param(c, src, acc);
+            "named_expression" => {
+                if let Some(n) = node.child_by_field_name("name") {
+                    record_target(n, src, acc, true);
+                }
+                if let Some(v) = node.child_by_field_name("value") {
+                    stack.push(v);
+                }
+            }
+            "global_statement" | "nonlocal_statement" => {
+                for i in 0..node.named_child_count() {
+                    if let Some(c) = node.named_child(i) {
+                        if c.kind() == "identifier" {
+                            acc.excluded.insert(txt(c, src));
+                        }
                     }
                 }
             }
-            if let Some(b) = node.child_by_field_name("body") {
-                scan_w(b, src, acc);
+            "lambda" => {
+                if let Some(p) = node.child_by_field_name("parameters") {
+                    for i in 0..p.named_child_count() {
+                        if let Some(c) = p.named_child(i) {
+                            collect_param(c, src, acc);
+                        }
+                    }
+                }
+                if let Some(b) = node.child_by_field_name("body") {
+                    stack.push(b);
+                }
             }
-        }
-        _ => {
-            for i in 0..node.named_child_count() {
-                if let Some(c) = node.named_child(i) {
-                    scan_w(c, src, acc);
+            _ => {
+                for i in 0..node.named_child_count() {
+                    if let Some(c) = node.named_child(i) {
+                        stack.push(c);
+                    }
                 }
             }
         }
@@ -1020,15 +1125,41 @@ mod tests {
     }
 
     #[test]
+    fn py_deep_expression_chain_does_not_overflow() {
+        // Regression (E-1, found by the 2026-11-18 estate sweep):
+        // a generated module whose value is one expression nested
+        // tens of thousands of levels deep — a base64 blob written
+        // as `"…" + "…" + …` — overflowed the recursive walker's
+        // call stack and aborted the whole index. The walker and
+        // its scans are iterative now; the chain must extract to
+        // the one variable.
+        let chain = vec!["\"AAAA\""; 50_000].join(" + ");
+        let src = format!("BLOB = {chain}\n");
+        let fs = run("blob.py", &src);
+        let ids: Vec<&str> = fs.symbols.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, vec!["engine::blob::BLOB"]);
+        assert_eq!(fs.symbols[0].kind, NodeKind::Variable);
+    }
+
+    #[test]
     fn py_module_id_rules() {
-        assert_eq!(module_id_for("engine", Path::new("engine.py")), "engine::engine");
+        assert_eq!(
+            module_id_for("engine", Path::new("engine.py")),
+            "engine::engine"
+        );
         assert_eq!(module_id_for("engine", Path::new("__init__.py")), "engine");
-        assert_eq!(module_id_for("engine", Path::new("core/__init__.py")), "engine::core");
+        assert_eq!(
+            module_id_for("engine", Path::new("core/__init__.py")),
+            "engine::core"
+        );
         assert_eq!(
             module_id_for("engine", Path::new("core/graph.py")),
             "engine::core::graph"
         );
-        assert_eq!(module_id_for("engine", Path::new("main.py")), "engine::main");
+        assert_eq!(
+            module_id_for("engine", Path::new("main.py")),
+            "engine::main"
+        );
         assert_eq!(
             module_id_for("engine", Path::new("core/graph.pyi")),
             "engine::core::graph"
@@ -1095,7 +1226,10 @@ type Alias = int
             ("engine::core::engine::Engine::level", NodeKind::Method),
             ("engine::core::engine::Engine::make", NodeKind::Method),
             ("engine::core::engine::Engine::Inner", NodeKind::Class),
-            ("engine::core::engine::Engine::Inner::deep", NodeKind::Method),
+            (
+                "engine::core::engine::Engine::Inner::deep",
+                NodeKind::Method,
+            ),
             ("engine::core::engine::Alias", NodeKind::Class),
         ]
         .into_iter()
@@ -1116,7 +1250,10 @@ type Alias = int
         // CONST is on source line 2 (the fixture starts with a blank line).
         assert_eq!(m["engine::core::engine::CONST"].line, 2);
         // LIMIT's annotation name is its ref (D5); CONST has none.
-        assert_eq!(m["engine::core::engine::LIMIT"].refs, vec!["int".to_string()]);
+        assert_eq!(
+            m["engine::core::engine::LIMIT"].refs,
+            vec!["int".to_string()]
+        );
         assert!(m["engine::core::engine::CONST"].refs.is_empty());
         // Class body refs: the class-level initializer's callee, with
         // the assignment target filtered out; method bodies pruned.
@@ -1158,7 +1295,16 @@ def compute(items, factor: int = 2) -> int:
         assert_eq!(
             s.defines,
             sv(&[
-                "items", "factor", "total", "self_count", "it", "fh", "data", "squares", "n", "m",
+                "items",
+                "factor",
+                "total",
+                "self_count",
+                "it",
+                "fh",
+                "data",
+                "squares",
+                "n",
+                "m",
                 "err"
             ])
         );
@@ -1173,7 +1319,10 @@ def compute(items, factor: int = 2) -> int:
         // refs: call roots, the except type, annotation names; every
         // read of a defined name is filtered out; `obj` (the object
         // of a write target) is not a ref, per the TS precedent.
-        assert_eq!(s.refs, sv(&["len", "open", "risky", "ValueError", "report", "int"]));
+        assert_eq!(
+            s.refs,
+            sv(&["len", "open", "risky", "ValueError", "report", "int"])
+        );
     }
 
     const EDGES_PY: &str = r#"
@@ -1236,7 +1385,10 @@ class Wrapped(Base):
             ("external::__future__", sv(&["annotations"])),
         ];
         assert_eq!(got, want);
-        assert!(fs.imports.iter().all(|i| i.from_module_id == "engine::core::engine"));
+        assert!(fs
+            .imports
+            .iter()
+            .all(|i| i.from_module_id == "engine::core::engine"));
     }
 
     #[test]
@@ -1301,7 +1453,10 @@ class Wrapped(Base):
         // Protocol classes — plain, dotted, in either spelling — are
         // interfaces (D2); the detection is name-based.
         assert_eq!(m["engine::core::engine::Shape"].kind, NodeKind::Interface);
-        assert_eq!(m["engine::core::engine::TypedShape"].kind, NodeKind::Interface);
+        assert_eq!(
+            m["engine::core::engine::TypedShape"].kind,
+            NodeKind::Interface
+        );
     }
 
     // MEASURED_PY — the hand-counted measured-fields fixture (spec
@@ -1366,7 +1521,10 @@ def stub(x) -> int: ...
         assert_eq!(limit.signature.as_deref(), Some("LIMIT: int"));
         assert_eq!(limit.end_line, Some(2));
         assert_eq!(limit.decisions, None);
-        assert_eq!(m["engine::measured::PLAIN"].signature.as_deref(), Some("PLAIN"));
+        assert_eq!(
+            m["engine::measured::PLAIN"].signature.as_deref(),
+            Some("PLAIN")
+        );
         // Class header, bases and keyword bases included, colon cut.
         let c = m["engine::measured::C"];
         assert_eq!(c.signature.as_deref(), Some("class C(Base, metaclass=M)"));
@@ -1397,4 +1555,3 @@ def stub(x) -> int: ...
         assert_eq!(stub.decisions, Some(0));
     }
 }
-

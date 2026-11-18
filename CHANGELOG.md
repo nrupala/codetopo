@@ -10,6 +10,34 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Extractors are depth-safe (E-1).** The Rust, TypeScript and
+  Python walkers — and their defines/refs/writes and
+  decision-count scans — used to recurse over the syntax tree; a
+  generated file whose value is a single expression nested tens
+  of thousands of levels deep (a base64 blob written as
+  `"…" + "…" + …`, e.g. a generated `ogImage.ts`) overflowed the
+  call stack and **aborted the whole index**. All three walkers
+  now run on explicit heap stacks with visit order preserved, so
+  extraction output is byte-identical for every input the
+  recursive walkers survived, and deep generated files extract
+  like any other. Regression tests pin a 50,000-segment chain per
+  language. Found by the 2026-11-18 estate profile sweep.
+- **Render scope: `structure`.** `codetopo render --scope structure`
+  (HTTP render route `?scope=structure`, MCP `codetopo_render`
+  `scope: "structure"`) lays out the graph's structural skeleton —
+  package/file/module/class/interface/doc only, with the
+  organizational edges between them (containment, imports, type
+  hierarchy) rolled up to the nearest kept ancestor — instead of
+  the full symbol graph, layered by containment depth so the map
+  reads as the hierarchy it is. The full layout of a real
+  codebase is faithful but unreadable (thousands of symbol boxes
+  at one dependency depth); the structure scope is the same
+  measured graph at the level a reader navigates.
+  Still layout spec v1, still byte-deterministic; the shared JSON
+  answer records `scope` and `source_nodes`. Default stays
+  `full`, byte-identical to before; the force layout takes the
+  full graph and declines the structure scope with a stated
+  reason. Rules in `docs/render.md`.
 - **Release prebuilts grow to the full binary set.** The
   release-binaries workflow now builds, packages, and attests
   `codetopo` (CLI) and `codetopo-server` alongside `codetopo-mcp`
