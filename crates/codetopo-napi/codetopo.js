@@ -351,6 +351,30 @@ class Codetopo {
     return parse(await callAsync(this._handle.rank(by, limit)));
   }
 
+  /**
+   * The composite hotspot diagnosis (asynchronous): the top-ranked
+   * symbols by `by`, each with its blast-radius size, neighborhood
+   * size, and unresolved/external references, plus the index-level
+   * diagnostics summary. Every number is an atomic query's output —
+   * the composite orchestrates, it does not measure. The metric
+   * parameter is `by` ONLY, as for `rank`.
+   * @param {{by: string, limit?: number}} options
+   * @returns {Promise<object>}
+   */
+  async diagnoseHotspot(options) {
+    const opts = validateOptions(options, ['by', 'limit'], 'diagnoseHotspot');
+    const by = opts.by === undefined ? 'blast_radius' : opts.by;
+    if (!RANK_METRICS.includes(by)) {
+      const err = new Error(
+        `diagnoseHotspot: unknown metric '${by}' for 'by' (expected one of: ${RANK_METRICS.join(', ')})`
+      );
+      err.code = 'invalid_param';
+      throw err;
+    }
+    const limit = limitOf(opts, 'diagnoseHotspot');
+    return parse(await callAsync(this._handle.diagnoseHotspot(by, limit)));
+  }
+
   /** Coupling and cohesion measurements for every type and package. */
   async metrics() {
     return parse(await callAsync(this._handle.metrics()));

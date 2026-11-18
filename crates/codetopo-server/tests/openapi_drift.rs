@@ -20,6 +20,7 @@ const EXPECTED_ROUTES: &[&str] = &[
     "/v1/graphs/{id}/blast-radius",
     "/v1/graphs/{id}/descendants",
     "/v1/graphs/{id}/diagnostics",
+    "/v1/graphs/{id}/diagnose-hotspot",
     "/v1/graphs/{id}/diff",
     "/v1/graphs/{id}/history",
     "/v1/graphs/{id}/metrics",

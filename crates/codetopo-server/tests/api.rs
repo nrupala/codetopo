@@ -806,6 +806,7 @@ async fn schema_queries_match_the_query_vocabulary() {
         "verify",
         "diagnostics",
         "rank",
+        "diagnose_hotspot",
         "diff",
         "metrics",
         "history",
@@ -1112,6 +1113,71 @@ async fn rank_route_matches_the_cli_value_and_finds_the_hub() {
         .get(&format!("/v1/graphs/{index_id}/rank?by=nope"))
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "bad metric: {body}");
+    assert_eq!(body["error"], "invalid_param");
+}
+
+/// The diagnose-hotspot route returns the shared composite object,
+/// and the fixture's known hub — `helper_b`, blast radius 3 — leads
+/// the default diagnosis with its atomic counts attached. The
+/// composite's numbers are the atomic queries' numbers: the route is
+/// compared field-for-field with the CLI value for the same index.
+#[tokio::test]
+async fn diagnose_hotspot_route_matches_the_cli_value_and_finds_the_hub() {
+    let harness = Harness::new();
+    let report = harness.index_fixture().await;
+    let index_id = report["index_id"].as_str().expect("index_id").to_string();
+    let graph = load_graph_from_db(&harness.db(&index_id)).expect("load graph");
+    let diagnostics =
+        codetopo_cli::load_diagnostics_from_db(&harness.db(&index_id)).expect("diagnostics");
+
+    let (status, body) = harness
+        .get(&format!("/v1/graphs/{index_id}/diagnose-hotspot"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "diagnose-hotspot: {body}");
+    let mut via_http = body.clone();
+    via_http
+        .as_object_mut()
+        .expect("object")
+        .remove("index_id")
+        .expect("index_id present");
+    assert_eq!(
+        via_http,
+        codetopo_cli::diagnose_hotspot_value(
+            &graph,
+            &diagnostics,
+            codetopo_core::RankMetric::BlastRadius,
+            20,
+        ),
+        "HTTP diagnose-hotspot == CLI diagnose-hotspot"
+    );
+
+    // The planted hub leads, with the planted blast radius.
+    let first = &body["hotspots"][0];
+    assert_eq!(first["id"], "fixture::alpha::helper_b");
+    assert_eq!(first["blast_radius_size"], 3);
+    assert_eq!(first["rank_count"], 3);
+    assert!(
+        first["unresolved_references"]["total"].is_u64(),
+        "unresolved references are stated for the hub: {first}"
+    );
+    // The summary tallies exactly the recorded diagnostics.
+    assert_eq!(
+        body["diagnostics_summary"]["total"].as_u64().expect("total") as usize,
+        diagnostics.len(),
+        "summary total disagrees with the recorded diagnostics: {body}"
+    );
+
+    // Parameter discipline matches the rank route: an unknown metric
+    // and an unknown parameter are both refused as invalid_param.
+    let (status, body) = harness
+        .get(&format!("/v1/graphs/{index_id}/diagnose-hotspot?by=nope"))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "bad metric: {body}");
+    assert_eq!(body["error"], "invalid_param");
+    let (status, body) = harness
+        .get(&format!("/v1/graphs/{index_id}/diagnose-hotspot?metric=pagerank"))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "unknown parameter: {body}");
     assert_eq!(body["error"], "invalid_param");
 }
 

@@ -117,6 +117,27 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Composite hotspot diagnosis over the atomic queries: the
+    /// top-ranked symbols by the chosen measure, each with its
+    /// blast-radius size, neighborhood size (depth 1), and the
+    /// unresolved/external references touching it, plus the
+    /// index-level diagnostics summary. Every number is an atomic
+    /// query's output — the composite orchestrates, it does not
+    /// measure.
+    DiagnoseHotspot {
+        #[arg(long)]
+        db: PathBuf,
+        /// Metric: fan-in | fan-out | blast-radius | complexity |
+        /// pagerank | betweenness | closeness | eigenvector | katz.
+        #[arg(long, default_value = "blast-radius")]
+        by: String,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Emit the shared JSON shape ({metric, method,
+        /// composite_method, total, hotspots, diagnostics_summary}).
+        #[arg(long)]
+        json: bool,
+    },
     /// Coupling and cohesion measurements for every type and package:
     /// CBO, RFC, LCOM pair counts, TCC, ATFD, WMC, and package
     /// Ca/Ce/instability with external coupling named separately
@@ -411,6 +432,54 @@ fn run(cli: Cli) -> Result<(), codetopo_cli::CliError> {
                         println!("reason: {reason}");
                     }
                 }
+            }
+        }
+        Commands::DiagnoseHotspot { db, by, limit, json } => {
+            let metric = codetopo_core::RankMetric::parse(&by).ok_or_else(|| {
+                codetopo_cli::CliError::Usage(format!(
+                    "unknown rank metric '{by}' (expected fan-in, fan-out, blast-radius, complexity, pagerank, betweenness, closeness, eigenvector, or katz)"
+                ))
+            })?;
+            let graph = load_graph_from_db(&db)?;
+            let diagnostics = codetopo_cli::load_diagnostics_from_db(&db)?;
+            let value = codetopo_cli::diagnose_hotspot_value(&graph, &diagnostics, metric, limit);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).expect("diagnosis serializes")
+                );
+            } else if value["measured"] == serde_json::json!(false) {
+                println!("{} not measured", metric.as_str());
+                println!("method: {}", metric.method());
+                println!("reason: {}", value["reason"].as_str().unwrap_or(""));
+                println!(
+                    "diagnostics: {} recorded at index time ({} unresolved calls)",
+                    value["diagnostics_summary"]["total"], value["diagnostics_summary"]["unresolved_calls"]
+                );
+            } else {
+                println!(
+                    "{} hotspots by {} (of {} ranked)",
+                    value["hotspots"].as_array().map_or(0, Vec::len),
+                    metric.as_str(),
+                    value["total"]
+                );
+                println!("method: {}", metric.method());
+                for h in value["hotspots"].as_array().expect("hotspots list") {
+                    let rank = match (h["rank_count"].as_u64(), h["rank_value"].as_f64()) {
+                        (Some(c), _) => c.to_string(),
+                        (None, Some(v)) => format!("{v:.6}"),
+                        (None, None) => "-".to_string(),
+                    };
+                    println!(
+                        "{rank}  {} · blast radius {} · neighborhood {} · unresolved references {}",
+                        h["id"], h["blast_radius_size"], h["neighborhood_size"],
+                        h["unresolved_references"]["total"]
+                    );
+                }
+                println!(
+                    "diagnostics: {} recorded at index time ({} unresolved calls)",
+                    value["diagnostics_summary"]["total"], value["diagnostics_summary"]["unresolved_calls"]
+                );
             }
         }
         Commands::Metrics { db, json } => {

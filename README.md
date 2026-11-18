@@ -181,17 +181,18 @@ curl -H "Authorization: Bearer $KEY" \
   "localhost:8080/v1/graphs/<uuid>/descendants?node=<node-id>&expand=true"
 ```
 
-Twenty endpoints under `/v1`, one index operation plus nineteen read-only
-queries: `POST /v1/index`, `GET /v1/graphs/{id}/{descendants, ancestors,
+Twenty-one endpoints under `/v1`, one index operation plus twenty
+read-only queries: `POST /v1/index`, `GET /v1/graphs/{id}/{descendants, ancestors,
 blast-radius, path, stats, verify, snapshot, neighborhood, symbol,
-search, diagnostics, rank, diff, metrics, history, communities, topo-sort, render}`, `GET /v1/schema`. Full contract in
+search, diagnostics, rank, diagnose-hotspot, diff, metrics, history, communities, topo-sort, render}`, `GET /v1/schema`. Full contract in
 [`schemas/openapi.yaml`](schemas/openapi.yaml) (OpenAPI 3.1.0), env knobs
 (`CODETOPO_BIND`, `CODETOPO_DATA_DIR`, `CODETOPO_KEYS_FILE`,
 `CODETOPO_METERING_LOG`) documented in [`schemas/README.md`](schemas/README.md).
 
 ### MCP (`codetopo-mcp`)
 
-A stdio JSON-RPC server exposing the same handler layer as twenty tools —
+A stdio JSON-RPC server exposing the same handler layer as twenty-one
+tools — twenty atomic tools plus one composite. The atomic tools are
 the sixteen query/integrity tools (`codetopo_index`, `codetopo_descendants`,
 `codetopo_ancestors`, `codetopo_blast_radius`, `codetopo_path`,
 `codetopo_stats`, `codetopo_verify`, `codetopo_snapshot`,
@@ -199,8 +200,11 @@ the sixteen query/integrity tools (`codetopo_index`, `codetopo_descendants`,
 `codetopo_metrics`, `codetopo_history`, `codetopo_communities`,
 `codetopo_topo_sort`, `codetopo_render`) plus discovery
 (`codetopo_search_symbols`, `codetopo_get_symbol`,
-`codetopo_neighborhood`, `codetopo_describe_schema`) — so an in-process
-agent learns one surface and gets both. MCP answers are identical to the HTTP answers by
+`codetopo_neighborhood`, `codetopo_describe_schema`). The composite is
+`codetopo_diagnose_hotspot`: a task-level hotspot diagnosis composed
+from the atomics (rank, blast radius, neighborhood, diagnostics) — it
+orchestrates and presents, and adds no measurement of its own. So an
+in-process agent learns one surface and gets both. MCP answers are identical to the HTTP answers by
 construction: both call the same `codetopo-core` queries.
 
 ```json

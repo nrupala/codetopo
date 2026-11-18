@@ -180,6 +180,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/graphs/:id/search", get(search))
         .route("/v1/graphs/:id/diagnostics", get(diagnostics))
         .route("/v1/graphs/:id/rank", get(rank))
+        .route("/v1/graphs/:id/diagnose-hotspot", get(diagnose_hotspot))
         .route("/v1/graphs/:id/diff", get(diff))
         .route("/v1/graphs/:id/metrics", get(metrics))
         .route("/v1/graphs/:id/communities", get(communities))
@@ -1251,6 +1252,67 @@ async fn rank(
     let db = state.db_path(&index_id);
     let graph = load_graph_blocking(&db, &index_id)?;
     let mut value = codetopo_cli::rank_value(&graph, metric, limit);
+    value["index_id"] = json!(index_id);
+    Ok(Json(value))
+}
+
+/// `GET /v1/graphs/{id}/diagnose-hotspot?by=&limit=` — the composite
+/// hotspot diagnosis: the top-ranked symbols by the chosen measure,
+/// each with its blast-radius size, neighborhood size (depth 1), and
+/// the unresolved/external references touching it, plus the
+/// index-level diagnostics summary. The shared
+/// [`codetopo_cli::diagnose_hotspot_value`] shape plus `index_id`:
+/// the CLI's `diagnose-hotspot` command and the MCP
+/// `codetopo_diagnose_hotspot` tool return the same object. Every
+/// number is an atomic query's output — the composite orchestrates
+/// and presents, it does not measure. Parameters follow the rank
+/// route's discipline exactly: default `by` is `blast_radius`,
+/// `limit` default 20, 1..=1000, unknown parameters refused.
+async fn diagnose_hotspot(
+    State(state): State<AppState>,
+    Extension(key): Extension<KeyId>,
+    UrlPath(index_id): UrlPath<String>,
+    RawQuery(raw_query): RawQuery,
+    Query(query): Query<RankQuery>,
+) -> Result<Json<Value>, ApiError> {
+    reject_unknown_params(raw_query.as_deref(), "/diagnose-hotspot", &["by", "limit"])?;
+    enforce_tenancy(&state, &index_id, &key)?;
+    let by = query
+        .by
+        .as_deref()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .unwrap_or("blast_radius");
+    let metric = codetopo_core::RankMetric::parse(by).ok_or_else(|| {
+        ApiError::invalid_param(
+            "by",
+            &format!("expected fan_in, fan_out, blast_radius, complexity, pagerank, betweenness, closeness, eigenvector, or katz, got '{by}'"),
+        )
+    })?;
+    let limit: usize = match query.limit.as_deref().map(str::trim) {
+        None | Some("") => DEFAULT_LIMIT,
+        Some(raw) => {
+            let parsed: usize = raw.parse().map_err(|_| {
+                ApiError::invalid_param("limit", &format!("expected an integer, got '{raw}'"))
+            })?;
+            if parsed == 0 || parsed > MAX_LIMIT {
+                return Err(ApiError::invalid_param(
+                    "limit",
+                    &format!("must be 1..={MAX_LIMIT}, got {parsed}"),
+                ));
+            }
+            parsed
+        }
+    };
+    let db = state.db_path(&index_id);
+    let graph = load_graph_blocking(&db, &index_id)?;
+    let walk_index = index_id.clone();
+    let diagnostics = spawn_blocking(move || {
+        codetopo_cli::load_diagnostics_from_db(&db)
+            .map_err(|err| map_cli_error(&walk_index, err))
+    })
+    .await?;
+    let mut value = codetopo_cli::diagnose_hotspot_value(&graph, &diagnostics, metric, limit);
     value["index_id"] = json!(index_id);
     Ok(Json(value))
 }

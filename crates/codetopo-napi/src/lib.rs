@@ -19,9 +19,9 @@
 //! as a JSON-encoded reason (`{"code", "message"}`) which the JS layer
 //! rethrows as an `Error` carrying the stable `code`.
 //!
-//! Heavy operations (index, rank, metrics, communities, history) are
-//! [`AsyncTask`]s on the libuv pool: they return Promises and never
-//! block the Node event loop.
+//! Heavy operations (index, rank, diagnoseHotspot, metrics,
+//! communities, history) are [`AsyncTask`]s on the libuv pool: they
+//! return Promises and never block the Node event loop.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -501,6 +501,22 @@ impl GraphHandle {
         })
     }
 
+    /// `codetopo_diagnose_hotspot` (async) — the CLI library's
+    /// composite hotspot diagnosis for the metric named by `by`:
+    /// the rank ordering, each hotspot's blast radius and
+    /// neighborhood, its unresolved/external references, and the
+    /// diagnostics summary. An unknown metric is an `invalid_param`
+    /// error naming the accepted vocabulary.
+    #[napi]
+    pub fn diagnose_hotspot(&self, by: String, limit: u32) -> AsyncTask<DiagnoseHotspotTask> {
+        AsyncTask::new(DiagnoseHotspotTask {
+            graph: self.graph.clone(),
+            diagnostics: self.diagnostics_fresh(),
+            by,
+            limit: limit as usize,
+        })
+    }
+
     /// `codetopo_metrics` (async) — the CLI library's metrics value.
     #[napi]
     pub fn metrics(&self) -> AsyncTask<MetricsTask> {
@@ -615,6 +631,40 @@ impl Task for RankTask {
             )
         })?;
         to_json_string(&codetopo_cli::rank_value(&self.graph, metric, self.limit))
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(output)
+    }
+}
+
+pub struct DiagnoseHotspotTask {
+    graph: Arc<Graph>,
+    diagnostics: Vec<Diagnostic>,
+    by: String,
+    limit: usize,
+}
+
+impl Task for DiagnoseHotspotTask {
+    type Output = String;
+    type JsValue = String;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        let metric = RankMetric::parse(&self.by).ok_or_else(|| {
+            coded_error(
+                "invalid_param",
+                format!(
+                    "unknown rank metric '{}' (expected one of: fan_in, fan_out, blast_radius, complexity, pagerank, betweenness, closeness, eigenvector, katz)",
+                    self.by
+                ),
+            )
+        })?;
+        to_json_string(&codetopo_cli::diagnose_hotspot_value(
+            &self.graph,
+            &self.diagnostics,
+            metric,
+            self.limit,
+        ))
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {

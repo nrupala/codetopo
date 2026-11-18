@@ -313,6 +313,21 @@ pub fn tool_catalog() -> Vec<Value> {
             },
         }),
         json!({
+            "name": "codetopo_diagnose_hotspot",
+            "title": "Diagnose hotspots (composite)",
+            "description": "A composite over the atomic tools: the top-ranked symbols by the chosen measure, each with its blast-radius size, neighborhood size (depth 1), and the unresolved/external references touching it, plus the index-level diagnostics summary. Every number is an atomic query's output - the composite orchestrates and presents, it does not measure. What the graph could not resolve is stated per hotspot, never hidden.",
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "db_path": {"type": "string", "description": "Path to the index database."},
+                    "by": {"type": "string", "description": "Metric to rank by: fan_in, fan_out, blast_radius (default), complexity, pagerank, betweenness, closeness, eigenvector, or katz."},
+                    "limit": {"type": "integer", "description": "Maximum hotspots to return. Default 20."},
+                },
+                "required": ["db_path"],
+            },
+        }),
+        json!({
             "name": "codetopo_diff",
             "title": "Diff two indexes (change impact)",
             "description": "Compare two indexes (or two snapshot files): added, removed, and changed nodes and edges, plus the blast-radius movement of every touched symbol. Give exactly one before source and one after source.",
@@ -472,6 +487,7 @@ pub fn call_tool(name: &str, args: &Value) -> Result<Value, ToolError> {
         "codetopo_snapshot" => tool_snapshot(args),
         "codetopo_diagnostics" => tool_diagnostics(args),
         "codetopo_rank" => tool_rank(args),
+        "codetopo_diagnose_hotspot" => tool_diagnose_hotspot(args),
         "codetopo_diff" => tool_diff(args),
         "codetopo_metrics" => tool_metrics(args),
         "codetopo_communities" => tool_communities(args),
@@ -864,6 +880,24 @@ fn tool_rank(args: &Value) -> Result<Value, ToolError> {
     Ok(codetopo_cli::rank_value(&graph, metric, limit))
 }
 
+/// `codetopo_diagnose_hotspot` — the composite hotspot diagnosis, in
+/// the shared shape the CLI's `diagnose-hotspot --json` and the HTTP
+/// diagnose-hotspot route also return (the route adds `index_id`).
+/// Orchestration over the atomics only: rank for the ordering,
+/// blast_radius and neighborhood per hotspot, the index-time
+/// diagnostics for the summary — no new measurement.
+fn tool_diagnose_hotspot(args: &Value) -> Result<Value, ToolError> {
+    let db_path = require_index(args)?;
+    let graph = codetopo_cli::load_graph_from_db(&db_path).map_err(ToolError::Cli)?;
+    let diagnostics =
+        codetopo_cli::load_diagnostics_from_db(&db_path).map_err(ToolError::Cli)?;
+    let by = optional_str(args, "by")?.unwrap_or("blast_radius");
+    let metric = codetopo_core::RankMetric::parse(by)
+        .ok_or_else(|| ToolError::MissingParam("by".to_string()))?;
+    let limit = optional_limit(args)?;
+    Ok(codetopo_cli::diagnose_hotspot_value(&graph, &diagnostics, metric, limit))
+}
+
 fn tool_search_symbols(args: &Value) -> Result<Value, ToolError> {
     let graph = open_graph(args)?;
     let query = require_str(args, "query")?;
@@ -977,9 +1011,9 @@ mod tests {
     // -- catalogue ---------------------------------------------------------
 
     #[test]
-    fn catalogue_lists_twenty_tools() {
+    fn catalogue_lists_twenty_one_tools() {
         let catalog = tool_catalog();
-        assert_eq!(catalog.len(), 20, "expected 20 tools: {catalog:?}");
+        assert_eq!(catalog.len(), 21, "expected 21 tools: {catalog:?}");
 
         let names: Vec<&str> = catalog
             .iter()
@@ -998,6 +1032,7 @@ mod tests {
                 "codetopo_snapshot",
                 "codetopo_diagnostics",
                 "codetopo_rank",
+                "codetopo_diagnose_hotspot",
                 "codetopo_diff",
                 "codetopo_metrics",
                 "codetopo_communities",
@@ -1360,7 +1395,7 @@ mod tests {
         assert_eq!(response["id"], 7);
         assert_eq!(
             response["result"]["tools"].as_array().expect("tools").len(),
-            20
+            21
         );
     }
 
@@ -1551,6 +1586,54 @@ mod tests {
         let via_tool = result_of("codetopo_rank", &args(&db_path, json!({})));
         assert_eq!(via_tool["metric"], "blast_radius");
         assert!(call_tool("codetopo_rank", &args(&db_path, json!({"by": "nope"}))).is_err());
+    }
+
+    #[test]
+    fn diagnose_hotspot_tool_matches_the_cli_value() {
+        let (_dir, db_path) = fixture_index();
+        let graph = load_graph_from_db(&db_path).expect("graph loads");
+        let diagnostics =
+            codetopo_cli::load_diagnostics_from_db(&db_path).expect("diagnostics load");
+        // The tool returns exactly the shared composite value — the
+        // three surfaces cannot disagree about a diagnosis.
+        let via_tool = result_of("codetopo_diagnose_hotspot", &args(&db_path, json!({})));
+        assert_eq!(
+            via_tool,
+            codetopo_cli::diagnose_hotspot_value(
+                &graph,
+                &diagnostics,
+                codetopo_core::RankMetric::BlastRadius,
+                20,
+            ),
+            "MCP diagnose_hotspot == CLI diagnose_hotspot"
+        );
+        assert_eq!(via_tool["metric"], "blast_radius");
+        let hotspots = via_tool["hotspots"].as_array().expect("hotspots list");
+        assert!(!hotspots.is_empty(), "fixture diagnosis has no hotspots");
+        // Every reported size is the atomic query's own answer.
+        for hotspot in hotspots {
+            let id = hotspot["id"].as_str().expect("id");
+            assert_eq!(
+                hotspot["blast_radius_size"].as_u64().expect("size") as usize,
+                graph.blast_radius(id).len(),
+                "tool disagrees with the atomic blast_radius for {id}"
+            );
+            assert!(
+                hotspot["unresolved_references"]["total"].is_u64(),
+                "unresolved references are not stated for {id}: {hotspot}"
+            );
+        }
+        // The diagnostics summary tallies the recorded diagnostics.
+        assert_eq!(
+            via_tool["diagnostics_summary"]["total"].as_u64().expect("total") as usize,
+            diagnostics.len(),
+            "summary total disagrees with the recorded diagnostics"
+        );
+        // An unknown metric is refused, as the rank tool refuses it.
+        assert!(
+            call_tool("codetopo_diagnose_hotspot", &args(&db_path, json!({"by": "nope"})))
+                .is_err()
+        );
     }
 
     #[test]
