@@ -10,6 +10,13 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Release prebuilts grow to the full binary set.** The
+  release-binaries workflow now builds, packages, and attests
+  `codetopo` (CLI) and `codetopo-server` alongside `codetopo-mcp`
+  and `codetopo-acp` on the same five-platform matrix, so the next
+  gated release ships all four binaries as prebuilt downloads.
+  Attaching them to a release still waits for that release — the
+  workflow change is preparation, not a release.
 - **First composite query: `diagnose_hotspot`.** A task-level
   hotspot diagnosis composed over the atomic queries — the
   top-ranked symbols by the chosen measure (default

@@ -91,10 +91,10 @@ jobs:
         shell: bash
         run: |
           if [ -n "${{ matrix.target }}" ]; then
-            cargo build --release -p codetopo-acp -p codetopo-mcp --target "${{ matrix.target }}"
+            cargo build --release -p codetopo-acp -p codetopo-mcp -p codetopo-cli -p codetopo-server --target "${{ matrix.target }}"
             echo "BIN_DIR=target/${{ matrix.target }}/release" >> "$GITHUB_ENV"
           else
-            cargo build --release -p codetopo-acp -p codetopo-mcp
+            cargo build --release -p codetopo-acp -p codetopo-mcp -p codetopo-cli -p codetopo-server
             echo "BIN_DIR=target/release" >> "$GITHUB_ENV"
           fi
 
@@ -103,7 +103,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          for bin in codetopo-acp codetopo-mcp; do
+          for bin in codetopo-acp codetopo-mcp codetopo codetopo-server; do
             cp "$BIN_DIR/$bin" dist/
             tar -czf "$bin-${{ matrix.platform }}.tar.gz" -C dist "$bin"
             shasum -a 256 "$bin-${{ matrix.platform }}.tar.gz" > "$bin-${{ matrix.platform }}.tar.gz.sha256"
@@ -115,7 +115,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          foreach ($bin in @("codetopo-acp", "codetopo-mcp")) {
+          foreach ($bin in @("codetopo-acp", "codetopo-mcp", "codetopo", "codetopo-server")) {
             Copy-Item "$env:BIN_DIR/$bin.exe" dist/
             Compress-Archive -Path "dist/$bin.exe" -DestinationPath "$bin-${{ matrix.platform }}.zip"
             (Get-FileHash "$bin-${{ matrix.platform }}.zip" -Algorithm SHA256).Hash.ToLower() + "  $bin-${{ matrix.platform }}.zip" | Out-File -Encoding ascii "$bin-${{ matrix.platform }}.zip.sha256"
