@@ -10,6 +10,22 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **PHP extractor.** `.php` files are now parsed via
+  tree-sitter (`tree-sitter-php` 0.25, the `PHP_ONLY`
+  grammar). Classes, traits, enums, interfaces, methods,
+  plain functions, enum cases, top-level variables,
+  `use` imports, `require`/`include` file imports, calls,
+  and `extends`/`implements` heritage are extracted with
+  the same CODE_SCHEMA output, defines/refs/writes scan,
+  and depth-safe heap-stack walk as the existing
+  extractors, proven by a hand-derived known-answer
+  fixture (`crates/codetopo-extract/tests/fixture-php`).
+  Namespace names are symbol-path segments. One stated
+  limit: the deep-chain regression uses a 10,000-segment
+  chain, because the pinned grammar's own parser
+  overflows on a 50,000-term chain (verified). Twelfth
+  language of the full-language extractor program
+  (2026-11-18 ruling).
 - **C# extractor.** `.cs` files are now parsed via
   tree-sitter (`tree-sitter-c-sharp` 0.24). Classes,
   interfaces, structs, records, enums, methods,
