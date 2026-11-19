@@ -83,6 +83,13 @@ All notable changes to this project are documented here.
   7,328 nodes / 25,088 edges / 5,086 diagnostics and the canonical
   content hash byte-identically.
 
+- **Test-suite fix.** `diagnose_hotspot`'s fixture helper
+  shared one PID-named scratch directory across the test
+  binary's parallel tests, and each call's `remove_dir_all`
+  could delete the fixture from under a sibling test
+  (intermittent CI failure: "skipping hub.py: read error").
+  The directory is now unique per call.
+
 ## [0.9.1] — 2026-11-09
 
 A patch release over 0.9.0: the three hosted test-pass defects
