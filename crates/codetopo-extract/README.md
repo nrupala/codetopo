@@ -5,8 +5,8 @@
 # codetopo-extract
 
 Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
-(`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`), and **Python**
-(`.py`, `.pyi`). One parse per file, one recursive walk, emitting
+(`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`), **Python**
+(`.py`, `.pyi`), and **Kotlin** (`.kt`, `.kts`). One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
 ```rust
@@ -55,6 +55,15 @@ is **kept**, as in TypeScript:
 | `main.py`           | `{pkg}::main`        |
 | `core/graph.pyi`    | `{pkg}::core::graph` |
 
+**Kotlin** — rel path, strip extension, `/` → `::` (the Python
+rule; no collapse — Kotlin has no `__init__` form):
+
+| rel path            | module_id            |
+|---------------------|----------------------|
+| `Main.kt`           | `{pkg}::Main`        |
+| `core/Engine.kt`    | `{pkg}::core::Engine` |
+| `shapes/Circle.kt`  | `{pkg}::shapes::Circle` |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -86,6 +95,17 @@ The `impl` block itself is **not** a symbol; its self type (`Client`,
 | Python `class` with a `Protocol` base (plain, `typing.Protocol`, or subscripted) | `Interface` |
 | Python module-level plain-name assignment | `Variable` |
 | Python PEP 695 `type X = …` alias | `Class` |
+| Kotlin `fun` (top level, or nested in a function) | `Function` |
+| Kotlin `fun` directly in a class / object body | `Method` |
+| Kotlin `class` / `object` / companion object | `Class` |
+| Kotlin `interface` | `Interface` |
+| Kotlin top-level `val` / `var` property | `Variable` |
+
+Kotlin non-symbols, by design: class-level properties and
+primary-constructor `val`/`var` parameters (fields are not symbols
+in any language here), secondary constructors (their bodies walk
+under the class scope), and `typealias` declarations (no alias
+mapping exists in the code schema for them).
 
 Python non-symbols, by design: class-level assignments (fields are
 not symbols in any language here), destructuring assignment targets
@@ -165,6 +185,22 @@ contribute their attribute name (`pkg.Base` → `Base`), subscript
 bases recurse to the value (`Generic[T]` → `Generic`); keyword
 arguments (`metaclass=…`) and call bases are skipped.
 
+**Kotlin** imports → `RawImport` at module granularity, resolved
+by the same dotted rule (first segment is the package name →
+internal, else `external::{first}`):
+
+| statement | to_module_id | bindings |
+|---|---|---|
+| `import a.b.C` | `{pkg}::a::b::C` if `a` is the package, else `external::a` | `["C"]` (last segment — what Kotlin binds) |
+| `import a.b.C as D` | as above for `a.b.C` | `["D"]` (alias wins) |
+| `import a.b.*` | module `a.b`, resolved as above | `[]` |
+
+**Kotlin calls** follow the shared rule: `to_name` is the callee
+text as written (`foo`, `shape.area`, `Engine` for a constructor
+call). **Kotlin heritage** is `Inherits` only, from delegation
+specifiers (`class C : Shape, Closeable()` contributes `Shape` and
+`Closeable` — the last segment of each specifier's type).
+
 ### defines / refs
 
 Best effort, per the marimo contract:
@@ -186,6 +222,17 @@ annotation names are refs. An augmented-assignment target (`x += 1`)
 is recorded as a *ref*, not a write — a disclosed limit of the
 schema (§9 reports it as such). `global`/`nonlocal` names are
 excluded from defines; assignments to them still write.
+
+For Kotlin the same contract is filled from Kotlin's binding
+forms: **defines** are parameter names (function, lambda, `for`,
+and `catch` parameters) plus local property names and plain
+assignment targets; **writes** are assignment targets and local
+property names (a plain name both defines and writes; `obj.x = …`
+writes `x`). Type names (parameter, property, and return types)
+are refs. An augmented-assignment target (`x += 1`) is recorded
+as a *ref*, not a write — the same disclosed limit as Python.
+Only the root of a navigation chain is a read (`shape.area()`
+reads `shape`, never `area`).
 
 ## Error behavior
 
@@ -224,13 +271,26 @@ crates.io registry cache:
   `except_clause`. (One delta against the grammar's research copy:
   `tuple_expression` exists there but not in 0.25.0; the mapping does
   not use it.)
+- tree-sitter-kotlin-ng 1.1.0: `source_file`, `import`,
+  `qualified_identifier`, `class_declaration`, `object_declaration`,
+  `companion_object`, `delegation_specifiers`, `function_declaration`,
+  `function_value_parameters`, `function_body`,
+  `property_declaration`, `variable_declaration`,
+  `call_expression`, `navigation_expression`, `assignment`,
+  `for_statement`, `catch_block`, `lambda_literal`,
+  `when_expression`, `binary_expression`.
 
 Crate pins `tree-sitter-typescript = "0.23"` because 0.24 does not exist on
 crates.io. Its 0.23 API exposes `LANGUAGE_TYPESCRIPT` / `LANGUAGE_TSX` as
 `tree_sitter_language::LanguageFn`, converted with `.into()` to
 `tree_sitter::Language` (supported since tree-sitter 0.25). The Python
 grammar is pinned at `tree-sitter-python = "0.25"` (0.25.0, MIT) for
-the same runtime pairing.
+the same runtime pairing. The Kotlin grammar is pinned at
+`tree-sitter-kotlin-ng = "1.1"` (1.1.0, MIT): the upstream
+`tree-sitter-kotlin` crate pins tree-sitter <0.23, whose `links`
+value cannot coexist with tree-sitter 0.25 in one dependency graph;
+the `-ng` fork of the same grammar carries the modern
+`tree-sitter-language` binding.
 
 ## The RA extractor (domain-profile build, Stage 5)
 

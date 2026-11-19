@@ -10,6 +10,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Kotlin extractor.** `.kt` / `.kts` files are now parsed via
+  tree-sitter (`tree-sitter-kotlin-ng` 1.1 — the maintained fork of
+  the fwcd grammar whose `tree-sitter-language` binding pairs with
+  the workspace's tree-sitter 0.25; the upstream crate pins
+  tree-sitter <0.23 and cannot coexist with it). Classes,
+  interfaces, objects, functions, methods, top-level properties,
+  imports, calls, and delegation-specifier heritage are extracted
+  with the same CODE_SCHEMA output, defines/refs/writes scan, and
+  depth-safe heap-stack walk as the existing extractors, proven by
+  a hand-derived known-answer fixture
+  (`crates/codetopo-extract/tests/fixture-kt`). First language of
+  the full-language extractor program (2026-11-18 ruling).
 - **Extractors are depth-safe (E-1).** The Rust, TypeScript and
   Python walkers — and their defines/refs/writes and
   decision-count scans — used to recurse over the syntax tree; a
