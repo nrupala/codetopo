@@ -7,7 +7,8 @@
 Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
 (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`), **Python**
 (`.py`, `.pyi`), **Kotlin** (`.kt`, `.kts`), **C** (`.c`, `.h`),
-**Java** (`.java`), and **Go** (`.go`). One parse per file, one recursive walk, emitting
+**Java** (`.java`), **Go** (`.go`), and **Shell** (`.sh`, `.bash`).
+One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
 ```rust
@@ -101,6 +102,15 @@ resolves to exactly this id:
 | `shapes/circle.go`  | `{pkg}::shapes`      |
 | `core/engine.go`    | `{pkg}::core`        |
 
+**Shell** — rel path, strip extension, `/` → `::` (the Python
+rule):
+
+| rel path            | module_id            |
+|---------------------|----------------------|
+| `main.sh`           | `{pkg}::main`        |
+| `lib/util.sh`       | `{pkg}::lib::util`   |
+| `core/engine.sh`    | `{pkg}::core::engine` |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -164,6 +174,11 @@ Java non-symbols, by design: fields and record components
 
 Go non-symbols, by design: struct fields (fields are not
 symbols in any language here).
+
+| Shell function | `Function` |
+| Shell top-level variable assignment | `Variable` |
+
+Shell has no other binding forms — no types, no classes.
 
 Kotlin non-symbols, by design: class-level properties and
 primary-constructor `val`/`var` parameters (fields are not symbols
@@ -319,6 +334,21 @@ interface is `Inherits`. Struct embedding is NOT heritage — it
 is composition; method promotion is a call-resolution concern,
 not a type-hierarchy edge.
 
+**Shell** imports are the `source` / `.` command — shell's
+only import mechanism. A command by that name whose first
+argument is a literal path is recorded as an import (not a
+call), resolved on module-id segments relative to the sourcing
+file, like a C include:
+
+| statement (from `core/engine.sh`) | to_module_id | bindings |
+|---|---|---|
+| `. "../lib/util.sh"` | `{pkg}::lib::util` | `[]` |
+| `source lib/more.sh` | `{pkg}::core::lib::more` | `[]` |
+
+**Shell calls**: every other command is a call, `to_name` the
+command name as written. **Shell heritage** is empty — shell
+has no type system.
+
 ### defines / refs
 
 Best effort, per the marimo contract:
@@ -389,6 +419,15 @@ as Python. Only the operand of a selector is a read
 (`e.Wheel.Area()` reads `e`); composite-literal keys are field
 names, not reads. The blank identifier `_` is never a define.
 
+For Shell the same contract is filled from shell's binding
+forms: **defines** are assignment targets, `local`/`declare`
+names, and `for` variables; **writes** are assignment targets
+(a plain name both defines and writes; an array-element target
+`arr[i] = …` writes `arr`). A command's name is a ref (the
+called-name rule, as in Python). Expansions of named variables
+(`$x`, `${x}`) are refs; positional and special parameters
+(`$1`, `$@`, `$?`, …) are not.
+
 ## Error behavior
 
 - `extract_file` returns `Err(ExtractError::UnsupportedExtension)` for
@@ -458,6 +497,12 @@ crates.io registry cache:
   `call_expression`, `selector_expression`,
   `assignment_statement`, `short_var_declaration`,
   `inc_statement`, `composite_literal`, `qualified_type`.
+- tree-sitter-bash 0.25.1: `program`, `function_definition`,
+  `command`, `command_name`, `variable_assignment`,
+  `declaration_command`, `simple_expansion`, `expansion`,
+  `variable_name`, `if_statement`, `for_statement`,
+  `while_statement`, `case_statement`, `test_command`,
+  `command_substitution`, `list`.
 
 Crate pins `tree-sitter-typescript = "0.23"` because 0.24 does not exist on
 crates.io. Its 0.23 API exposes `LANGUAGE_TYPESCRIPT` / `LANGUAGE_TSX` as
@@ -474,7 +519,9 @@ the `-ng` fork of the same grammar carries the modern
 pairing. The Java grammar is pinned at `tree-sitter-java =
 "0.23"` (0.23.5, MIT) for the same runtime pairing. The Go
 grammar is pinned at `tree-sitter-go = "0.25"` (0.25.0, MIT)
-for the same runtime pairing.
+for the same runtime pairing. The Shell grammar is pinned at
+`tree-sitter-bash = "0.25"` (0.25.1, MIT) for the same runtime
+pairing.
 
 ## The RA extractor (domain-profile build, Stage 5)
 
