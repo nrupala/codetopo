@@ -23,7 +23,7 @@ jobs:
     env:
       CODETOPO_REPO_ROOT: ${{ github.workspace }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
