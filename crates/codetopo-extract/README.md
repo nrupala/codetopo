@@ -7,7 +7,7 @@
 Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
 (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`), **Python**
 (`.py`, `.pyi`), **Kotlin** (`.kt`, `.kts`), **C** (`.c`, `.h`),
-and **Java** (`.java`). One parse per file, one recursive walk, emitting
+**Java** (`.java`), and **Go** (`.go`). One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
 ```rust
@@ -90,6 +90,17 @@ package declaration falls back to the path rule above:
 | `core/Engine.java` (`quarry.core`)    | `quarry::core::Engine`  |
 | `Main.java` (`quarry`)                | `quarry::Main`          |
 
+**Go** — the package name plus the directory segments. All
+files in a directory form one Go package, so there is no file
+stem in the id — and an import path, which IS a module path,
+resolves to exactly this id:
+
+| rel path            | module_id            |
+|---------------------|----------------------|
+| `main.go`           | `{pkg}`              |
+| `shapes/circle.go`  | `{pkg}::shapes`      |
+| `core/engine.go`    | `{pkg}::core`        |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -143,6 +154,16 @@ include-guard form — a flag, not a binding).
 
 Java non-symbols, by design: fields and record components
 (fields are not symbols in any language here).
+
+| Go function | `Function` |
+| Go method | `Method` (scoped under its receiver type) |
+| Go struct / other named type / type alias | `Class` |
+| Go interface | `Interface` |
+| Go interface method element | `Method` |
+| Go package-level `var` / `const` | `Variable` |
+
+Go non-symbols, by design: struct fields (fields are not
+symbols in any language here).
 
 Kotlin non-symbols, by design: class-level properties and
 primary-constructor `val`/`var` parameters (fields are not symbols
@@ -279,6 +300,25 @@ type name (`new Circle(…)` → `Circle`). **Java heritage**:
 superclass and interface-extends are `Inherits`; implemented
 interfaces are `Implements`.
 
+**Go** imports → `RawImport`: the import path IS the module
+path (`/` → `::`), internal when its first segment is the
+package name, else `external::{first segment}`:
+
+| statement | to_module_id | bindings |
+|---|---|---|
+| `import "quarry/shapes"` | `quarry::shapes` | `["shapes"]` |
+| `import "fmt"` | `external::fmt` | `["fmt"]` |
+| `import alias "quarry/shapes"` | `quarry::shapes` | `["alias"]` |
+| `import . "quarry/util"` | `quarry::util` | `[]` |
+| `import _ "quarry/blank"` | `quarry::blank` | `[]` |
+
+**Go calls** follow the shared rule: `to_name` is the called
+function's name — for a selector call, the field (`e.Wheel.Area()`
+→ `Area`). **Go heritage**: an interface embedding another
+interface is `Inherits`. Struct embedding is NOT heritage — it
+is composition; method promotion is a call-resolution concern,
+not a type-hierarchy edge.
+
 ### defines / refs
 
 Best effort, per the marimo contract:
@@ -336,6 +376,18 @@ object of a field access is a read (`obj.field` reads `obj`,
 never `field`). A symbol's line is its declaration node's first
 line — for an annotated method, the annotation's line, since
 the annotation is part of the node.
+
+For Go the same contract is filled from Go's binding forms:
+**defines** are receiver, parameter, and named-result names
+plus short-var and local `var`/`const` names and plain
+assignment targets; **writes** are assignment targets and
+initialized declaration names (a plain name both defines and
+writes; `obj.field = …` writes `field`). Type names are refs.
+An augmented-assignment target (`x += 1`) and an `x++` target
+are recorded as *refs*, not writes — the same disclosed limit
+as Python. Only the operand of a selector is a read
+(`e.Wheel.Area()` reads `e`); composite-literal keys are field
+names, not reads. The blank identifier `_` is never a define.
 
 ## Error behavior
 
@@ -398,6 +450,14 @@ crates.io registry cache:
   `object_creation_expression`, `assignment_expression`,
   `field_access`, `local_variable_declaration`,
   `variable_declarator`.
+- tree-sitter-go 0.25.0: `source_file`, `package_clause`,
+  `import_declaration`, `import_spec`, `function_declaration`,
+  `method_declaration`, `type_declaration`, `type_spec`,
+  `struct_type`, `interface_type`, `method_elem`, `type_elem`,
+  `field_declaration`, `var_declaration`, `const_declaration`,
+  `call_expression`, `selector_expression`,
+  `assignment_statement`, `short_var_declaration`,
+  `inc_statement`, `composite_literal`, `qualified_type`.
 
 Crate pins `tree-sitter-typescript = "0.23"` because 0.24 does not exist on
 crates.io. Its 0.23 API exposes `LANGUAGE_TYPESCRIPT` / `LANGUAGE_TSX` as
@@ -412,7 +472,9 @@ the `-ng` fork of the same grammar carries the modern
 `tree-sitter-language` binding. The C grammar is pinned at
 `tree-sitter-c = "0.24"` (0.24.2, MIT) for the same runtime
 pairing. The Java grammar is pinned at `tree-sitter-java =
-"0.23"` (0.23.5, MIT) for the same runtime pairing.
+"0.23"` (0.23.5, MIT) for the same runtime pairing. The Go
+grammar is pinned at `tree-sitter-go = "0.25"` (0.25.0, MIT)
+for the same runtime pairing.
 
 ## The RA extractor (domain-profile build, Stage 5)
 

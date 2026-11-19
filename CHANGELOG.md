@@ -10,6 +10,20 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Go extractor.** `.go` files are now parsed via tree-sitter
+  (`tree-sitter-go` 0.25). Functions, methods (scoped under
+  their receiver type), structs, interfaces, named types,
+  package-level vars and consts, imports, and calls are
+  extracted with the same CODE_SCHEMA output,
+  defines/refs/writes scan, and depth-safe heap-stack walk as
+  the existing extractors, proven by a hand-derived
+  known-answer fixture
+  (`crates/codetopo-extract/tests/fixture-go`). Module ids are
+  the package plus the directory — all files in a directory
+  form one Go package, so an import path resolves to exactly
+  that id. Interface embedding is Inherits heritage; struct
+  embedding is composition, not heritage. Fourth language of
+  the full-language extractor program (2026-11-18 ruling).
 - **Java extractor.** `.java` files are now parsed via
   tree-sitter (`tree-sitter-java` 0.23). Classes, interfaces,
   enums, records, annotation types, methods, constructors, enum
