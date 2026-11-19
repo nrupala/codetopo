@@ -10,7 +10,7 @@ Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
 **Java** (`.java`), **Go** (`.go`), **Shell** (`.sh`, `.bash`),
 **C++** (`.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`), and
 **Swift** (`.swift`), **Ruby** (`.rb`), **R** (`.R`, `.r`),
-and **Julia** (`.jl`). One parse per file, one recursive walk, emitting
+and **Julia** (`.jl`), and **C#** (`.cs`). One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
 ```rust
@@ -159,6 +159,16 @@ Python rule):
 | `Shapes.jl`         | `{pkg}::Shapes`      |
 | `Core/Engine.jl`    | `{pkg}::Core::Engine` |
 
+**C#** — rel path, strip extension, `/` → `::` (the Python
+rule). Namespace names are symbol-path segments (a
+file-scoped namespace prefixes the whole file):
+
+| rel path            | module_id            |
+|---------------------|----------------------|
+| `Program.cs`        | `{pkg}::Program`     |
+| `Shapes/Circle.cs`  | `{pkg}::Shapes::Circle` |
+| `Core/Engine.cs`    | `{pkg}::Core::Engine` |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -284,6 +294,15 @@ no heritage — both empty by construction.
 
 Julia non-symbols, by design: struct fields (fields are not
 symbols in any language here).
+
+| C# `class` / `struct` / `record` | `Class` |
+| C# `interface` | `Interface` |
+| C# method / constructor | `Method` |
+| C# enum member | `Variable` (scoped under its enum) |
+| C# top-level statement variable | `Variable` |
+
+C# non-symbols, by design: properties and fields (fields are
+not symbols in any language here).
 
 Kotlin non-symbols, by design: class-level properties and
 primary-constructor `val`/`var` parameters (fields are not symbols
@@ -532,6 +551,27 @@ selected names:
 callee text as written. **Julia heritage**: a type head's
 `<:` supertype is `Inherits`.
 
+**C#** imports are `using` directives. A using is internal
+when its first segment is the file's own namespace root, or
+matches the package name case-insensitively — the root
+segment is read as the package name, so the target is the
+package plus the remaining segments. A plain using binds
+nothing; an alias using binds the alias; a static using
+binds the type name:
+
+| statement | to_module_id | bindings |
+|---|---|---|
+| `using System;` | `external::System` | `[]` |
+| `using Quarry.Shapes;` | `{pkg}::Shapes` | `[]` |
+| `using Foo = Quarry.Core.Engine;` | `{pkg}::Core::Engine` | `["Foo"]` |
+| `using static System.Math;` | `external::System` | `["Math"]` |
+
+**C# calls** follow the shared rule: `to_name` is the
+callee text as written; object creation is a call on the
+type name. **C# heritage**: in a base list, for a class,
+struct, or record the first type is `Inherits` and the
+rest are `Implements`; for an interface all are `Inherits`.
+
 ### defines / refs
 
 Best effort, per the marimo contract:
@@ -658,6 +698,15 @@ expression is a read (`c.radius` reads `c`); a compound
 assignment's target (`x += 1`) is read, not written — the
 same disclosed limit as Python.
 
+For C# the scan is the Java scan's form: **defines** are
+parameter names, local variable names, and plain assignment
+targets; **writes** are assignment targets and initialized
+local names (a plain name both defines and writes;
+`obj.Field = …` writes `Field`). Type names and invoked
+method names are refs. An augmented-assignment target is
+recorded as a *ref*, not a write — the same disclosed limit
+as Python. Only the expression of a member access is a read.
+
 ## Error behavior
 
 - `extract_file` returns `Err(ExtractError::UnsupportedExtension)` for
@@ -769,6 +818,17 @@ crates.io registry cache:
   `import_statement`, `import_path`, `selected_import`,
   `if_statement`, `for_statement`, `while_statement`,
   `binary_expression`, `identifier`.
+- tree-sitter-c-sharp 0.24.0: `compilation_unit`,
+  `using_directive`, `namespace_declaration`,
+  `file_scoped_namespace_declaration`, `class_declaration`,
+  `interface_declaration`, `struct_declaration`,
+  `record_declaration`, `enum_declaration`,
+  `method_declaration`, `constructor_declaration`,
+  `property_declaration`, `field_declaration`,
+  `enum_member_declaration`, `invocation_expression`,
+  `member_access_expression`, `object_creation_expression`,
+  `assignment_expression`, `variable_declaration`,
+  `variable_declarator`, `parameter`, `qualified_name`.
 
 Crate pins `tree-sitter-typescript = "0.23"` because 0.24 does not exist on
 crates.io. Its 0.23 API exposes `LANGUAGE_TYPESCRIPT` / `LANGUAGE_TSX` as
@@ -797,6 +857,8 @@ pairing. The Ruby grammar is pinned at `tree-sitter-ruby =
 grammar is pinned at `tree-sitter-r = "1"` (1.3.0, MIT) for
 the same runtime pairing. The Julia grammar is pinned at
 `tree-sitter-julia = "0.23"` (0.23.1, MIT) for the same
+runtime pairing. The C# grammar is pinned at
+`tree-sitter-c-sharp = "0.24"` (0.24.0, MIT) for the same
 runtime pairing.
 
 ## The RA extractor (domain-profile build, Stage 5)
