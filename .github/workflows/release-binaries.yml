@@ -4,6 +4,21 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 name: release-binaries
 
+# Binaries are attached to an EXISTING GitHub release for a tag: push a
+# version tag (whose release was created first, as a deliberate separate
+# step), or run manually naming the tag.
+#
+# Declare -> certify (declare-certify inbuilding, step 4 — PILOT on this
+# branch): the release is DECLARED by the gate job before anything is
+# built, the declaration record travels between jobs as a workflow
+# artifact, the certification job closes it against the combined build
+# evidence from every matrix leg, and the publish job guards on the
+# closed record — while the declaration is OPEN, nothing is attached.
+# Actions: nrupala/platform-ci-scaffolding/declare-certify (pinned by
+# commit). One adaptation from the dogear pilot: publish is not limited
+# to tag pushes, because this workflow's manual mode exists to attach
+# binaries to an existing release by tag — publish runs only when the
+# run is anchored to a tag (a pushed tag, or the tag named on dispatch).
 on:
   push:
     tags: ["v*"]
@@ -13,14 +28,21 @@ on:
         description: "Existing release tag to attach binaries to"
         required: true
 
+# Least privilege: the workflow token reads by default; the one job that
+# attaches artifacts to a release declares its write scope itself.
 permissions:
   contents: read
 
 jobs:
-  preflight:
-    name: Release exists
+  declare:
+    name: Declare the release (gate)
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.value }}
+      declaration-id: ${{ steps.declare.outputs.declaration-id }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Resolve the tag
         id: tag
         shell: bash
@@ -42,14 +64,43 @@ jobs:
             exit 1
           fi
 
+      # The gate job's verdict. Pilot scope: the checks this job can
+      # honestly run from its own context (release identity — the tag,
+      # the existing release it names, the commit and the run recording
+      # them), plus the downstream gates the build and certify jobs
+      # enforce before publish (the five-platform release build,
+      # per-artifact SHA-256 sidecars, the combined release-evidence
+      # hash verification at certification, build-provenance
+      # attestation at publish). Wiring the full release-gate verdict
+      # into this file is the release-gate lane's follow-on.
+      - name: Gate checks + write the gate verdict
+        id: gate
+        shell: bash
+        run: |
+          {
+            echo "gate verdict: DECLARED (pilot wiring)"
+            echo "target: codetopo"
+            echo "version: ${{ steps.tag.outputs.value }}"
+            echo "base: ${GITHUB_SHA}"
+            echo "ref: ${GITHUB_REF}"
+            echo "run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "identity checks: tag resolved from the push ref or the dispatch input, and the release it names verified to exist; commit recorded from the Actions context of this run"
+            echo "downstream gates (build + certify jobs, before publish): five-platform cargo release build, per-artifact SHA-256 sidecars, combined release-evidence hash verification at certify, build-provenance attestation at publish"
+          } > gate-verdict.md
+          cat gate-verdict.md
+
+      - name: Declare the release
+        id: declare
+        uses: nrupala/platform-ci-scaffolding/declare-certify/declare@41666ef6f938c01e8422d7d7b595e6438724193d
+        with:
+          target: codetopo
+          version: ${{ steps.tag.outputs.value }}
+          base: ${{ github.sha }}
+          gate-verdict: gate-verdict.md
+
   build:
     name: ${{ matrix.platform }}
-    needs: preflight
-    permissions:
-      contents: write # this job uploads the packaged binaries to the release
-      # Build-provenance attestation (SLSA L2 via Sigstore) for release artifacts
-      id-token: write
-      attestations: write
+    needs: declare
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -122,19 +173,98 @@ jobs:
             Remove-Item "dist/$bin.exe"
           }
 
-      - name: Attest build provenance (unix)
-        if: runner.os != 'Windows'
-        uses: actions/attest-build-provenance@v4
+      # The certification evidence (this platform): this leg's packaged
+      # archives, by hash. The certify job combines the five platform
+      # fragments into the release evidence and verifies every
+      # downloaded archive against them before closing the declaration.
+      - name: Write the release evidence (this platform)
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            sha256sum codetopo-*-${{ matrix.platform }}.zip > "release-evidence-${{ matrix.platform }}.txt"
+          else
+            sha256sum codetopo-*-${{ matrix.platform }}.tar.gz > "release-evidence-${{ matrix.platform }}.txt"
+          fi
+          cat "release-evidence-${{ matrix.platform }}.txt"
+
+      - name: Upload run artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          subject-path: 'codetopo-*-${{ matrix.platform }}.tar.gz'
-      - name: Attest build provenance (windows)
-        if: runner.os == 'Windows'
-        uses: actions/attest-build-provenance@v4
+          name: codetopo-binaries-${{ matrix.platform }}
+          path: |
+            codetopo-*-${{ matrix.platform }}.*
+            release-evidence-${{ matrix.platform }}.txt
+
+  certify:
+    name: Certify the release
+    needs: [declare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the build artifacts (all platforms)
+        uses: actions/download-artifact@v7
         with:
-          subject-path: 'codetopo-*-${{ matrix.platform }}.zip'
+          pattern: codetopo-binaries-*
+          merge-multiple: true
+
+      # Combine the five platform evidence fragments into the release
+      # evidence, proving first that every archive on disk hashes to
+      # the value its build leg recorded.
+      - name: Assemble + verify the release evidence
+        shell: bash
+        run: |
+          set -eu
+          cat release-evidence-*.txt > evidence-hashes.txt
+          sha256sum --check evidence-hashes.txt
+          {
+            echo "target: codetopo"
+            echo "version: ${{ needs.declare.outputs.tag }}"
+            echo "base: ${GITHUB_SHA}"
+            cat evidence-hashes.txt
+          } > release-evidence.txt
+          cat release-evidence.txt
+
+      - name: Certify the release against the build evidence
+        uses: nrupala/platform-ci-scaffolding/declare-certify/certify@41666ef6f938c01e8422d7d7b595e6438724193d
+        with:
+          declaration-id: ${{ needs.declare.outputs.declaration-id }}
+          evidence: release-evidence.txt
+          note: "codetopo release binaries ${{ needs.declare.outputs.tag }}"
+
+  publish:
+    name: Publish to the GitHub release
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    needs: [declare, certify]
+    permissions:
+      contents: write # this job uploads the packaged binaries to the release
+      # Build-provenance attestation (SLSA L2 via Sigstore) for release artifacts
+      id-token: write
+      attestations: write
+    runs-on: ubuntu-latest
+    steps:
+      # The guard: downloads the CLOSED declaration record and fails
+      # this job while it is OPEN — the attach below is unreachable
+      # for an uncertified release.
+      - name: Guard — the declaration must be CLOSED
+        uses: nrupala/platform-ci-scaffolding/declare-certify/guard@41666ef6f938c01e8422d7d7b595e6438724193d
+        with:
+          declaration-id: ${{ needs.declare.outputs.declaration-id }}
+
+      - name: Download the build artifacts (all platforms)
+        uses: actions/download-artifact@v7
+        with:
+          pattern: codetopo-binaries-*
+          merge-multiple: true
+
       - name: Upload to the release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ steps.tag.outputs.value }}" codetopo-*-${{ matrix.platform }}.* --clobber
+          gh release upload "${{ needs.declare.outputs.tag }}" codetopo-*.tar.gz codetopo-*.tar.gz.sha256 codetopo-*.zip codetopo-*.zip.sha256 --clobber
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            codetopo-*.tar.gz
+            codetopo-*.zip
