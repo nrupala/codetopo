@@ -10,6 +10,16 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Shell extractor.** `.sh` / `.bash` files are now parsed
+  via tree-sitter (`tree-sitter-bash` 0.25). Functions,
+  top-level variables, commands-as-calls, and `source` / `.`
+  imports are extracted with the same CODE_SCHEMA output,
+  defines/refs/writes scan, and depth-safe heap-stack walk as
+  the existing extractors, proven by a hand-derived
+  known-answer fixture
+  (`crates/codetopo-extract/tests/fixture-sh`). Fifth
+  language of the full-language extractor program (2026-11-18
+  ruling).
 - **Go extractor.** `.go` files are now parsed via tree-sitter
   (`tree-sitter-go` 0.25). Functions, methods (scoped under
   their receiver type), structs, interfaces, named types,
