@@ -10,7 +10,7 @@ Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
 **Java** (`.java`), **Go** (`.go`), **Shell** (`.sh`, `.bash`),
 **C++** (`.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`), and
 **Swift** (`.swift`), **Ruby** (`.rb`), **R** (`.R`, `.r`),
-and **Julia** (`.jl`), **C#** (`.cs`), **PHP** (`.php`), and **Scala** (`.scala`, `.sc`). One parse per file, one recursive walk, emitting
+and **Julia** (`.jl`), **C#** (`.cs`), **PHP** (`.php`), **Scala** (`.scala`, `.sc`), and **Haskell** (`.hs`). One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
 ```rust
@@ -189,6 +189,16 @@ it anchors the import rule:
 | `Engine.scala`      | `{pkg}::Engine`      |
 | `Main.scala`        | `{pkg}::Main`        |
 
+**Haskell** — rel path, strip extension, `/` → `::` (the Python
+rule). The module header is not a symbol; it anchors
+import resolution (the Java package rule):
+
+| rel path            | module_id            |
+|---------------------|----------------------|
+| `Shapes.hs`         | `{pkg}::Shapes`      |
+| `Core/Engine.hs`    | `{pkg}::Core::Engine` |
+| `Main.hs`           | `{pkg}::Main`        |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -345,6 +355,17 @@ PHP non-symbols, by design: properties and class constants
 Scala non-symbols, by design: class-level `val`/`var`
 definitions and constructor parameters (fields are not
 symbols in any language here).
+
+| Haskell `data` / `newtype` | `Class` |
+| Haskell `type` synonym | `Class` |
+| Haskell typeclass | `Interface` |
+| Haskell class method (signature) | `Method` |
+| Haskell function (binding with patterns) | `Function` |
+| Haskell top-level value (pattern-less binding) | `Variable` |
+
+Haskell non-symbols, by design: the module header,
+record fields, and data constructors (a constructor
+application is a call, as object creation is for C#).
 
 Kotlin non-symbols, by design: class-level properties and
 primary-constructor `val`/`var` parameters (fields are not symbols
@@ -667,6 +688,34 @@ extends clause, for a class, object, or enum the first
 type is `Inherits` and the rest are `Implements`; for a
 trait all are `Inherits`. A `derives` clause is
 typeclass derivation, not heritage, and is not emitted.
+
+**Haskell** imports carry their module as a dotted path.
+An import is internal when its first segment is the
+file's own module root or matches the package name
+case-insensitively — the root segment is read as the
+package name, so the target is the package plus the
+remaining segments; anything else is
+`external::{first segment}`. `qualified` does not change
+the target; `hiding` still imports. An explicit import
+list binds the names as written (`Circle (..)` binds
+`Circle`); a qualified import binds its alias, or the
+module's last segment when it has no alias; a `hiding`
+import binds nothing:
+
+| statement | to_module_id | bindings |
+|---|---|---|
+| `import Quarry.Shapes (Circle (..))` | `{pkg}::Shapes` | `["Circle"]` |
+| `import qualified Quarry.Core.Engine as E` | `{pkg}::Core::Engine` | `["E"]` |
+| `import Data.List hiding (nub)` | `external::Data` | `[]` |
+
+**Haskell calls** follow the shared rule: `to_name` is
+the callee text as written; a constructor application
+is a call on the constructor name. **Haskell heritage**:
+an instance head is `Inherits` (the instance's type
+inherits the class's interface); a standalone `deriving`
+instance is `Implements`. Haskell bindings are
+immutable, so `writes` lists are empty by the language's
+semantics, not by omission.
 
 ### defines / refs
 

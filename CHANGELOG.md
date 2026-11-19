@@ -10,6 +10,20 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Haskell extractor.** `.hs` files are now parsed via
+  tree-sitter (`tree-sitter-haskell` 0.24). Data and
+  newtype declarations, type synonyms, typeclasses and
+  their method signatures, instances, functions,
+  top-level variables, imports, calls, and instance
+  heritage are extracted with the same CODE_SCHEMA
+  output, defines/refs/writes scan, and depth-safe
+  heap-stack walk as the existing extractors, proven by
+  a hand-derived known-answer fixture
+  (`crates/codetopo-extract/tests/fixture-hs`). The
+  module header is not a symbol; it anchors import
+  resolution (the Java package rule). Fourteenth
+  language of the full-language extractor program
+  (2026-11-18 ruling).
 - **Scala extractor.** `.scala` and `.sc` files are now
   parsed via tree-sitter (`tree-sitter-scala` 0.26).
   Classes, objects, enums, traits, type definitions,
