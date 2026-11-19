@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Part of codetopo — Owned by 2351485 ALBERTA INC. (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join).
 
-//! Tree-sitter extractors: Rust, TypeScript/JavaScript, and Python source
-//! files into [`codetopo_core::emit::FileSymbols`].
+//! Tree-sitter extractors: Rust, TypeScript/JavaScript, Python, and
+//! Kotlin source files into [`codetopo_core::emit::FileSymbols`].
 //!
 //! One tree-sitter parse per file, then a single recursive walk over the
 //! syntax tree. The walk never panics on odd input: unparseable shapes are
@@ -25,6 +25,7 @@ pub mod siblings;
 pub mod xlsx;
 pub mod xmlmini;
 
+mod kotlin;
 mod python;
 mod rust;
 mod ts;
@@ -69,7 +70,7 @@ pub enum ExtractError {
 
 /// File extensions this crate can extract (case-insensitive).
 const SUPPORTED: &[&str] = &[
-    "rs", "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "md", "py", "pyi",
+    "rs", "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "md", "py", "pyi", "kt", "kts",
 ];
 
 /// True when `path` names a file this crate can extract.
@@ -111,6 +112,7 @@ pub fn extract_file(
     match ext.as_str() {
         "rs" => rust::extract(package, rel_path, source),
         "py" | "pyi" => python::extract(package, rel_path, source),
+        "kt" | "kts" => kotlin::extract(package, rel_path, source),
         // Markdown is documentation, not code: it enters the graph as a
         // single Doc node so docs sit in the map next to what they
         // describe (CODE_SCHEMA §2 has the kind; nothing emitted it).
@@ -258,8 +260,8 @@ mod tests {
     #[test]
     fn supported_extensions() {
         for ext in [
-            "rs", "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "md", "py", "pyi", "RS",
-            "TS", "PY",
+            "rs", "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "md", "py", "pyi", "kt",
+            "kts", "RS", "TS", "PY", "KT",
         ] {
             assert!(
                 is_supported(Path::new(&format!("a/b.{ext}"))),
@@ -300,5 +302,6 @@ mod tests {
         let _ = extract_file("pkg", Path::new("a.rs"), "fn broken( { struct ");
         let _ = extract_file("pkg", Path::new("a.ts"), "class {{{ function ((");
         let _ = extract_file("pkg", Path::new("a.py"), "def broken(:\n  class == if");
+        let _ = extract_file("pkg", Path::new("a.kt"), "class {{{ fun ((");
     }
 }
