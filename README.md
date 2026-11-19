@@ -81,7 +81,7 @@ cargo install --git https://github.com/nrupala/codetopo codetopo-cli codetopo-se
 # codetopo-cli` for the CLI, `cargo install codetopo-mcp` for the MCP
 # server. There is no crate named `codetopo`.
 
-# Index a repository (Rust, TypeScript/JavaScript, Python, Kotlin, C, Java, Go, Shell, C++, Swift, Ruby, R, Julia, C#, and PHP are parsed via tree-sitter)
+# Index a repository (Rust, TypeScript/JavaScript, Python, Kotlin, C, Java, Go, Shell, C++, Swift, Ruby, R, Julia, C#, PHP, and Scala are parsed via tree-sitter)
 codetopo index ~/my-project --db graph.db
 
 # Find a symbol's id by name (every surface has this discovery step)
@@ -155,7 +155,7 @@ codetopo's answers cover exactly what its extractors resolved — and the
 output says what it did not cover, instead of omitting it silently:
 
 - **Parsed languages.** Extraction handles Rust, TypeScript/JavaScript,
-  Python, Kotlin, C, Java, Go, Shell, C++, Swift, Ruby, R, Julia, C#, and PHP sources (tree-sitter). A file whose extension the extractor
+  Python, Kotlin, C, Java, Go, Shell, C++, Swift, Ruby, R, Julia, C#, PHP, and Scala sources (tree-sitter). A file whose extension the extractor
   does not handle contributes no symbols or edges; an extraction failure
   is counted in the index run's `files failed` total, never hidden.
 - **Unresolved calls are diagnostics, not dropped edges.** Resolution is
@@ -309,7 +309,7 @@ want the graph served, not installed.
 | Crate | Role |
 |---|---|
 | `codetopo-core` | Graph model, node/edge kinds, all traversal queries, snapshots |
-| `codetopo-extract` | tree-sitter extractors (Rust, TypeScript/JavaScript, Python, Kotlin, C, Java, Go, Shell, C++, Swift, Ruby, R, Julia, C#, PHP) |
+| `codetopo-extract` | tree-sitter extractors (Rust, TypeScript/JavaScript, Python, Kotlin, C, Java, Go, Shell, C++, Swift, Ruby, R, Julia, C#, PHP, Scala) |
 | `codetopo-store` | SQLite persistence + tamper-evident, hash-chained audit log |
 | `codetopo-cli` | `codetopo` headless CLI — the reference query surface |
 | `codetopo-server` | `codetopo-server` axum HTTP API (thin adapter over core) |
