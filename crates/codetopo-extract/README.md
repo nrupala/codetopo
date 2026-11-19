@@ -6,7 +6,8 @@
 
 Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
 (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`), **Python**
-(`.py`, `.pyi`), **Kotlin** (`.kt`, `.kts`), and **C** (`.c`, `.h`). One parse per file, one recursive walk, emitting
+(`.py`, `.pyi`), **Kotlin** (`.kt`, `.kts`), **C** (`.c`, `.h`),
+and **Java** (`.java`). One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
 ```rust
@@ -77,6 +78,18 @@ definitions, as it does for any duplicate):
 | `core/engine.c`     | `{pkg}::core::engine` |
 | `core/engine.h`     | `{pkg}::core::engine` |
 
+**Java** — the `package` declaration plus the file stem. A Java
+type's identity is its package plus its name; source-tree layout
+(`src/main/java/…`) is not part of that identity, so the path
+beyond the file name does not enter the id. A file with no
+package declaration falls back to the path rule above:
+
+| rel path (package)              | module_id            |
+|---------------------------------|----------------------|
+| `shapes/Shape.java` (`quarry.shapes`) | `quarry::shapes::Shape` |
+| `core/Engine.java` (`quarry.core`)    | `quarry::core::Engine`  |
+| `Main.java` (`quarry`)                | `quarry::Main`          |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -122,6 +135,14 @@ The `impl` block itself is **not** a symbol; its self type (`Client`,
 C non-symbols, by design: struct/union fields (fields are not
 symbols in any language here), and value-less `#define`s (the
 include-guard form — a flag, not a binding).
+
+| Java `class` / `enum` / `record` | `Class` |
+| Java `interface` / annotation type | `Interface` |
+| Java method / constructor | `Method` |
+| Java enum constant | `Variable` (scoped under its enum) |
+
+Java non-symbols, by design: fields and record components
+(fields are not symbols in any language here).
 
 Kotlin non-symbols, by design: class-level properties and
 primary-constructor `val`/`var` parameters (fields are not symbols
@@ -239,6 +260,25 @@ follow the shared rule: `to_name` is the callee text as written
 (`foo`, `obj.m`, `(*fp)`). **C heritage** is empty — C has no
 inheritance syntax; the section is empty by construction.
 
+**Java** imports → `RawImport`. An import is internal when its
+first segment equals the importing file's own package root;
+then the target is the imported type's module id (package
+segments + type name). Anything else is `external::{first}`:
+
+| statement (from a `quarry.core` file) | to_module_id | bindings |
+|---|---|---|
+| `import quarry.shapes.Circle;` | `quarry::shapes::Circle` | `["Circle"]` |
+| `import java.util.List;` | `external::java` | `["List"]` |
+| `import static quarry.core.Engine.MAX;` | `quarry::core::Engine` | `["MAX"]` |
+| `import quarry.shapes.*;` | `quarry::shapes` | `[]` |
+
+**Java calls** follow the shared rule with the Python
+attribute form: `to_name` is the invoked method's name
+(`wheel.area()` → `area`); object creation is a call on the
+type name (`new Circle(…)` → `Circle`). **Java heritage**:
+superclass and interface-extends are `Inherits`; implemented
+interfaces are `Implements`.
+
 ### defines / refs
 
 Best effort, per the marimo contract:
@@ -282,6 +322,20 @@ augmented-assignment target (`x += 1`) is recorded as a *ref*,
 not a write — the same disclosed limit as Python. Only the
 argument of a field expression is a read (`obj.field` reads
 `obj`, never `field`).
+
+For Java the same contract is filled from Java's binding forms:
+**defines** are parameter names plus local variable names and
+plain assignment targets; **writes** are assignment targets and
+initialized local names (a plain name both defines and writes;
+`obj.field = …` writes `field`). Type names (return type,
+parameter and local declaration types) are refs, and an invoked
+method's name is a ref (the Python call rule). An
+augmented-assignment target (`x += 1`) is recorded as a *ref*,
+not a write — the same disclosed limit as Python. Only the
+object of a field access is a read (`obj.field` reads `obj`,
+never `field`). A symbol's line is its declaration node's first
+line — for an annotated method, the annotation's line, since
+the annotation is part of the node.
 
 ## Error behavior
 
@@ -335,6 +389,15 @@ crates.io registry cache:
   `preproc_def`, `preproc_function_def`, `call_expression`,
   `assignment_expression`, `field_expression`,
   `parameter_declaration`.
+- tree-sitter-java 0.23.5: `program`, `package_declaration`,
+  `import_declaration`, `class_declaration`,
+  `interface_declaration`, `enum_declaration`, `enum_constant`,
+  `record_declaration`, `annotation_type_declaration`,
+  `method_declaration`, `constructor_declaration`,
+  `formal_parameter`, `method_invocation`,
+  `object_creation_expression`, `assignment_expression`,
+  `field_access`, `local_variable_declaration`,
+  `variable_declarator`.
 
 Crate pins `tree-sitter-typescript = "0.23"` because 0.24 does not exist on
 crates.io. Its 0.23 API exposes `LANGUAGE_TYPESCRIPT` / `LANGUAGE_TSX` as
@@ -348,7 +411,8 @@ value cannot coexist with tree-sitter 0.25 in one dependency graph;
 the `-ng` fork of the same grammar carries the modern
 `tree-sitter-language` binding. The C grammar is pinned at
 `tree-sitter-c = "0.24"` (0.24.2, MIT) for the same runtime
-pairing.
+pairing. The Java grammar is pinned at `tree-sitter-java =
+"0.23"` (0.23.5, MIT) for the same runtime pairing.
 
 ## The RA extractor (domain-profile build, Stage 5)
 

@@ -10,6 +10,19 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Java extractor.** `.java` files are now parsed via
+  tree-sitter (`tree-sitter-java` 0.23). Classes, interfaces,
+  enums, records, annotation types, methods, constructors, enum
+  constants, imports, calls, and heritage (superclass and
+  interface-extends as Inherits, implemented interfaces as
+  Implements) are extracted with the same CODE_SCHEMA output,
+  defines/refs/writes scan, and depth-safe heap-stack walk as
+  the existing extractors, proven by a hand-derived
+  known-answer fixture
+  (`crates/codetopo-extract/tests/fixture-java`). Module ids
+  come from the `package` declaration, not the path. Third
+  language of the full-language extractor program (2026-11-18
+  ruling).
 - **C extractor.** `.c` / `.h` files are now parsed via
   tree-sitter (`tree-sitter-c` 0.24). Function definitions and
   prototypes, struct/union/enum definitions and typedef names,
