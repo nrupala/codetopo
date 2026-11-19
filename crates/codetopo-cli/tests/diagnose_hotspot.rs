@@ -44,10 +44,21 @@ def top():
 
 /// Write the fixture into a fresh scratch dir (the cli test suite's
 /// workdir idiom) and index it. Returns (repo, db).
+///
+/// One scratch dir per CALL: this binary's tests run as parallel
+/// threads of one process, so a PID-only directory name is shared
+/// by all of them and each call's `remove_dir_all` deletes the
+/// fixture from under its siblings — the intermittent CI failure
+/// "skipping hub.py: read error: No such file or directory". A
+/// per-call counter keeps the directories distinct.
 fn planted_index() -> (PathBuf, PathBuf) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static CALLS: AtomicU64 = AtomicU64::new(0);
+    let n = CALLS.fetch_add(1, Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!(
-        "codetopo-cli-test-{}-diagnose-hotspot",
-        std::process::id()
+        "codetopo-cli-test-{}-diagnose-hotspot-{}",
+        std::process::id(),
+        n
     ));
     let _ = std::fs::remove_dir_all(&dir);
     let repo = dir.join("repo");
