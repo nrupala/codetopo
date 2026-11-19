@@ -9,7 +9,7 @@ Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
 (`.py`, `.pyi`), **Kotlin** (`.kt`, `.kts`), **C** (`.c`, `.h`),
 **Java** (`.java`), **Go** (`.go`), **Shell** (`.sh`, `.bash`),
 **C++** (`.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`), and
-**Swift** (`.swift`), and **Ruby** (`.rb`). One parse per file, one recursive walk, emitting
+**Swift** (`.swift`), **Ruby** (`.rb`), and **R** (`.R`, `.r`). One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
 ```rust
@@ -140,6 +140,15 @@ rule):
 | `lib/circle.rb`     | `{pkg}::lib::circle` |
 | `core/engine.rb`    | `{pkg}::core::engine` |
 
+**R** — rel path, strip extension, `/` → `::` (the Python
+rule):
+
+| rel path            | module_id            |
+|---------------------|----------------------|
+| `main.R`            | `{pkg}::main`        |
+| `lib/shapes.R`      | `{pkg}::lib::shapes` |
+| `core/engine.R`     | `{pkg}::core::engine` |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -248,6 +257,13 @@ conformances are heritage rows for that type.
 Ruby non-symbols, by design: class-level assignments (fields
 are not symbols in any language here — a class constant is a
 field by this rule).
+
+| R function assignment (`f <- function(…)`) | `Function` |
+| R top-level assignment | `Variable` |
+
+R has no class-definition syntax in this grammar (S3/S4/R6
+types are built by calls), so there are no Class symbols and
+no heritage — both empty by construction.
 
 Kotlin non-symbols, by design: class-level properties and
 primary-constructor `val`/`var` parameters (fields are not symbols
@@ -464,6 +480,21 @@ first segment is the package name, else
 receiver is not part of it — the Python attribute rule).
 **Ruby heritage**: a class's superclass is `Inherits`.
 
+**R** imports are calls: `library(x)` / `require(x)` load a
+package (`external::{name}`, the name as binding), and
+`source("p")` includes a file, resolved relative to the
+sourcing file like a C include. A call by any of those names
+with a literal first argument is an import, not a call:
+
+| statement (from `core/engine.R`) | to_module_id | bindings |
+|---|---|---|
+| `library(stats)` | `external::stats` | `["stats"]` |
+| `source("core/engine.R")` (from `main.R`) | `{pkg}::core::engine` | `[]` |
+
+**R calls**: `to_name` is the called name — for `pkg::fn`
+the function name, for `obj$fn` the member name. **R
+heritage** is empty (no inheritance syntax).
+
 ### defines / refs
 
 Best effort, per the marimo contract:
@@ -573,6 +604,15 @@ recorded as a *ref*, not a write — the same disclosed limit
 as Python. Only a call's receiver is a read; a bare call's
 name is a ref, as a plain-name call is in Python.
 
+For R the same contract is filled from R's binding forms:
+**defines** are parameter names plus assignment targets
+(`<-`, `<<-`, `=`, and the reversed `->` forms); **writes**
+are assignment targets (a plain name both defines and
+writes). Only the left side of `$`/`@` and of `::` is a read,
+and an argument's name (`list(wheel = 1)`) is not a read. A
+nested function definition is its own symbol, pruned from
+the enclosing scan.
+
 ## Error behavior
 
 - `extract_file` returns `Err(ExtractError::UnsupportedExtension)` for
@@ -670,6 +710,11 @@ crates.io registry cache:
   `instance_variable`, `if`, `elsif`, `case`, `when`, `while`,
   `until`, `for`, `binary`, `method_parameters`,
   `block_parameters`.
+- tree-sitter-r 1.3.0: `program`, `function_definition`,
+  `parameter`, `binary_operator`, `call`, `argument`,
+  `extract_operator`, `namespace_operator`, `if_statement`,
+  `for_statement`, `while_statement`, `repeat_statement`,
+  `identifier`, `string`.
 
 Crate pins `tree-sitter-typescript = "0.23"` because 0.24 does not exist on
 crates.io. Its 0.23 API exposes `LANGUAGE_TYPESCRIPT` / `LANGUAGE_TSX` as
@@ -694,7 +739,9 @@ are extracted as C — one extension, one extractor; C++ headers
 use the C++ extensions above. The Swift grammar is pinned at
 `tree-sitter-swift = "0.7"` (0.7.4, MIT) for the same runtime
 pairing. The Ruby grammar is pinned at `tree-sitter-ruby =
-"0.23"` (0.23.1, MIT) for the same runtime pairing.
+"0.23"` (0.23.1, MIT) for the same runtime pairing. The R
+grammar is pinned at `tree-sitter-r = "1"` (1.3.0, MIT) for
+the same runtime pairing.
 
 ## The RA extractor (domain-profile build, Stage 5)
 
