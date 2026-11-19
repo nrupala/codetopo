@@ -10,6 +10,17 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Julia extractor.** `.jl` files are now parsed via
+  tree-sitter (`tree-sitter-julia` 0.23). Modules, structs,
+  abstract types, long- and short-form functions,
+  `using`/`import` statements, calls, and `<:` heritage are
+  extracted with the same CODE_SCHEMA output,
+  defines/refs/writes scan, and depth-safe heap-stack walk
+  as the existing extractors, proven by a hand-derived
+  known-answer fixture
+  (`crates/codetopo-extract/tests/fixture-jl`). Tenth
+  language of the full-language extractor program
+  (2026-11-18 ruling).
 - **R extractor.** `.R` / `.r` files are now parsed via
   tree-sitter (`tree-sitter-r` 1.3). Function assignments,
   top-level variables, `library`/`require`/`source` imports,
