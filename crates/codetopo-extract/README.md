@@ -7,7 +7,8 @@
 Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
 (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`), **Python**
 (`.py`, `.pyi`), **Kotlin** (`.kt`, `.kts`), **C** (`.c`, `.h`),
-**Java** (`.java`), **Go** (`.go`), and **Shell** (`.sh`, `.bash`).
+**Java** (`.java`), **Go** (`.go`), **Shell** (`.sh`, `.bash`),
+and **C++** (`.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`).
 One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
@@ -111,6 +112,16 @@ rule):
 | `lib/util.sh`       | `{pkg}::lib::util`   |
 | `core/engine.sh`    | `{pkg}::core::engine` |
 
+**C++** — rel path, strip extension, `/` → `::` (the C rule;
+a header and its implementation share a module). Namespace
+names are symbol-path segments, not module segments:
+
+| rel path            | module_id            |
+|---------------------|----------------------|
+| `shapes/Circle.hpp` | `{pkg}::shapes::Circle` |
+| `shapes/Circle.cpp` | `{pkg}::shapes::Circle` |
+| `core/Engine.cpp`   | `{pkg}::core::Engine` |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -179,6 +190,22 @@ symbols in any language here).
 | Shell top-level variable assignment | `Variable` |
 
 Shell has no other binding forms — no types, no classes.
+
+| C++ function (unqualified, namespace/file scope) | `Function` |
+| C++ method (in-class, or qualified out-of-line) | `Method` |
+| C++ `class` / `struct` / `union` / `enum` definition, `typedef` name, `using` alias | `Class` |
+| C++ enumerator | `Variable` (scoped under its enum) |
+| C++ file/namespace-scope variable, object-like macro with a value | `Variable` |
+| C++ function-like macro | `Function` |
+
+C++ non-symbols, by design: fields (fields are not symbols in
+any language here), and value-less `#define`s. A qualified
+name's last-but-one segment is treated as the type (a
+namespace function defined out-of-line with full qualification
+is therefore read as a method of a like-named type — the
+qualified form is, in practice, the member form). Template
+declarations are transparent: the declared name is the symbol,
+parameters are not part of the id.
 
 Kotlin non-symbols, by design: class-level properties and
 primary-constructor `val`/`var` parameters (fields are not symbols
@@ -349,6 +376,21 @@ file, like a C include:
 command name as written. **Shell heritage** is empty — shell
 has no type system.
 
+**C++** includes follow the C rule exactly. `using`
+declarations are also imports: the qualifier path is the
+module, the last segment the binding (a path whose first
+segment is the package name is already a module path; any
+other path resolves under the package):
+
+| statement | to_module_id | bindings |
+|---|---|---|
+| `using quarry::shapes::Circle;` | `quarry::shapes` | `["Circle"]` |
+| `using namespace quarry::core;` | `quarry::core` | `[]` |
+
+**C++ calls** follow the C rule: `to_name` is the callee text
+as written. **C++ heritage**: base-class clauses are
+`Inherits` — C++ has one inheritance relation.
+
 ### defines / refs
 
 Best effort, per the marimo contract:
@@ -428,6 +470,10 @@ called-name rule, as in Python). Expansions of named variables
 (`$x`, `${x}`) are refs; positional and special parameters
 (`$1`, `$@`, `$?`, …) are not.
 
+For C++ the scan is the C scan plus member initializers: a
+field initializer (`radius_(radius)`) writes its field, and
+its arguments are reads scanned with the body.
+
 ## Error behavior
 
 - `extract_file` returns `Err(ExtractError::UnsupportedExtension)` for
@@ -503,6 +549,14 @@ crates.io registry cache:
   `variable_name`, `if_statement`, `for_statement`,
   `while_statement`, `case_statement`, `test_command`,
   `command_substitution`, `list`.
+- tree-sitter-cpp 0.23.4: `translation_unit`,
+  `namespace_definition`, `class_specifier`, `struct_specifier`,
+  `enum_specifier`, `function_definition`, `field_declaration`,
+  `declaration`, `type_definition`, `alias_declaration`,
+  `using_declaration`, `qualified_identifier`,
+  `base_class_clause`, `preproc_include`, `call_expression`,
+  `assignment_expression`, `field_expression`,
+  `field_initializer`, `parameter_declaration`.
 
 Crate pins `tree-sitter-typescript = "0.23"` because 0.24 does not exist on
 crates.io. Its 0.23 API exposes `LANGUAGE_TYPESCRIPT` / `LANGUAGE_TSX` as
@@ -521,7 +575,10 @@ pairing. The Java grammar is pinned at `tree-sitter-java =
 grammar is pinned at `tree-sitter-go = "0.25"` (0.25.0, MIT)
 for the same runtime pairing. The Shell grammar is pinned at
 `tree-sitter-bash = "0.25"` (0.25.1, MIT) for the same runtime
-pairing.
+pairing. The C++ grammar is pinned at `tree-sitter-cpp =
+"0.23"` (0.23.4, MIT) for the same runtime pairing. `.h` files
+are extracted as C — one extension, one extractor; C++ headers
+use the C++ extensions above.
 
 ## The RA extractor (domain-profile build, Stage 5)
 

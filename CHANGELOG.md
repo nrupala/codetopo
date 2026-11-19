@@ -10,6 +10,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **C++ extractor.** `.cpp` / `.hpp` / `.cc` / `.cxx` / `.hh`
+  / `.hxx` files are now parsed via tree-sitter
+  (`tree-sitter-cpp` 0.23). Classes, methods (in-class and
+  qualified out-of-line definitions compose one id), functions,
+  namespaces as symbol-path segments, base-class heritage,
+  `#include` and `using` imports, and calls are extracted with
+  the same CODE_SCHEMA output, defines/refs/writes scan, and
+  depth-safe heap-stack walk as the existing extractors,
+  proven by a hand-derived known-answer fixture
+  (`crates/codetopo-extract/tests/fixture-cpp`). `.h` files
+  remain C. Sixth language of the full-language extractor
+  program (2026-11-18 ruling).
 - **Shell extractor.** `.sh` / `.bash` files are now parsed
   via tree-sitter (`tree-sitter-bash` 0.25). Functions,
   top-level variables, commands-as-calls, and `source` / `.`
