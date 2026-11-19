@@ -8,7 +8,7 @@ version = "0.9.1"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Tree-sitter extraction for codetopo: symbols, calls, imports, reads/writes, and heritage from Rust, TypeScript/JavaScript, Python, Kotlin, C, Java, Go, Shell, C++, and Swift sources"
+description = "Tree-sitter extraction for codetopo: symbols, calls, imports, reads/writes, and heritage from Rust, TypeScript/JavaScript, Python, Kotlin, C, Java, Go, Shell, C++, Swift, and Ruby sources"
 homepage.workspace = true
 readme.workspace = true
 keywords.workspace = true
@@ -30,6 +30,7 @@ tree-sitter-go = "0.25"
 tree-sitter-bash = "0.25"
 tree-sitter-cpp = "0.23"
 tree-sitter-swift = "0.7"
+tree-sitter-ruby = "0.23"
 
 [dev-dependencies]
 codetopo-store = { version = "0.9.1", path = "../codetopo-store" }

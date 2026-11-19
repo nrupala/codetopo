@@ -9,7 +9,7 @@ Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
 (`.py`, `.pyi`), **Kotlin** (`.kt`, `.kts`), **C** (`.c`, `.h`),
 **Java** (`.java`), **Go** (`.go`), **Shell** (`.sh`, `.bash`),
 **C++** (`.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`), and
-**Swift** (`.swift`). One parse per file, one recursive walk, emitting
+**Swift** (`.swift`), and **Ruby** (`.rb`). One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
 ```rust
@@ -131,6 +131,15 @@ rule):
 | `Shapes/Circle.swift` | `{pkg}::Shapes::Circle` |
 | `Core/Engine.swift`   | `{pkg}::Core::Engine`   |
 
+**Ruby** — rel path, strip extension, `/` → `::` (the Python
+rule):
+
+| rel path            | module_id            |
+|---------------------|----------------------|
+| `main.rb`           | `{pkg}::main`        |
+| `lib/circle.rb`     | `{pkg}::lib::circle` |
+| `core/engine.rb`    | `{pkg}::core::engine` |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -230,6 +239,15 @@ Swift non-symbols, by design: properties inside a type
 emits no symbol of its own: it opens a scope under the
 extended type's name so its methods nest there, and its
 conformances are heritage rows for that type.
+
+| Ruby `module` / `class` | `Class` |
+| Ruby method inside a type / outside | `Method` / `Function` |
+| Ruby singleton method (`def self.x`, `def Foo.x`) | `Method` |
+| Ruby top-level assignment | `Variable` |
+
+Ruby non-symbols, by design: class-level assignments (fields
+are not symbols in any language here — a class constant is a
+field by this rule).
 
 Kotlin non-symbols, by design: class-level properties and
 primary-constructor `val`/`var` parameters (fields are not symbols
@@ -429,6 +447,23 @@ callee text as written (`Engine()`, `wheel.area()`).
 for conformances and superclasses alike — Swift has one
 inheritance list.
 
+**Ruby** imports are the `require` / `require_relative`
+calls — a call by either name whose first argument is a
+string literal is recorded as an import, not a call.
+`require_relative` resolves relative to the requiring file
+like a C include; `require` resolves the same way when its
+first segment is the package name, else
+`external::{first segment}`:
+
+| statement (from `core/engine.rb`) | to_module_id | bindings |
+|---|---|---|
+| `require_relative "../lib/circle"` | `{pkg}::lib::circle` | `[]` |
+| `require "json"` | `external::json` | `[]` |
+
+**Ruby calls**: `to_name` is the called method's name (the
+receiver is not part of it — the Python attribute rule).
+**Ruby heritage**: a class's superclass is `Inherits`.
+
 ### defines / refs
 
 Best effort, per the marimo contract:
@@ -526,6 +561,18 @@ a second `name` field, and a pattern's bound names are its
 simple identifiers (`bound_identifier` is a field name, not a
 node kind) — the walker reads both accordingly.
 
+For Ruby the same contract is filled from Ruby's binding
+forms: **defines** are parameter names (positional, keyword,
+splat, block) plus block parameters and plain assignment
+targets; **writes** are assignment targets (a plain name both
+defines and writes; `obj.attr = …` writes `attr`;
+instance/class/global variables write under their full
+written names, sigils included). Constants and variables are
+refs; an augmented-assignment target (`x += 1`, `@x += 1`) is
+recorded as a *ref*, not a write — the same disclosed limit
+as Python. Only a call's receiver is a read; a bare call's
+name is a ref, as a plain-name call is in Python.
+
 ## Error behavior
 
 - `extract_file` returns `Err(ExtractError::UnsupportedExtension)` for
@@ -616,6 +663,13 @@ crates.io registry cache:
   `typealias_declaration`, `call_expression`,
   `navigation_expression`, `assignment`, `pattern`,
   `inheritance_specifier`, `user_type`.
+- tree-sitter-ruby 0.23.1: `program`, `module`, `class`,
+  `method`, `singleton_method`, `singleton_class`,
+  `assignment`, `operator_assignment`, `call`,
+  `scope_resolution`, `constant`, `identifier`,
+  `instance_variable`, `if`, `elsif`, `case`, `when`, `while`,
+  `until`, `for`, `binary`, `method_parameters`,
+  `block_parameters`.
 
 Crate pins `tree-sitter-typescript = "0.23"` because 0.24 does not exist on
 crates.io. Its 0.23 API exposes `LANGUAGE_TYPESCRIPT` / `LANGUAGE_TSX` as
@@ -639,7 +693,8 @@ pairing. The C++ grammar is pinned at `tree-sitter-cpp =
 are extracted as C — one extension, one extractor; C++ headers
 use the C++ extensions above. The Swift grammar is pinned at
 `tree-sitter-swift = "0.7"` (0.7.4, MIT) for the same runtime
-pairing.
+pairing. The Ruby grammar is pinned at `tree-sitter-ruby =
+"0.23"` (0.23.1, MIT) for the same runtime pairing.
 
 ## The RA extractor (domain-profile build, Stage 5)
 

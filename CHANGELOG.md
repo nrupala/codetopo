@@ -10,6 +10,17 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Ruby extractor.** `.rb` files are now parsed via
+  tree-sitter (`tree-sitter-ruby` 0.23). Modules, classes,
+  methods, singleton methods, top-level variables,
+  `require`/`require_relative` imports, calls, and superclass
+  heritage are extracted with the same CODE_SCHEMA output,
+  defines/refs/writes scan, and depth-safe heap-stack walk as
+  the existing extractors, proven by a hand-derived
+  known-answer fixture
+  (`crates/codetopo-extract/tests/fixture-rb`). Eighth
+  language of the full-language extractor program (2026-11-18
+  ruling).
 - **Swift extractor.** `.swift` files are now parsed via
   tree-sitter (`tree-sitter-swift` 0.7). Classes, structs,
   actors, enums, protocols, functions, methods, initializers,
