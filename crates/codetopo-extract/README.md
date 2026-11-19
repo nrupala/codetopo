@@ -6,7 +6,7 @@
 
 Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
 (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`), **Python**
-(`.py`, `.pyi`), and **Kotlin** (`.kt`, `.kts`). One parse per file, one recursive walk, emitting
+(`.py`, `.pyi`), **Kotlin** (`.kt`, `.kts`), and **C** (`.c`, `.h`). One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
 ```rust
@@ -64,6 +64,19 @@ rule; no collapse — Kotlin has no `__init__` form):
 | `core/Engine.kt`    | `{pkg}::core::Engine` |
 | `shapes/Circle.kt`  | `{pkg}::shapes::Circle` |
 
+**C** — rel path, strip extension, `/` → `::` (the Python rule).
+A header and its implementation share a stem, hence a module —
+`shapes/circle.h` and `shapes/circle.c` are the same module, so a
+prototype and its definition land on one symbol id (the builder
+keeps the first file's record and reports the rest as multiple
+definitions, as it does for any duplicate):
+
+| rel path            | module_id            |
+|---------------------|----------------------|
+| `main.c`            | `{pkg}::main`        |
+| `core/engine.c`     | `{pkg}::core::engine` |
+| `core/engine.h`     | `{pkg}::core::engine` |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -100,6 +113,15 @@ The `impl` block itself is **not** a symbol; its self type (`Client`,
 | Kotlin `class` / `object` / companion object | `Class` |
 | Kotlin `interface` | `Interface` |
 | Kotlin top-level `val` / `var` property | `Variable` |
+| C function definition and prototype declaration | `Function` |
+| C `struct` / `union` / `enum` definition, `typedef` name | `Class` |
+| C enumerator | `Variable` (scoped under its enum) |
+| C file-scope variable, object-like macro with a value | `Variable` |
+| C function-like macro | `Function` |
+
+C non-symbols, by design: struct/union fields (fields are not
+symbols in any language here), and value-less `#define`s (the
+include-guard form — a flag, not a binding).
 
 Kotlin non-symbols, by design: class-level properties and
 primary-constructor `val`/`var` parameters (fields are not symbols
@@ -201,6 +223,22 @@ call). **Kotlin heritage** is `Inherits` only, from delegation
 specifiers (`class C : Shape, Closeable()` contributes `Shape` and
 `Closeable` — the last segment of each specifier's type).
 
+**C** includes → `RawImport`, resolved on module-id segments
+relative to the including file's directory:
+
+| statement | to_module_id | bindings |
+|---|---|---|
+| `#include "circle.h"` (from `shapes/circle.c`) | `{pkg}::shapes::circle` | `[]` |
+| `#include "../shapes/circle.h"` (from `core/engine.h`) | `{pkg}::shapes::circle` | `[]` |
+| `#include <math.h>` | `external::math` | `[]` |
+| `#include <sys/types.h>` | `external::sys` | `[]` |
+
+Bindings are always empty — a C include binds no names. Ascending
+past the root with `..` yields `external::unresolved`. **C calls**
+follow the shared rule: `to_name` is the callee text as written
+(`foo`, `obj.m`, `(*fp)`). **C heritage** is empty — C has no
+inheritance syntax; the section is empty by construction.
+
 ### defines / refs
 
 Best effort, per the marimo contract:
@@ -233,6 +271,17 @@ are refs. An augmented-assignment target (`x += 1`) is recorded
 as a *ref*, not a write — the same disclosed limit as Python.
 Only the root of a navigation chain is a read (`shape.area()`
 reads `shape`, never `area`).
+
+For C the same contract is filled from C's binding forms:
+**defines** are parameter names plus local declaration names and
+plain assignment targets; **writes** are assignment targets and
+initialized declaration names (a plain name both defines and
+writes; `obj.field = …` writes `field`). Type names (return type,
+parameter types, declaration types) are refs. An
+augmented-assignment target (`x += 1`) is recorded as a *ref*,
+not a write — the same disclosed limit as Python. Only the
+argument of a field expression is a read (`obj.field` reads
+`obj`, never `field`).
 
 ## Error behavior
 
@@ -279,6 +328,13 @@ crates.io registry cache:
   `call_expression`, `navigation_expression`, `assignment`,
   `for_statement`, `catch_block`, `lambda_literal`,
   `when_expression`, `binary_expression`.
+- tree-sitter-c 0.24.2: `translation_unit`, `function_definition`,
+  `declaration`, `function_declarator`, `init_declarator`,
+  `struct_specifier`, `union_specifier`, `enum_specifier`,
+  `enumerator`, `type_definition`, `preproc_include`,
+  `preproc_def`, `preproc_function_def`, `call_expression`,
+  `assignment_expression`, `field_expression`,
+  `parameter_declaration`.
 
 Crate pins `tree-sitter-typescript = "0.23"` because 0.24 does not exist on
 crates.io. Its 0.23 API exposes `LANGUAGE_TYPESCRIPT` / `LANGUAGE_TSX` as
@@ -290,7 +346,9 @@ the same runtime pairing. The Kotlin grammar is pinned at
 `tree-sitter-kotlin` crate pins tree-sitter <0.23, whose `links`
 value cannot coexist with tree-sitter 0.25 in one dependency graph;
 the `-ng` fork of the same grammar carries the modern
-`tree-sitter-language` binding.
+`tree-sitter-language` binding. The C grammar is pinned at
+`tree-sitter-c = "0.24"` (0.24.2, MIT) for the same runtime
+pairing.
 
 ## The RA extractor (domain-profile build, Stage 5)
 

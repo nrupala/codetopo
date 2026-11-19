@@ -10,6 +10,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **C extractor.** `.c` / `.h` files are now parsed via
+  tree-sitter (`tree-sitter-c` 0.24). Function definitions and
+  prototypes, struct/union/enum definitions and typedef names,
+  enumerators, file-scope variables, macros, `#include` imports
+  (quoted paths resolved relative to the including file, system
+  includes as `external::…`), and calls are extracted with the
+  same CODE_SCHEMA output, defines/refs/writes scan, and
+  depth-safe heap-stack walk as the existing extractors, proven
+  by a hand-derived known-answer fixture
+  (`crates/codetopo-extract/tests/fixture-c`). A header and its
+  implementation share a module id. Second language of the
+  full-language extractor program (2026-11-18 ruling).
 - **Kotlin extractor.** `.kt` / `.kts` files are now parsed via
   tree-sitter (`tree-sitter-kotlin-ng` 1.1 — the maintained fork of
   the fwcd grammar whose `tree-sitter-language` binding pairs with
