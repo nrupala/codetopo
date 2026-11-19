@@ -8,8 +8,8 @@ Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
 (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`), **Python**
 (`.py`, `.pyi`), **Kotlin** (`.kt`, `.kts`), **C** (`.c`, `.h`),
 **Java** (`.java`), **Go** (`.go`), **Shell** (`.sh`, `.bash`),
-and **C++** (`.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`).
-One parse per file, one recursive walk, emitting
+**C++** (`.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`), and
+**Swift** (`.swift`). One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
 ```rust
@@ -122,6 +122,15 @@ names are symbol-path segments, not module segments:
 | `shapes/Circle.cpp` | `{pkg}::shapes::Circle` |
 | `core/Engine.cpp`   | `{pkg}::core::Engine` |
 
+**Swift** — rel path, strip extension, `/` → `::` (the Python
+rule):
+
+| rel path            | module_id            |
+|---------------------|----------------------|
+| `main.swift`        | `{pkg}::main`        |
+| `Shapes/Circle.swift` | `{pkg}::Shapes::Circle` |
+| `Core/Engine.swift`   | `{pkg}::Core::Engine`   |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -206,6 +215,21 @@ is therefore read as a method of a like-named type — the
 qualified form is, in practice, the member form). Template
 declarations are transparent: the declared name is the symbol,
 parameters are not part of the id.
+
+| Swift `class` / `struct` / `actor` / `enum` | `Class` |
+| Swift `protocol` | `Interface` |
+| Swift function outside a type / inside a type | `Function` / `Method` |
+| Swift initializer / deinitializer / subscript | `Method` |
+| Swift protocol requirement | `Method` |
+| Swift enum entry | `Variable` (scoped under its enum) |
+| Swift top-level `let` / `var` | `Variable` |
+| Swift `typealias` | `Class` |
+
+Swift non-symbols, by design: properties inside a type
+(fields are not symbols in any language here). An `extension`
+emits no symbol of its own: it opens a scope under the
+extended type's name so its methods nest there, and its
+conformances are heritage rows for that type.
 
 Kotlin non-symbols, by design: class-level properties and
 primary-constructor `val`/`var` parameters (fields are not symbols
@@ -391,6 +415,20 @@ other path resolves under the package):
 as written. **C++ heritage**: base-class clauses are
 `Inherits` — C++ has one inheritance relation.
 
+**Swift** imports name external modules — the language has
+no in-package import syntax — so every import is
+`external::{first segment}` with the last segment as binding:
+
+| statement | to_module_id | bindings |
+|---|---|---|
+| `import Foundation` | `external::Foundation` | `["Foundation"]` |
+
+**Swift calls** follow the shared rule: `to_name` is the
+callee text as written (`Engine()`, `wheel.area()`).
+**Swift heritage**: inheritance specifiers are `Inherits`,
+for conformances and superclasses alike — Swift has one
+inheritance list.
+
 ### defines / refs
 
 Best effort, per the marimo contract:
@@ -473,6 +511,20 @@ called-name rule, as in Python). Expansions of named variables
 For C++ the scan is the C scan plus member initializers: a
 field initializer (`radius_(radius)`) writes its field, and
 its arguments are reads scanned with the body.
+
+For Swift the same contract is filled from Swift's binding
+forms: **defines** are parameter names, local `let`/`var`
+names, `for` item names, and plain assignment targets;
+**writes** are assignment targets and initialized local names
+(a plain name both defines and writes; `obj.field = …` writes
+`field`). Type names are refs. An augmented-assignment target
+(`x += 1`) is recorded as a *ref*, not a write — the same
+disclosed limit as Python. Only the target of a navigation is
+a read (`wheel.area()` reads `wheel`, never `area`). In this
+grammar (tree-sitter-swift 0.7) a function's return type rides
+a second `name` field, and a pattern's bound names are its
+simple identifiers (`bound_identifier` is a field name, not a
+node kind) — the walker reads both accordingly.
 
 ## Error behavior
 
@@ -557,6 +609,13 @@ crates.io registry cache:
   `base_class_clause`, `preproc_include`, `call_expression`,
   `assignment_expression`, `field_expression`,
   `field_initializer`, `parameter_declaration`.
+- tree-sitter-swift 0.7.4: `source_file`, `import_declaration`,
+  `class_declaration`, `protocol_declaration`,
+  `protocol_function_declaration`, `function_declaration`,
+  `init_declaration`, `property_declaration`, `enum_entry`,
+  `typealias_declaration`, `call_expression`,
+  `navigation_expression`, `assignment`, `pattern`,
+  `inheritance_specifier`, `user_type`.
 
 Crate pins `tree-sitter-typescript = "0.23"` because 0.24 does not exist on
 crates.io. Its 0.23 API exposes `LANGUAGE_TYPESCRIPT` / `LANGUAGE_TSX` as
@@ -578,7 +637,9 @@ for the same runtime pairing. The Shell grammar is pinned at
 pairing. The C++ grammar is pinned at `tree-sitter-cpp =
 "0.23"` (0.23.4, MIT) for the same runtime pairing. `.h` files
 are extracted as C — one extension, one extractor; C++ headers
-use the C++ extensions above.
+use the C++ extensions above. The Swift grammar is pinned at
+`tree-sitter-swift = "0.7"` (0.7.4, MIT) for the same runtime
+pairing.
 
 ## The RA extractor (domain-profile build, Stage 5)
 
