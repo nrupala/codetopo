@@ -10,7 +10,7 @@ Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
 **Java** (`.java`), **Go** (`.go`), **Shell** (`.sh`, `.bash`),
 **C++** (`.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`), and
 **Swift** (`.swift`), **Ruby** (`.rb`), **R** (`.R`, `.r`),
-and **Julia** (`.jl`), and **C#** (`.cs`). One parse per file, one recursive walk, emitting
+and **Julia** (`.jl`), **C#** (`.cs`), and **PHP** (`.php`). One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
 ```rust
@@ -169,6 +169,16 @@ file-scoped namespace prefixes the whole file):
 | `Shapes/Circle.cs`  | `{pkg}::Shapes::Circle` |
 | `Core/Engine.cs`    | `{pkg}::Core::Engine` |
 
+**PHP** — rel path, strip extension, `/` → `::` (the Python
+rule). Namespace names are symbol-path segments (a
+bracketless namespace prefixes the whole file):
+
+| rel path            | module_id            |
+|---------------------|----------------------|
+| `main.php`          | `{pkg}::main`        |
+| `Shapes/Circle.php` | `{pkg}::Shapes::Circle` |
+| `Core/Engine.php`   | `{pkg}::Core::Engine` |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -303,6 +313,16 @@ symbols in any language here).
 
 C# non-symbols, by design: properties and fields (fields are
 not symbols in any language here).
+
+| PHP `class` / `trait` / `enum` | `Class` |
+| PHP `interface` | `Interface` |
+| PHP method | `Method` |
+| PHP plain function | `Function` |
+| PHP enum case | `Variable` (scoped under its enum) |
+| PHP top-level variable / constant | `Variable` |
+
+PHP non-symbols, by design: properties and class constants
+(fields are not symbols in any language here).
 
 Kotlin non-symbols, by design: class-level properties and
 primary-constructor `val`/`var` parameters (fields are not symbols
@@ -571,6 +591,37 @@ callee text as written; object creation is a call on the
 type name. **C# heritage**: in a base list, for a class,
 struct, or record the first type is `Inherits` and the
 rest are `Implements`; for an interface all are `Inherits`.
+
+**PHP** imports are `use` declarations plus file imports.
+A `use` is internal when its first segment is the file's
+own namespace root, or matches the package name
+case-insensitively — the root segment is read as the
+package name, so the target is the package plus the
+remaining segments; otherwise the target is
+`external::{first segment}`. The imported name binds.
+`require` / `include` (and their `_once` forms) with a
+string-literal argument are file imports, resolved
+relative to the including file like a C include, with no
+bindings. A `use` inside a class body is a trait use —
+heritage (`Implements`) for the enclosing class, not an
+import:
+
+| statement | to_module_id | bindings |
+|---|---|---|
+| `use Quarry\Shapes\Circle;` | `{pkg}::Shapes` | `["Circle"]` |
+| `use Vendor\Lib\Thing;` | `external::Vendor` | `["Thing"]` |
+| `require 'Core/Engine.php';` | `{pkg}::Core::Engine` | `[]` |
+
+**PHP calls** follow the shared rule: for member and
+scoped calls `to_name` is the method's name (the Python
+attribute rule); for plain calls the function name as
+written; object creation is a call on the type name.
+Variable names keep their `$` (the written form, as Ruby
+keeps its sigils); a property write through `$this->radius`
+writes `radius`, and `$this` itself is never a ref.
+**PHP heritage**: a class's `extends` is `Inherits` and
+its `implements` list is `Implements`; an interface's
+`extends` list is all `Inherits`.
 
 ### defines / refs
 
