@@ -10,6 +10,17 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **C# extractor.** `.cs` files are now parsed via
+  tree-sitter (`tree-sitter-c-sharp` 0.24). Classes,
+  interfaces, structs, records, enums, methods,
+  constructors, enum members, top-level variables, `using`
+  imports, calls, and base-list heritage are extracted with
+  the same CODE_SCHEMA output, defines/refs/writes scan,
+  and depth-safe heap-stack walk as the existing extractors,
+  proven by a hand-derived known-answer fixture
+  (`crates/codetopo-extract/tests/fixture-cs`). Namespace
+  names are symbol-path segments. Eleventh language of the
+  full-language extractor program (2026-11-18 ruling).
 - **Julia extractor.** `.jl` files are now parsed via
   tree-sitter (`tree-sitter-julia` 0.23). Modules, structs,
   abstract types, long- and short-form functions,
