@@ -10,6 +10,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Swift extractor.** `.swift` files are now parsed via
+  tree-sitter (`tree-sitter-swift` 0.7). Classes, structs,
+  actors, enums, protocols, functions, methods, initializers,
+  enum entries, top-level variables, typealiases, imports,
+  calls, and inheritance-specifier heritage are extracted
+  with the same CODE_SCHEMA output, defines/refs/writes scan,
+  and depth-safe heap-stack walk as the existing extractors,
+  proven by a hand-derived known-answer fixture
+  (`crates/codetopo-extract/tests/fixture-swift`). An
+  extension opens a scope under the extended type's name
+  without emitting a symbol. Seventh language of the
+  full-language extractor program (2026-11-18 ruling).
 - **C++ extractor.** `.cpp` / `.hpp` / `.cc` / `.cxx` / `.hh`
   / `.hxx` files are now parsed via tree-sitter
   (`tree-sitter-cpp` 0.23). Classes, methods (in-class and

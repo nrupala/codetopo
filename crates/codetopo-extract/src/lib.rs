@@ -3,7 +3,7 @@
 // Part of codetopo — Owned by 2351485 ALBERTA INC. (https://nrupalakolkar.com) · Built with Muse by Meta (https://muse.ai/join).
 
 //! Tree-sitter extractors: Rust, TypeScript/JavaScript, Python,
-//! Kotlin, C, Java, Go, Shell, and C++ source files into [`codetopo_core::emit::FileSymbols`].
+//! Kotlin, C, Java, Go, Shell, C++, and Swift source files into [`codetopo_core::emit::FileSymbols`].
 //!
 //! One tree-sitter parse per file, then a single recursive walk over the
 //! syntax tree. The walk never panics on odd input: unparseable shapes are
@@ -27,6 +27,7 @@ pub mod xmlmini;
 
 mod c;
 mod cpp;
+mod swift;
 mod go;
 mod sh;
 mod java;
@@ -75,7 +76,7 @@ pub enum ExtractError {
 
 /// File extensions this crate can extract (case-insensitive).
 const SUPPORTED: &[&str] = &[
-    "rs", "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "md", "py", "pyi", "kt", "kts", "c", "h", "java", "go", "sh", "bash", "cpp", "hpp", "cc", "cxx", "hh", "hxx",
+    "rs", "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "md", "py", "pyi", "kt", "kts", "c", "h", "java", "go", "sh", "bash", "cpp", "hpp", "cc", "cxx", "hh", "hxx", "swift",
 ];
 
 /// True when `path` names a file this crate can extract.
@@ -123,6 +124,7 @@ pub fn extract_file(
         "go" => go::extract(package, rel_path, source),
         "sh" | "bash" => sh::extract(package, rel_path, source),
         "cpp" | "hpp" | "cc" | "cxx" | "hh" | "hxx" => cpp::extract(package, rel_path, source),
+        "swift" => swift::extract(package, rel_path, source),
         // Markdown is documentation, not code: it enters the graph as a
         // single Doc node so docs sit in the map next to what they
         // describe (CODE_SCHEMA §2 has the kind; nothing emitted it).
@@ -271,7 +273,7 @@ mod tests {
     fn supported_extensions() {
         for ext in [
             "rs", "ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "md", "py", "pyi", "kt",
-            "kts", "c", "h", "java", "go", "sh", "bash", "cpp", "hpp", "RS", "TS", "PY", "KT",
+            "kts", "c", "h", "java", "go", "sh", "bash", "cpp", "hpp", "swift", "RS", "TS", "PY", "KT",
         ] {
             assert!(
                 is_supported(Path::new(&format!("a/b.{ext}"))),
