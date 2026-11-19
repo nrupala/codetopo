@@ -10,7 +10,7 @@ Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
 **Java** (`.java`), **Go** (`.go`), **Shell** (`.sh`, `.bash`),
 **C++** (`.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`), and
 **Swift** (`.swift`), **Ruby** (`.rb`), **R** (`.R`, `.r`),
-and **Julia** (`.jl`), **C#** (`.cs`), and **PHP** (`.php`). One parse per file, one recursive walk, emitting
+and **Julia** (`.jl`), **C#** (`.cs`), **PHP** (`.php`), and **Scala** (`.scala`, `.sc`). One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
 ```rust
@@ -179,6 +179,16 @@ bracketless namespace prefixes the whole file):
 | `Shapes/Circle.php` | `{pkg}::Shapes::Circle` |
 | `Core/Engine.php`   | `{pkg}::Core::Engine` |
 
+**Scala** — rel path, strip extension, `/` → `::` (the Python
+rule). The `package` clause does not enter the module id;
+it anchors the import rule:
+
+| rel path            | module_id            |
+|---------------------|----------------------|
+| `Shapes.scala`      | `{pkg}::Shapes`      |
+| `Engine.scala`      | `{pkg}::Engine`      |
+| `Main.scala`        | `{pkg}::Main`        |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -323,6 +333,18 @@ not symbols in any language here).
 
 PHP non-symbols, by design: properties and class constants
 (fields are not symbols in any language here).
+
+| Scala `class` / `object` / `enum` | `Class` |
+| Scala `trait` | `Interface` |
+| Scala `def` in a type | `Method` |
+| Scala top-level `def` | `Function` |
+| Scala `type` definition | `Class` |
+| Scala enum case | `Variable` (scoped under its enum) |
+| Scala top-level `val` / `var` | `Variable` |
+
+Scala non-symbols, by design: class-level `val`/`var`
+definitions and constructor parameters (fields are not
+symbols in any language here).
 
 Kotlin non-symbols, by design: class-level properties and
 primary-constructor `val`/`var` parameters (fields are not symbols
@@ -622,6 +644,29 @@ writes `radius`, and `$this` itself is never a ref.
 **PHP heritage**: a class's `extends` is `Inherits` and
 its `implements` list is `Implements`; an interface's
 `extends` list is all `Inherits`.
+
+**Scala** imports are internal when their first segment
+equals the file's package root (the `package` clause's
+first segment, or the package name): the target is the
+imported name's module-shaped path, the package plus the
+remaining segments; anything else is
+`external::{first segment}`. The imported name binds, a
+rename binds the alias, a wildcard binds nothing; a
+selector list emits one import per selector:
+
+| statement | to_module_id | bindings |
+|---|---|---|
+| `import quarry.shapes.Circle` | `{pkg}::shapes::Circle` | `["Circle"]` |
+| `import scala.collection.mutable` | `external::scala` | `["mutable"]` |
+
+**Scala calls** follow the shared rule: `to_name` is the
+callee text as written; `new X(…)` is a call on the type
+name; a parameterless method access without parentheses
+is a field access, not a call. **Scala heritage**: in an
+extends clause, for a class, object, or enum the first
+type is `Inherits` and the rest are `Implements`; for a
+trait all are `Inherits`. A `derives` clause is
+typeclass derivation, not heritage, and is not emitted.
 
 ### defines / refs
 

@@ -10,6 +10,19 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Scala extractor.** `.scala` and `.sc` files are now
+  parsed via tree-sitter (`tree-sitter-scala` 0.26).
+  Classes, objects, enums, traits, type definitions,
+  methods, top-level functions, enum cases, top-level
+  `val`/`var` variables, imports, calls, and extends
+  heritage are extracted with the same CODE_SCHEMA
+  output, defines/refs/writes scan, and depth-safe
+  heap-stack walk as the existing extractors, proven by
+  a hand-derived known-answer fixture
+  (`crates/codetopo-extract/tests/fixture-scala`). The
+  `package` clause does not enter the module id; it
+  anchors the import rule. Thirteenth language of the
+  full-language extractor program (2026-11-18 ruling).
 - **PHP extractor.** `.php` files are now parsed via
   tree-sitter (`tree-sitter-php` 0.25, the `PHP_ONLY`
   grammar). Classes, traits, enums, interfaces, methods,
