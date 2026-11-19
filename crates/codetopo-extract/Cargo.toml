@@ -8,7 +8,7 @@ version = "0.9.1"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Tree-sitter extraction for codetopo: symbols, calls, imports, reads/writes, and heritage from Rust, TypeScript/JavaScript, Python, Kotlin, C, and Java sources"
+description = "Tree-sitter extraction for codetopo: symbols, calls, imports, reads/writes, and heritage from Rust, TypeScript/JavaScript, Python, Kotlin, C, Java, and Go sources"
 homepage.workspace = true
 readme.workspace = true
 keywords.workspace = true
@@ -26,6 +26,7 @@ zip = { version = "9", default-features = false, features = ["deflate", "_deflat
 tree-sitter-kotlin-ng = "1.1"
 tree-sitter-c = "0.24"
 tree-sitter-java = "0.23"
+tree-sitter-go = "0.25"
 
 [dev-dependencies]
 codetopo-store = { version = "0.9.1", path = "../codetopo-store" }
