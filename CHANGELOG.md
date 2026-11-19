@@ -10,6 +10,17 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **R extractor.** `.R` / `.r` files are now parsed via
+  tree-sitter (`tree-sitter-r` 1.3). Function assignments,
+  top-level variables, `library`/`require`/`source` imports,
+  and calls are extracted with the same CODE_SCHEMA output,
+  defines/refs/writes scan, and depth-safe heap-stack walk as
+  the existing extractors, proven by a hand-derived
+  known-answer fixture
+  (`crates/codetopo-extract/tests/fixture-r`). R has no
+  class-definition syntax in this grammar, so there are no
+  Class symbols. Ninth language of the full-language
+  extractor program (2026-11-18 ruling).
 - **Ruby extractor.** `.rb` files are now parsed via
   tree-sitter (`tree-sitter-ruby` 0.23). Modules, classes,
   methods, singleton methods, top-level variables,
