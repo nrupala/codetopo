@@ -9,7 +9,8 @@ Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
 (`.py`, `.pyi`), **Kotlin** (`.kt`, `.kts`), **C** (`.c`, `.h`),
 **Java** (`.java`), **Go** (`.go`), **Shell** (`.sh`, `.bash`),
 **C++** (`.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`), and
-**Swift** (`.swift`), **Ruby** (`.rb`), and **R** (`.R`, `.r`). One parse per file, one recursive walk, emitting
+**Swift** (`.swift`), **Ruby** (`.rb`), **R** (`.R`, `.r`),
+and **Julia** (`.jl`). One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
 ```rust
@@ -149,6 +150,15 @@ rule):
 | `lib/shapes.R`      | `{pkg}::lib::shapes` |
 | `core/engine.R`     | `{pkg}::core::engine` |
 
+**Julia** — rel path, strip extension, `/` → `::` (the
+Python rule):
+
+| rel path            | module_id            |
+|---------------------|----------------------|
+| `main.jl`           | `{pkg}::main`        |
+| `Shapes.jl`         | `{pkg}::Shapes`      |
+| `Core/Engine.jl`    | `{pkg}::Core::Engine` |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -264,6 +274,16 @@ field by this rule).
 R has no class-definition syntax in this grammar (S3/S4/R6
 types are built by calls), so there are no Class symbols and
 no heritage — both empty by construction.
+
+| Julia `module` block | `Class` |
+| Julia `struct` / primitive type | `Class` |
+| Julia abstract type | `Interface` |
+| Julia function (long or short form) | `Function` |
+| Julia function on a qualified name (`Base.show(…)`) | `Method` |
+| Julia top-level assignment | `Variable` |
+
+Julia non-symbols, by design: struct fields (fields are not
+symbols in any language here).
 
 Kotlin non-symbols, by design: class-level properties and
 primary-constructor `val`/`var` parameters (fields are not symbols
@@ -495,6 +515,23 @@ with a literal first argument is an import, not a call:
 the function name, for `obj$fn` the member name. **R
 heritage** is empty (no inheritance syntax).
 
+**Julia** imports are `using` / `import` statements. A
+dotted path resolves on module-id segments: a leading `.`
+starts from the file's directory module and each extra dot
+ascends one segment; an absolute path whose first segment
+is the package name is internal, anything else is
+`external::{first segment}`. A selected import binds the
+selected names:
+
+| statement (from `Core/Engine.jl`) | to_module_id | bindings |
+|---|---|---|
+| `using ..Shapes: Circle` | `{pkg}::Shapes` | `["Circle"]` |
+| `using LinearAlgebra` | `external::LinearAlgebra` | `[]` |
+
+**Julia calls** follow the shared rule: `to_name` is the
+callee text as written. **Julia heritage**: a type head's
+`<:` supertype is `Inherits`.
+
 ### defines / refs
 
 Best effort, per the marimo contract:
@@ -613,6 +650,14 @@ and an argument's name (`list(wheel = 1)`) is not a read. A
 nested function definition is its own symbol, pruned from
 the enclosing scan.
 
+For Julia the same contract is filled from Julia's binding
+forms: **defines** are parameter names plus assignment
+targets; **writes** are assignment targets (a plain name
+both defines and writes). Only the value of a field
+expression is a read (`c.radius` reads `c`); a compound
+assignment's target (`x += 1`) is read, not written — the
+same disclosed limit as Python.
+
 ## Error behavior
 
 - `extract_file` returns `Err(ExtractError::UnsupportedExtension)` for
@@ -715,6 +760,15 @@ crates.io registry cache:
   `extract_operator`, `namespace_operator`, `if_statement`,
   `for_statement`, `while_statement`, `repeat_statement`,
   `identifier`, `string`.
+- tree-sitter-julia 0.23.1: `source_file`,
+  `module_definition`, `struct_definition`,
+  `abstract_definition`, `primitive_definition`, `type_head`,
+  `function_definition`, `signature`, `assignment`,
+  `call_expression`, `field_expression`,
+  `compound_assignment_expression`, `using_statement`,
+  `import_statement`, `import_path`, `selected_import`,
+  `if_statement`, `for_statement`, `while_statement`,
+  `binary_expression`, `identifier`.
 
 Crate pins `tree-sitter-typescript = "0.23"` because 0.24 does not exist on
 crates.io. Its 0.23 API exposes `LANGUAGE_TYPESCRIPT` / `LANGUAGE_TSX` as
@@ -741,7 +795,9 @@ use the C++ extensions above. The Swift grammar is pinned at
 pairing. The Ruby grammar is pinned at `tree-sitter-ruby =
 "0.23"` (0.23.1, MIT) for the same runtime pairing. The R
 grammar is pinned at `tree-sitter-r = "1"` (1.3.0, MIT) for
-the same runtime pairing.
+the same runtime pairing. The Julia grammar is pinned at
+`tree-sitter-julia = "0.23"` (0.23.1, MIT) for the same
+runtime pairing.
 
 ## The RA extractor (domain-profile build, Stage 5)
 
