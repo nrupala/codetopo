@@ -8,7 +8,7 @@ version = "0.9.1"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Tree-sitter extraction for codetopo: symbols, calls, imports, reads/writes, and heritage from Rust, TypeScript/JavaScript, Python, Kotlin, C, Java, Go, Shell, C++, Swift, Ruby, R, Julia, C#, PHP, Scala, Haskell, and Elixir sources"
+description = "Tree-sitter extraction for codetopo: symbols, calls, imports, reads/writes, and heritage from Rust, TypeScript/JavaScript, Python, Kotlin, C, Java, Go, Shell, C++, Swift, Ruby, R, Julia, C#, PHP, Scala, Haskell, Elixir, and Lua sources"
 homepage.workspace = true
 readme.workspace = true
 keywords.workspace = true
@@ -38,6 +38,7 @@ tree-sitter-php = "0.25"
 tree-sitter-scala = "0.26"
 tree-sitter-haskell = "0.24"
 tree-sitter-elixir = "0.3"
+tree-sitter-lua = "0.5"
 
 [dev-dependencies]
 codetopo-store = { version = "0.9.1", path = "../codetopo-store" }

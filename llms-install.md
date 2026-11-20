@@ -87,7 +87,7 @@ JSON-RPC calls.
    the node/edge kinds and query vocabulary. A structured answer means
    the server is up.
 2. Call `codetopo_index` with the path of a repository to index (Rust,
-   TypeScript/JavaScript, Python, Kotlin, C, Java, Go, Shell, C++, Swift, Ruby, R, Julia, C#, PHP, Scala, Haskell, and Elixir are parsed via tree-sitter). It creates
+   TypeScript/JavaScript, Python, Kotlin, C, Java, Go, Shell, C++, Swift, Ruby, R, Julia, C#, PHP, Scala, Haskell, Elixir, and Lua are parsed via tree-sitter). It creates
    the graph database and reports files indexed, nodes, and edges.
 3. Call `codetopo_stats` against that index — totals should match the
    index report.

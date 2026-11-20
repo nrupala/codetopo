@@ -10,6 +10,17 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Lua extractor.** `.lua` files are now parsed via
+  tree-sitter (`tree-sitter-lua` 0.5). Local tables
+  using the method-table pattern, functions and
+  methods, `require` imports, calls, and the
+  `setmetatable` `__index` heritage form are extracted
+  with the same CODE_SCHEMA output, defines/refs/writes
+  scan, and depth-safe heap-stack walk as the existing
+  extractors, proven by a hand-derived known-answer
+  fixture (`crates/codetopo-extract/tests/fixture-lua`).
+  Sixteenth and final language of the full-language
+  extractor program (2026-11-18 ruling).
 - **Elixir extractor.** `.ex` and `.exs` files are now
   parsed via tree-sitter (`tree-sitter-elixir` 0.3).
   Modules, protocols, implementations, functions and

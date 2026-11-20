@@ -10,7 +10,7 @@ Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
 **Java** (`.java`), **Go** (`.go`), **Shell** (`.sh`, `.bash`),
 **C++** (`.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`), and
 **Swift** (`.swift`), **Ruby** (`.rb`), **R** (`.R`, `.r`),
-and **Julia** (`.jl`), **C#** (`.cs`), **PHP** (`.php`), **Scala** (`.scala`, `.sc`), **Haskell** (`.hs`), and **Elixir** (`.ex`, `.exs`). One parse per file, one recursive walk, emitting
+and **Julia** (`.jl`), **C#** (`.cs`), **PHP** (`.php`), **Scala** (`.scala`, `.sc`), **Haskell** (`.hs`), **Elixir** (`.ex`, `.exs`), and **Lua** (`.lua`). One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
 ```rust
@@ -210,6 +210,15 @@ does not enter the module id:
 | `Core/Engine.ex`    | `{pkg}::Core::Engine` |
 | `main.exs`          | `{pkg}::main`        |
 
+**Lua** — rel path, strip extension, `/` → `::` (the Python
+rule). Dots in file names are kept:
+
+| rel path            | module_id            |
+|---------------------|----------------------|
+| `shapes.lua`        | `{pkg}::shapes`      |
+| `core/engine.lua`   | `{pkg}::core::engine` |
+| `main.lua`          | `{pkg}::main`        |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -389,6 +398,16 @@ Elixir non-symbols, by design: `defstruct` /
 fields are not symbols in any language here) and the
 contract attributes `@callback`, `@spec`, `@type`
 (contracts and prose, pruned whole).
+
+| Lua local table assigned a function (method-table pattern) | `Class` |
+| Lua `function M.f` / `M:m` | `Method` |
+| Lua local function / local assigned a function value | `Function` |
+| Lua other top-level local assignment | `Variable` |
+
+Lua non-symbols, by design: table-constructor fields
+(including function-valued fields) and the methods a
+plain `local X = {}` table gains later — only a local
+table directly assigned a function is a class.
 
 Kotlin non-symbols, by design: class-level properties and
 primary-constructor `val`/`var` parameters (fields are not symbols
@@ -764,6 +783,24 @@ the declaration calls and the control forms (`if`,
 module's `@behaviour M` is `Implements`; a
 `defimpl P, for: T` is T `Implements` P. Elixir has no
 inheritance.
+
+**Lua** has one import form: `require("...")`. The
+argument is a dotted or slashed path read
+package-root-relative — `require("shapes")` targets
+`{pkg}::shapes`, `require("core.engine")` targets
+`{pkg}::core::engine`; the binding is the local name
+the result is assigned to (`[]` when unassigned). A
+`require` whose argument is not a plain string literal
+is recorded unresolved (`to_module_id` None,
+`to_name` the written expression, confidence 0.3).
+
+**Lua calls** follow the shared rule: a method call
+`recv:name(args)` and an index call `recv.name(args)`
+both name the method (the Python attribute rule); a
+plain call names the function. **Lua heritage** is
+exactly one form, stated exactly: `setmetatable(C,
+{ __index = B })` where `B` resolves to a symbol is
+`Inherits`; no other Lua idiom emits heritage.
 
 ### defines / refs
 
