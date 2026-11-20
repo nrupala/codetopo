@@ -10,6 +10,30 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **ENGLISH document profile.** Codetopo now graphs English
+  text under a third profile (`profiles/english.profile.json`,
+  embedded beside CODE): sentence grammar measured by a named
+  parser — spaCy 3.8.18 / en_core_web_md 3.8.0, via the new
+  `tools/english-ingest` companion — under interpretation edges
+  (coreference, claim structure) that a reading agent adds
+  labelled with claimant and basis. Grammar edges ride as
+  provenance class `inference` (86.9% of relations correct on
+  the conformance fixture; the full audit is the published
+  accuracy statement, `docs/english-accuracy.md`), claim edges
+  as `declared_claim`, so an english graph is claims-class by
+  construction and never truth-class. English is a document
+  profile, not a twentieth code language. Also in this change:
+  snapshots naming the english profile restore through the
+  standard loader (previously refused — only CODE was
+  embedded); `same-entity` is declared symmetric in the
+  profile, so `path` traverses identity edges both ways (all
+  other kinds, and every CODE kind, stay directed); the
+  structure render scope gains a clustered containment
+  layout for profiles that declare it (a sentence's words stand
+  under their sentence). Proven by the known-answer fixture
+  `crates/codetopo-core/tests/fixture-english` (75 nodes,
+  144 edges, 132 grammar / 12 claims). Contract and honesty
+  rules: `docs/english-profile.md`.
 - **Lua extractor.** `.lua` files are now parsed via
   tree-sitter (`tree-sitter-lua` 0.5). Local tables
   using the method-table pattern, functions and

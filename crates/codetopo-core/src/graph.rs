@@ -1195,7 +1195,12 @@ impl Graph {
     /// edges. `None` when no directed path exists (or either endpoint is
     /// unknown): a path is never synthesized by reversing edges, because a
     /// reversed step would claim a directed relationship that does not
-    /// exist. A node paths to itself as an empty step list.
+    /// exist. The one exception is a kind the graph's profile declares
+    /// symmetric — a directionless relation (ENGLISH `same-entity`:
+    /// identity), where traversal both ways claims nothing the edge
+    /// does not already say. CODE declares no symmetric kinds, so code
+    /// paths are exactly as directed as they have always been. A node
+    /// paths to itself as an empty step list.
     pub fn path(&self, from: &str, to: &str) -> Option<Vec<PathStep>> {
         self.directed_path(from, to)
     }
@@ -1224,6 +1229,20 @@ impl Graph {
                     if visited.insert(nid.clone()) {
                         prev.insert(nid.clone(), (cur.clone(), *k));
                         queue.push_back(nid.clone());
+                    }
+                }
+            }
+            // Symmetric kinds only: the same edge read from its other
+            // end. The step records the traversal direction with the
+            // symmetric kind — the kind itself asserts no direction.
+            if let Some(incoming) = self.parents.get(&cur) {
+                for (fid, k) in incoming {
+                    if self.profile.is_containment(k) || !self.profile.is_symmetric(k) {
+                        continue;
+                    }
+                    if visited.insert(fid.clone()) {
+                        prev.insert(fid.clone(), (cur.clone(), *k));
+                        queue.push_back(fid.clone());
                     }
                 }
             }

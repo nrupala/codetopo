@@ -120,6 +120,22 @@ pub fn layout_scoped(graph: &Graph, scope: RenderScope) -> LayoutSpec {
             layout_from(graph, profile, &ids, &edges, None)
         }
         RenderScope::Structure => {
+            if profile.render.structure_cluster {
+                // A profile whose structure IS its containment
+                // (ENGLISH: document over sentences over words)
+                // declares the clustered layout: every node kept,
+                // each container's children placed in a band under
+                // it. The generic projection would keep none of
+                // this profile's kinds and the generic layering
+                // would lay every word in one flat row — a ribbon,
+                // not a map (ENGLISH-SPIKE-2026-11-19).
+                let ids: Vec<String> = graph.nodes().map(|n| n.id.clone()).collect();
+                let edges: Vec<(String, String, EdgeKind)> = graph
+                    .edges()
+                    .map(|e| (e.from.clone(), e.to.clone(), e.kind))
+                    .collect();
+                return layout_clustered(graph, profile, &ids, &edges);
+            }
             let (ids, edges) = structure_projection(graph);
             // A structure map reads as a hierarchy: layers are
             // containment depth (package over files over modules
@@ -230,6 +246,163 @@ fn structure_projection(graph: &Graph) -> (Vec<String>, Vec<(String, String, Edg
         }
     }
     (ids, edges)
+}
+
+/// The clustered containment layout (profiles declaring
+/// `render.structure_cluster` — ENGLISH). Every node is placed
+/// exactly once, in a band under its containment parent:
+///
+/// - a container sits at the top of its band;
+/// - its leaf children stack vertically in the band's first
+///   column, in id order;
+/// - its child containers stand side by side in the columns that
+///   follow, each the top of its own band, in id order;
+/// - roots (nodes no containment edge claims) stand side by side
+///   on the top row, in id order.
+///
+/// A node caught in a containment cycle, or otherwise unreachable
+/// from a root, is placed in a final row in id order — placed,
+/// never dropped, and never allowed to move another node's cell.
+/// Pure and deterministic, like every layout here: same graph in,
+/// same spec out. Widths are folded bottom-up and positions
+/// assigned top-down, both over explicit stacks (the E-1 lesson:
+/// layout inputs can be exactly as deep as query inputs).
+fn layout_clustered(
+    graph: &Graph,
+    profile: &crate::profile::DomainProfile,
+    ids: &[String],
+    edges: &[(String, String, EdgeKind)],
+) -> LayoutSpec {
+    use std::collections::HashSet;
+    let idset: HashSet<&str> = ids.iter().map(|s| s.as_str()).collect();
+
+    // Containment children per parent (both endpoints placed),
+    // ascending by id.
+    let mut children: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut has_parent: HashSet<&str> = HashSet::new();
+    for edge in graph.edges() {
+        if profile.is_containment(&edge.kind)
+            && idset.contains(edge.from.as_str())
+            && idset.contains(edge.to.as_str())
+        {
+            children.entry(edge.from.as_str()).or_default().push(edge.to.as_str());
+            has_parent.insert(edge.to.as_str());
+        }
+    }
+    for list in children.values_mut() {
+        list.sort_unstable();
+        list.dedup();
+    }
+    let is_container = |id: &str| children.get(id).map(|c| !c.is_empty()).unwrap_or(false);
+
+    // Bottom-up band widths over an explicit post-order stack.
+    let roots: Vec<&str> = ids
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|id| !has_parent.contains(id))
+        .collect();
+    let mut width: HashMap<&str, u32> = HashMap::new();
+    for &root in &roots {
+        let mut stack: Vec<(&str, bool)> = vec![(root, false)];
+        while let Some((node, expanded)) = stack.pop() {
+            if expanded {
+                let kids = children.get(node).cloned().unwrap_or_default();
+                let has_leaves = kids.iter().any(|k| !is_container(k));
+                let mut w: u32 = if has_leaves { 1 } else { 0 };
+                for k in kids.iter().filter(|k| is_container(k)) {
+                    w += width.get(k).copied().unwrap_or(1);
+                }
+                width.insert(node, w.max(1));
+            } else {
+                stack.push((node, true));
+                if let Some(kids) = children.get(node) {
+                    for k in kids {
+                        stack.push((k, false));
+                    }
+                }
+            }
+        }
+    }
+
+    // Top-down placement: (node, band x, node y). Band offsets are
+    // assigned in id order first, then pushed in reverse so the
+    // stack pops them in order.
+    let mut pos: HashMap<&str, (u32, u32)> = HashMap::new();
+    let mut total_width = 0u32;
+    let mut stack: Vec<(&str, u32, u32)> = Vec::new();
+    {
+        let mut placed_roots: Vec<(&str, u32)> = Vec::new();
+        for &root in &roots {
+            placed_roots.push((root, total_width));
+            total_width += width.get(root).copied().unwrap_or(1);
+        }
+        for (root, x) in placed_roots.iter().rev() {
+            stack.push((root, *x, 0));
+        }
+    }
+    while let Some((node, x, y)) = stack.pop() {
+        pos.insert(node, (x, y));
+        let kids = children.get(node).cloned().unwrap_or_default();
+        let leaves: Vec<&str> = kids.iter().filter(|k| !is_container(k)).copied().collect();
+        for (i, leaf) in leaves.iter().enumerate() {
+            pos.insert(leaf, (x, y + 1 + i as u32));
+        }
+        let mut cx = x + if leaves.is_empty() { 0 } else { 1 };
+        let mut placed_kids: Vec<(&str, u32)> = Vec::new();
+        for c in kids.iter().filter(|k| is_container(k)) {
+            placed_kids.push((c, cx));
+            cx += width.get(c).copied().unwrap_or(1);
+        }
+        for (c, kx) in placed_kids.iter().rev() {
+            stack.push((c, *kx, y + 1));
+        }
+    }
+
+    // Anything unplaced (a containment cycle member, an orphan
+    // whose container is absent) takes the final row, in id order.
+    let mut height = pos.values().map(|(_, y)| *y).max().map(|m| m + 1).unwrap_or(0);
+    let mut fx = 0u32;
+    for id in ids {
+        if !pos.contains_key(id.as_str()) {
+            pos.insert(id.as_str(), (fx, height));
+            fx += 1;
+        }
+    }
+    if fx > 0 {
+        height += 1;
+        total_width = total_width.max(fx);
+    }
+
+    let mut placed: Vec<LayoutNode> = Vec::with_capacity(ids.len());
+    for id in ids {
+        let node = graph.get(id).expect("node exists");
+        let (x, y) = pos[id.as_str()];
+        placed.push(LayoutNode {
+            id: node.id.clone(),
+            label: node.label.clone(),
+            kind: node.kind,
+            tier: node.tier,
+            x,
+            y,
+        });
+    }
+    placed.sort_by_key(|n| (n.y, n.x));
+
+    let layout_edges: Vec<LayoutEdge> = edges
+        .iter()
+        .map(|(from, to, kind)| (from.clone(), to.clone(), *kind))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|(from, to, kind)| LayoutEdge { from, to, kind })
+        .collect();
+
+    LayoutSpec {
+        layout_version: LAYOUT_VERSION,
+        width: total_width,
+        height,
+        nodes: placed,
+        edges: layout_edges,
+    }
 }
 
 /// The shared layering core: SCC condensation + longest-path
@@ -459,6 +632,14 @@ pub(crate) fn kind_fill(kind: NodeKind) -> (&'static str, &'static str) {
         "variable" => ("#f3f4f6", "#6b7280"),
         "external" => ("#f9fafb", "#9ca3af"),
         "doc" => ("#fef9c3", "#a16207"),
+        // ENGLISH profile kinds, presented parallel to their code
+        // analogues: the document as the package, the sentence as
+        // the file, the predicate as the function, the entity as
+        // the class.
+        "document" => ("#ede9fe", "#7c3aed"),
+        "sentence" => ("#f1f5f9", "#64748b"),
+        "predicate" => ("#fef3c7", "#d97706"),
+        "entity" => ("#d1fae5", "#059669"),
         _ => ("#f3f4f6", "#6b7280"),
     }
 }
@@ -474,6 +655,15 @@ pub(crate) fn edge_stroke(kind: EdgeKind) -> (&'static str, Option<&'static str>
         "reads" => ("#9333ea", None),
         "writes" => ("#dc2626", None),
         "defines" => ("#94a3b8", Some("2 3")),
+        // ENGLISH profile kinds. The two storeys must read
+        // differently in the picture, as they do in the data:
+        // grammar edges are solid slate (measured), claim edges
+        // are dashed amber (declared interpretation) — a claim can
+        // never borrow the measured storey's line.
+        "subject-of" | "object-of" | "complement-of" | "modifier-of" | "clause-of"
+        | "appositive-of" | "coordinated-with" => ("#475569", None),
+        "same-entity" => ("#b45309", Some("6 3")),
+        "frames" | "supports" | "states-thesis-of" => ("#b45309", Some("2 3")),
         _ => ("#94a3b8", None),
     }
 }
@@ -782,6 +972,68 @@ mod tests {
             render_svg(&structure),
             render_svg(&layout_scoped(&g, RenderScope::Structure))
         );
+    }
+
+    #[test]
+    fn clustered_structure_bands_children_under_their_container() {
+        // A hand-built ENGLISH snapshot (the only profile declaring
+        // the clustered structure layout): a document over two
+        // sentences; s1 nests a sub-sentence beside two leaves, to
+        // exercise the general band rule — leaves stack in the
+        // container's first column, child containers stand in the
+        // columns after.
+        let text = r#"{
+          "schema_version": "2.0",
+          "profile_id": "english",
+          "profile_version": "1.0.0",
+          "graph_class": "claims",
+          "nodes": [
+            {"id": "doc", "kind": "document", "label": "D", "loc": {"file": "t.md", "line": 1}, "tier": "core", "defines": [], "refs": [], "attrs": {}},
+            {"id": "s1", "kind": "sentence", "label": "S1", "loc": {"file": "t.md", "line": 1}, "tier": "core", "defines": [], "refs": [], "attrs": {}},
+            {"id": "s1:e0", "kind": "entity", "label": "a", "loc": {"file": "t.md", "line": 1}, "tier": "optional", "defines": [], "refs": [], "attrs": {}},
+            {"id": "s1:e1", "kind": "entity", "label": "b", "loc": {"file": "t.md", "line": 1}, "tier": "optional", "defines": [], "refs": [], "attrs": {}},
+            {"id": "s1:sub", "kind": "sentence", "label": "S1s", "loc": {"file": "t.md", "line": 1}, "tier": "core", "defines": [], "refs": [], "attrs": {}},
+            {"id": "s1:sub:e0", "kind": "entity", "label": "c", "loc": {"file": "t.md", "line": 1}, "tier": "optional", "defines": [], "refs": [], "attrs": {}},
+            {"id": "s2", "kind": "sentence", "label": "S2", "loc": {"file": "t.md", "line": 2}, "tier": "core", "defines": [], "refs": [], "attrs": {}},
+            {"id": "s2:e0", "kind": "entity", "label": "d", "loc": {"file": "t.md", "line": 2}, "tier": "optional", "defines": [], "refs": [], "attrs": {}}
+          ],
+          "edges": [
+            {"from": "doc", "to": "s1", "kind": "contains", "attrs": {}},
+            {"from": "doc", "to": "s2", "kind": "contains", "attrs": {}},
+            {"from": "s1", "to": "s1:e0", "kind": "contains", "attrs": {}},
+            {"from": "s1", "to": "s1:e1", "kind": "contains", "attrs": {}},
+            {"from": "s1", "to": "s1:sub", "kind": "contains", "attrs": {}},
+            {"from": "s1:sub", "to": "s1:sub:e0", "kind": "contains", "attrs": {}},
+            {"from": "s2", "to": "s2:e0", "kind": "contains", "attrs": {}}
+          ],
+          "audit_head": "",
+          "audit_log": []
+        }"#;
+        let g = crate::Snapshot::from_json(text)
+            .expect("snapshot parses")
+            .to_graph_checked()
+            .expect("english snapshot restores");
+        let spec = layout_scoped(&g, RenderScope::Structure);
+        let at = |id: &str| {
+            let n = spec.nodes.iter().find(|n| n.id == id).expect("placed");
+            (n.x, n.y)
+        };
+        assert_eq!(spec.nodes.len(), 8, "the clustered scope keeps every node");
+        assert_eq!(at("doc"), (0, 0));
+        // s1's band is two columns wide (leaf column + the nested
+        // band); s2 stands after it.
+        assert_eq!(at("s1"), (0, 1));
+        assert_eq!(at("s1:e0"), (0, 2));
+        assert_eq!(at("s1:e1"), (0, 3));
+        assert_eq!(at("s1:sub"), (1, 2));
+        assert_eq!(at("s1:sub:e0"), (1, 3));
+        assert_eq!(at("s2"), (2, 1));
+        assert_eq!(at("s2:e0"), (2, 2));
+        assert_eq!(spec.width, 3);
+        // The same graph under the full scope still uses the
+        // generic layering (the cluster is a structure-scope rule).
+        let full = layout_scoped(&g, RenderScope::Full);
+        assert_eq!(full.nodes.len(), 8);
     }
 
     #[test]

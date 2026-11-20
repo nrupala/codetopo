@@ -196,7 +196,10 @@ impl Snapshot {
 
     /// [`Snapshot::to_graph`] with the refusal surfaced: a snapshot
     /// naming a profile this build cannot load is an error, never a
-    /// silent read under the CODE dictionary.
+    /// silent read under the CODE dictionary. The embedded profiles
+    /// (CODE, ENGLISH) resolve here; a file-loaded profile (RA) is
+    /// its own surfaces' business and is refused like any unknown
+    /// id — loudly, by name.
     pub fn to_graph_checked(&self) -> Result<Graph, String> {
         let mut nodes: HashMap<String, Node> = HashMap::new();
         for n in &self.nodes {
@@ -209,14 +212,13 @@ impl Snapshot {
             parents.entry(e.to.clone()).or_default().push((e.from.clone(), e.kind));
         }
         let graph = Graph::from_parts(nodes, self.edges.clone(), children, parents);
-        if self.profile_id == DomainProfile::code().profile_id {
-            Ok(graph)
-        } else {
-            Err(format!(
-                "snapshot names profile {:?} which this build cannot load (only {:?} is embedded)",
+        match DomainProfile::embedded(&self.profile_id) {
+            Some(profile) => Ok(graph.with_profile(profile)),
+            None => Err(format!(
+                "snapshot names profile {:?} which this build cannot load (embedded: {:?})",
                 self.profile_id,
-                DomainProfile::code().profile_id
-            ))
+                DomainProfile::embedded_ids()
+            )),
         }
     }
 }

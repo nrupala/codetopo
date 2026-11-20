@@ -38,6 +38,16 @@ pub const PROFILE_FORMAT: &str = "codetopo.profile/1";
 /// The embedded CODE profile (profile #1).
 pub const CODE_PROFILE_JSON: &str = include_str!("../../../profiles/code.profile.json");
 
+/// The embedded ENGLISH profile (profile #3): document grammar
+/// measured by a named statistical parser (class: inference) under
+/// labelled interpretation (class: declared_claim). A claims-class
+/// profile — no english graph is truth-class, by construction of
+/// its edge classes. Embedded beside CODE so snapshots naming it
+/// restore without a file lookup; the RA profile remains
+/// file-loaded by its own surfaces, as before.
+pub const ENGLISH_PROFILE_JSON: &str =
+    include_str!("../../../profiles/english.profile.json");
+
 /// Provenance classes (founding spec §4.1), ordered by strength:
 /// `extracted_truth` > `sourced_fact` > `estimate` > `inference` >
 /// `declared_claim`.
@@ -128,6 +138,20 @@ pub struct EdgeKindDef {
     pub provenance_attrs: Vec<String>,
     /// "live" | "restore_only" (founding spec D2).
     pub emission: String,
+    /// The relation this kind names is directionless (an identity,
+    /// an equivalence): path queries may traverse it both ways.
+    /// Declared per kind by the profile — CODE declares none, so
+    /// code paths keep the founding rule that a path is never
+    /// synthesized by reversing an edge. ENGLISH declares it for
+    /// `same-entity`: identity points anaphorically (later mention
+    /// to earlier), and a directed-only walk would report "no path"
+    /// between two mentions of one entity.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub symmetric: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// One measured field of a profile.
@@ -221,6 +245,29 @@ pub struct HistoryDef {
     pub methods: BTreeMap<String, String>,
 }
 
+/// The profile's render declarations. Presentation is profile
+/// data where the *shape* of the map depends on the domain's
+/// containment shape; the historic CODE behaviour is the default.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RenderDef {
+    /// The structure scope keeps every node (no roll-up to a kept
+    /// kind list) and places each container's children in a band
+    /// under the container: child containers side by side, leaf
+    /// children stacked in the container's own column. ENGLISH
+    /// declares it: a text's structure IS its containment (document
+    /// over sentences over words), and the flat per-depth row the
+    /// generic layering produces is a ribbon, not a map. Absent
+    /// (CODE, RA): the historic structure projection is unchanged.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub structure_cluster: bool,
+}
+
+impl RenderDef {
+    fn is_default(&self) -> bool {
+        !self.structure_cluster
+    }
+}
+
 /// A loaded, validated domain profile.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DomainProfile {
@@ -244,6 +291,8 @@ pub struct DomainProfile {
     #[serde(default)]
     pub siblings: Vec<SiblingDef>,
     pub conformance: ConformanceDef,
+    #[serde(default, skip_serializing_if = "RenderDef::is_default")]
+    pub render: RenderDef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history: Option<HistoryDef>,
 
@@ -467,6 +516,36 @@ impl DomainProfile {
         .clone()
     }
 
+    /// The ENGLISH profile (profile #3), parsed once from the
+    /// embedded dictionary in `profiles/english.profile.json`.
+    pub fn english() -> std::sync::Arc<DomainProfile> {
+        static ENGLISH: OnceLock<std::sync::Arc<DomainProfile>> = OnceLock::new();
+        ENGLISH.get_or_init(|| {
+            std::sync::Arc::new(
+                DomainProfile::from_json(ENGLISH_PROFILE_JSON)
+                    .expect("the embedded ENGLISH profile validates"),
+            )
+        })
+        .clone()
+    }
+
+    /// An embedded profile by id — the profiles a snapshot can name
+    /// and this build can restore with no file lookup. File-loaded
+    /// profiles (RA) are their own surfaces' business and are not
+    /// resolved here.
+    pub fn embedded(profile_id: &str) -> Option<std::sync::Arc<DomainProfile>> {
+        match profile_id {
+            "code" => Some(Self::code()),
+            "english" => Some(Self::english()),
+            _ => None,
+        }
+    }
+
+    /// The ids [`Self::embedded`] resolves, for refusal messages.
+    pub fn embedded_ids() -> [&'static str; 2] {
+        ["code", "english"]
+    }
+
     pub fn node_kind_def(&self, kind: &NodeKind) -> Option<&NodeKindDef> {
         self.node_index.get(kind.as_str()).map(|&i| &self.node_kinds[i])
     }
@@ -550,6 +629,13 @@ impl DomainProfile {
 
     pub fn is_containment(&self, kind: &EdgeKind) -> bool {
         kind.as_str() == self.containment.edge_kind
+    }
+
+    /// Whether the profile declares this edge kind directionless
+    /// (see [`EdgeKindDef::symmetric`]). Undeclared kinds are
+    /// directed; CODE declares none.
+    pub fn is_symmetric(&self, kind: &EdgeKind) -> bool {
+        self.edge_kind_def(kind).map(|d| d.symmetric).unwrap_or(false)
     }
 
     /// The boundary test (founding spec D8): the boundary *kind* or
@@ -817,6 +903,72 @@ mod tests {
         assert!(!p.is_boundary(&NodeKind::Function, "pkg::f"));
         assert_eq!(p.package_of("external::serde"), None);
         assert_eq!(p.package_of("alpha::a::f"), Some("alpha"));
+    }
+
+    #[test]
+    fn embedded_english_profile_validates() {
+        let p = DomainProfile::english();
+        assert_eq!(p.profile_id, "english");
+        assert_eq!(p.profile_version, "1.0.0");
+        assert_eq!(p.node_kinds.len(), 5);
+        assert_eq!(p.edge_kinds.len(), 12);
+        // The two storeys, as classes: grammar rides as inference
+        // (a statistical parser's measurement, never extracted
+        // truth); interpretation rides as declared_claim.
+        assert_eq!(
+            p.provenance_class(&EdgeKind::new("subject-of")),
+            Some(ProvenanceClass::Inference)
+        );
+        assert_eq!(
+            p.provenance_class(&EdgeKind::new("same-entity")),
+            Some(ProvenanceClass::DeclaredClaim)
+        );
+        // No english edge kind is a truth class, so no english
+        // graph can compute graph class "truths" (section 4.3).
+        for def in &p.edge_kinds {
+            assert!(
+                !matches!(
+                    def.provenance_class,
+                    ProvenanceClass::ExtractedTruth | ProvenanceClass::SourcedFact
+                ),
+                "english kind {:?} must not be a truth class",
+                def.name
+            );
+        }
+        let kinds: Vec<EdgeKind> =
+            p.edge_kinds.iter().map(|d| EdgeKind::new(&d.name)).collect();
+        let (class, summary) = p.graph_class_of(kinds.iter());
+        assert_eq!(class, "claims-bearing");
+        assert_eq!(summary.get("inference"), Some(&8));
+        assert_eq!(summary.get("declared_claim"), Some(&4));
+        // Claim kinds require claimant + basis at admission.
+        let req = p.provenance_required_attrs(&EdgeKind::new("frames"));
+        assert!(req.contains(&"claimant") && req.contains(&"basis"), "{req:?}");
+        // Identity is symmetric; grammar and claim-structure kinds
+        // are not.
+        assert!(p.is_symmetric(&EdgeKind::new("same-entity")));
+        assert!(!p.is_symmetric(&EdgeKind::new("subject-of")));
+        assert!(!p.is_symmetric(&EdgeKind::new("frames")));
+        // The render declaration rides along.
+        assert!(p.render.structure_cluster);
+        // Embedded resolution knows both profiles and no others.
+        assert!(DomainProfile::embedded("english").is_some());
+        assert!(DomainProfile::embedded("code").is_some());
+        assert!(DomainProfile::embedded("research-analyst").is_none());
+    }
+
+    #[test]
+    fn code_profile_declares_no_symmetric_kinds_and_no_cluster_render() {
+        // The historic behaviour is the default: no CODE kind is
+        // symmetric and the CODE render declaration is empty, so
+        // code paths and code structure renders are byte-identical.
+        let p = DomainProfile::code();
+        for def in &p.edge_kinds {
+            assert!(!def.symmetric, "code kind {:?} stays directed", def.name);
+            assert!(!p.is_symmetric(&EdgeKind::new(def.name.as_str())));
+        }
+        assert!(!p.render.structure_cluster);
+        assert_eq!(p.render, RenderDef::default());
     }
 
     #[test]
