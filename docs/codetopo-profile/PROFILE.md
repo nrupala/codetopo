@@ -6,23 +6,17 @@ boundaries, money surface — with the graph snapshot beside it
 (`snapshot.json`, `stats.json`) as the measured evidence.
 
 - **Repo:** nrupala/codetopo (public)
-- **Commit profiled:** `7bc0d03e5ce160dd7c9dd63295379b744789eefb` (main)
-- **Engine:** codetopo 0.9.1 · index run 2026-11-18
-- **Graph:** 148 files walked · 8,756 nodes · 29,239 edges · audit chain valid
-- **Nodes by kind:** function 1,259 · method 507 · class 245 · interface 12 · variable 212 · module 136 · file 148 · doc 40 · external 6,186 · package 11
-- **Edges by kind:** calls 13,832 · reads 10,240 · contains 2,559 · defines 2,024 · imports 521 · writes 57 · implements 4 · inherits 2
+- **Commit profiled:** `00bbf3766e6a8244265f41fb48981e9cc3237ec1` (main)
+- **Engine:** codetopo 0.9.1 + full-language program (engine built from codetopo main `d71509d1` — all sixteen program extractors merged) · index run 2026-11-19
+- **Graph:** 282 files walked · 0 failed · 11,524 nodes · 46,422 edges · audit chain valid (3 entries, head `d6011465…eda6`)
+- **Nodes by kind:** external 7,420 · function 1,896 · method 809 · variable 402 · class 364 · file 279 · module 262 · doc 58 · interface 23 · package 11
+- **Edges by kind:** calls 21,283 · reads 15,694 · defines 4,394 · contains 4,096 · imports 738 · writes 209 · implements 6 · inherits 2
 
 ## Coverage honesty
 
-Extracted at symbol level: Rust (97 `.rs` — the engine itself),
-TypeScript/JavaScript and Python (10 `.py` — client tooling and tests),
-Markdown as Doc nodes (43). **Not extracted:** the diaspora client
-bindings' own languages — R (5 files), C (3), plus C++/Julia package
-sources: those are ways for other languages to *call* Codetopo, not
-code Codetopo's extractors read (extractors for them are Stage-3
-program items, filed in the program SEQUENCE). XLSX workbooks (7) are
-inputs to the RA workbook extractor, not code.
+**Re-profiled 2026-11-19** with the full-language engine (Codetopo extractor program, 2026-11-18 ruling): every language this repo is written in is now extracted at symbol level. First profile: 2026-11-18 (Codetopo 0.9.1).
 
+Extracted at symbol level: Rust (the engine itself), TypeScript/JavaScript and Python (client tooling and tests), Markdown as Doc nodes — and, since the full-language extractor program landed, the diaspora client bindings' own languages, named as not extracted in the first profile: the C and C++ client sources, the R package sources, and the Julia package sources are now in the graph (C #155, C++ #159, R #162, Julia #163), as is every extractor the program added (this repo's own tree now contains all sixteen program extractors). XLSX workbooks (7) are inputs to the RA workbook extractor, not code. Symbol coverage of the codebase is complete.
 ## Topology
 
 A deterministic structural-graph engine for code: tree-sitter
