@@ -1,0 +1,9 @@
+# The english profile's accuracy statement (docs/english-accuracy.md)
+# is a measurement OF THIS PARSER. The companion refuses to run
+# under any other versions — see english_ingest.py.
+spacy==3.8.18
+# Model: en_core_web_md 3.8.0 — install with:
+#   python3 -m spacy download en_core_web_md
+# (spacy resolves the model version compatible with the pinned
+# spacy release; the companion verifies it reports 3.8.0 at run
+# time and refuses otherwise.)

@@ -158,6 +158,16 @@ output says what it did not cover, instead of omitting it silently:
   Python, Kotlin, C, Java, Go, Shell, C++, Swift, Ruby, R, Julia, C#, PHP, Scala, Haskell, Elixir, and Lua sources (tree-sitter). A file whose extension the extractor
   does not handle contributes no symbols or edges; an extraction failure
   is counted in the index run's `files failed` total, never hidden.
+- **English is a document profile, not a parsed language.** The
+  ENGLISH profile (`profiles/english.profile.json`) graphs English
+  text in two storeys: sentence grammar measured by a named parser
+  (spaCy; 86.9% of relations correct on the conformance fixture —
+  the audit is published in `docs/english-accuracy.md`), under
+  interpretation edges (coreference, claim structure) that a
+  reading agent adds, each labelled with its claimant and basis.
+  English graphs are **claims-class, never truth-class**, and
+  English is not counted among the nineteen parsed languages
+  above. See `docs/english-profile.md`.
 - **Unresolved calls are diagnostics, not dropped edges.** Resolution is
   syntactic. A call whose target cannot be resolved to a node is
   recorded as a diagnostic (`UnresolvedCall`, alongside dependency
@@ -328,6 +338,8 @@ across this product line: a hash-chained, append-only record, verified by
 - [Development log](https://codetopo.aimlds.org/log/) — how codetopo got here and where it is going, in plain words (kept with the releases; also linked from the demo site)
 - [`SKILL.md`](SKILL.md) — agent onboarding: when to reach for codetopo instead of grep, and the counts-first workflow
 - [`docs/render.md`](docs/render.md) — deterministic render: the frozen layout spec (JSON) + SVG rules behind `codetopo render`
+- [`docs/english-profile.md`](docs/english-profile.md) — the ENGLISH document profile: measured grammar under labelled claims, and what it never claims
+- [`docs/english-accuracy.md`](docs/english-accuracy.md) — the ENGLISH profile's published accuracy statement (the parser audit behind its numbers)
 - [`docs/protocol-proof.md`](docs/protocol-proof.md) — MCP/ACP conformance evidence: strict stdio clients + official-schema validation
 - [`docs/scale-gate.md`](docs/scale-gate.md) — the 10,000-file scale gate and its measured record
 - [`Dockerfile`](Dockerfile) + [`docker-compose.yml`](docker-compose.yml) — self-hosted container: the HTTP API over your own indexes

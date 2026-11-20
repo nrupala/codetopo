@@ -98,6 +98,22 @@ skeleton** instead of every node:
 - **Layered only.** The force layout always takes the full
   graph; asking it for the structure scope is an error naming
   the reason, never a silent substitution.
+- **Clustered profiles (ENGLISH).** A profile whose structure
+  *is* its containment declares `render.structure_cluster`
+  (the ENGLISH profile is the only one). Its structure scope
+  takes the **clustered containment layout** instead of the
+  projection above: every node is kept, and each container's
+  children are placed in a band under it — leaf children stacked
+  in the container's column, child containers side by side in
+  the columns after — so a sentence's words stand under their
+  sentence rather than in one flat row of every word in the
+  text. Roots stand on the top row in id order; a node no
+  containment path reaches takes a final row, placed, never
+  dropped. The spec stays v1 and stays deterministic. In the
+  SVG, english claim edges (the declared-interpretation kinds)
+  are drawn dashed amber against the grammar edges' solid
+  slate: the two storeys read differently in the picture as
+  they do in the data.
 
 Why this exists: the full layout of a real graph is a faithful
 but unreadable drawing — thousands of symbol boxes at one

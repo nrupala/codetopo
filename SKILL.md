@@ -56,6 +56,29 @@ explain code.
 | What didn't the index resolve? | `codetopo_diagnostics` |
 | Is this index trustworthy / portable? | `codetopo_verify`, `codetopo_snapshot` |
 
+## English-profile graphs (documents, not code)
+
+A snapshot with `profile_id: "english"` is a graph of English
+text, in two storeys — treat the storeys differently:
+
+- **Grammar edges** (`subject-of`, `object-of`, `complement-of`,
+  `modifier-of`, `clause-of`, `appositive-of`,
+  `coordinated-with`, `contains`) are parser measurements
+  (spaCy; class `inference`). On dense technical prose ~87% of
+  relations are right; the published audit is
+  `docs/english-accuracy.md`. Quote them as measurements with
+  that accuracy, never as facts about the text's meaning.
+- **Claim edges** (`same-entity`, `frames`, `supports`,
+  `states-thesis-of`) are a named reader's interpretation
+  (class `declared_claim`). Each carries `claimant` and
+  `basis` — cite both when you use one. If YOU add a claim edge
+  (coreference, claim structure), you are the claimant: put
+  your name in `claimant` and your grounds in `basis`. An
+  unlabelled interpretation is a defect, not a contribution.
+- An english graph is **claims-class**: never present it, or a
+  count over it, as truth-class. Ground floors are produced by
+  `tools/english-ingest`; it emits grammar only, by design.
+
 ## Rules of the house
 
 - codetopo is read-only and domain-blind: it reports measurements with

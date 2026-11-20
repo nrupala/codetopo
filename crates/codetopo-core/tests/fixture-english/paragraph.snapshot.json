@@ -1,0 +1,2423 @@
+{
+ "schema_version": "2.0",
+ "profile_id": "english",
+ "profile_version": "1.0.0",
+ "graph_class": "claims",
+ "provenance_summary": {
+  "inference": 132,
+  "declared_claim": 12
+ },
+ "nodes": [
+  {
+   "id": "para",
+   "kind": "document",
+   "label": "DESIGN.md S1 - Problem/gap (7 sentences)",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 1
+   },
+   "tier": "core",
+   "defines": [],
+   "refs": [],
+   "attrs": {}
+  },
+  {
+   "id": "s1",
+   "kind": "sentence",
+   "label": "S1",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 1
+   },
+   "tier": "core",
+   "defines": [],
+   "refs": [],
+   "attrs": {}
+  },
+  {
+   "id": "s1:v1",
+   "kind": "predicate",
+   "label": "existing",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 1
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "exist",
+    "negated": false
+   }
+  },
+  {
+   "id": "s1:v7",
+   "kind": "predicate",
+   "label": "built",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 1
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "build",
+    "negated": false
+   }
+  },
+  {
+   "id": "s1:v14",
+   "kind": "predicate",
+   "label": "glance",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 1
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "glance",
+    "negated": false
+   }
+  },
+  {
+   "id": "s1:v19",
+   "kind": "predicate",
+   "label": "browse",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 1
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "browse",
+    "negated": false
+   }
+  },
+  {
+   "id": "s1:v23",
+   "kind": "predicate",
+   "label": "scan",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 1
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "scan",
+    "negated": false
+   }
+  },
+  {
+   "id": "s1:e0",
+   "kind": "entity",
+   "label": "Every existing code-visualization tool",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 1
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "tool",
+    "root_dep": "nsubjpass"
+   }
+  },
+  {
+   "id": "s1:e1",
+   "kind": "entity",
+   "label": "human eyes",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 1
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "eyes",
+    "root_dep": "pobj"
+   }
+  },
+  {
+   "id": "s1:e2",
+   "kind": "entity",
+   "label": "diagrams",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 1
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "diagrams",
+    "root_dep": "appos"
+   }
+  },
+  {
+   "id": "s1:e3",
+   "kind": "entity",
+   "label": "trees",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 1
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "trees",
+    "root_dep": "pobj"
+   }
+  },
+  {
+   "id": "s1:e4",
+   "kind": "entity",
+   "label": "waterfalls",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 1
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "waterfalls",
+    "root_dep": "conj"
+   }
+  },
+  {
+   "id": "s2",
+   "kind": "sentence",
+   "label": "S2",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "core",
+   "defines": [],
+   "refs": [],
+   "attrs": {}
+  },
+  {
+   "id": "s2:v3",
+   "kind": "predicate",
+   "label": "working",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "work",
+    "negated": false
+   }
+  },
+  {
+   "id": "s2:v9",
+   "kind": "predicate",
+   "label": "glance (negated)",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "glance",
+    "negated": true
+   }
+  },
+  {
+   "id": "s2:v12",
+   "kind": "predicate",
+   "label": "needs",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "need",
+    "negated": false
+   }
+  },
+  {
+   "id": "s2:v16",
+   "kind": "predicate",
+   "label": "calls",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "call",
+    "negated": false
+   }
+  },
+  {
+   "id": "s2:v20",
+   "kind": "predicate",
+   "label": "breaks",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "break",
+    "negated": false
+   }
+  },
+  {
+   "id": "s2:v23",
+   "kind": "predicate",
+   "label": "touch",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "touch",
+    "negated": false
+   }
+  },
+  {
+   "id": "s2:v27",
+   "kind": "predicate",
+   "label": "'s",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "be",
+    "negated": false
+   }
+  },
+  {
+   "id": "s2:v37",
+   "kind": "predicate",
+   "label": "'s",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "be",
+    "negated": false
+   }
+  },
+  {
+   "id": "s2:e0",
+   "kind": "entity",
+   "label": "An AI agent",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "agent",
+    "root_dep": "nsubj"
+   }
+  },
+  {
+   "id": "s2:e1",
+   "kind": "entity",
+   "label": "a codebase",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "codebase",
+    "root_dep": "pobj"
+   }
+  },
+  {
+   "id": "s2:e2",
+   "kind": "entity",
+   "label": "it",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "it",
+    "root_dep": "nsubj"
+   }
+  },
+  {
+   "id": "s2:e3",
+   "kind": "entity",
+   "label": "answers",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "answers",
+    "root_dep": "dobj"
+   }
+  },
+  {
+   "id": "s2:e4",
+   "kind": "entity",
+   "label": "what",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "what",
+    "root_dep": "nsubj"
+   }
+  },
+  {
+   "id": "s2:e5",
+   "kind": "entity",
+   "label": "this",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "this",
+    "root_dep": "dobj"
+   }
+  },
+  {
+   "id": "s2:e6",
+   "kind": "entity",
+   "label": "what",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "what",
+    "root_dep": "nsubj"
+   }
+  },
+  {
+   "id": "s2:e7",
+   "kind": "entity",
+   "label": "I",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "I",
+    "root_dep": "nsubj"
+   }
+  },
+  {
+   "id": "s2:e8",
+   "kind": "entity",
+   "label": "what",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "what",
+    "root_dep": "attr"
+   }
+  },
+  {
+   "id": "s2:e9",
+   "kind": "entity",
+   "label": "the shortest path",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "path",
+    "root_dep": "attr"
+   }
+  },
+  {
+   "id": "s2:e10",
+   "kind": "entity",
+   "label": "A",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "A",
+    "root_dep": "pobj"
+   }
+  },
+  {
+   "id": "s2:e11",
+   "kind": "entity",
+   "label": "B",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "B",
+    "root_dep": "conj"
+   }
+  },
+  {
+   "id": "s2:e12",
+   "kind": "entity",
+   "label": "the cycle",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 2
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "cycle",
+    "root_dep": "nsubj"
+   }
+  },
+  {
+   "id": "s3",
+   "kind": "sentence",
+   "label": "S3",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 3
+   },
+   "tier": "core",
+   "defines": [],
+   "refs": [],
+   "attrs": {}
+  },
+  {
+   "id": "s3:v3",
+   "kind": "predicate",
+   "label": "gets",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 3
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "get",
+    "negated": false
+   }
+  },
+  {
+   "id": "s3:e0",
+   "kind": "entity",
+   "label": "the agent",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 3
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "agent",
+    "root_dep": "nsubj"
+   }
+  },
+  {
+   "id": "s3:e1",
+   "kind": "entity",
+   "label": "pixels",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 3
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "pixels",
+    "root_dep": "dobj"
+   }
+  },
+  {
+   "id": "s3:e2",
+   "kind": "entity",
+   "label": "formatted text trees",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 3
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "trees",
+    "root_dep": "conj"
+   }
+  },
+  {
+   "id": "s3:e3",
+   "kind": "entity",
+   "label": "nothing",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 3
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "nothing",
+    "root_dep": "conj"
+   }
+  },
+  {
+   "id": "s4",
+   "kind": "sentence",
+   "label": "S4",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 4
+   },
+   "tier": "core",
+   "defines": [],
+   "refs": [],
+   "attrs": {}
+  },
+  {
+   "id": "s4:v6",
+   "kind": "predicate",
+   "label": "proved",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 4
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "prove",
+    "negated": false
+   }
+  },
+  {
+   "id": "s4:v8",
+   "kind": "predicate",
+   "label": "want",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 4
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "want",
+    "negated": false
+   }
+  },
+  {
+   "id": "s4:v19",
+   "kind": "predicate",
+   "label": "indexes",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 4
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "index",
+    "negated": false
+   }
+  },
+  {
+   "id": "s4:e0",
+   "kind": "entity",
+   "label": "codebase-mcp (Apache-2.0) proved agents",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 4
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "agents",
+    "root_dep": "nsubj"
+   }
+  },
+  {
+   "id": "s4:e1",
+   "kind": "entity",
+   "label": "tools",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 4
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "tools",
+    "root_dep": "dobj"
+   }
+  },
+  {
+   "id": "s4:e2",
+   "kind": "entity",
+   "label": "dashboards",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 4
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "dashboards",
+    "root_dep": "pobj"
+   }
+  },
+  {
+   "id": "s4:e3",
+   "kind": "entity",
+   "label": "symbols",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 4
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "symbols",
+    "root_dep": "conj"
+   }
+  },
+  {
+   "id": "s4:e4",
+   "kind": "entity",
+   "label": "files",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 4
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "files",
+    "root_dep": "pobj"
+   }
+  },
+  {
+   "id": "s4:e5",
+   "kind": "entity",
+   "label": "it",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 4
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "it",
+    "root_dep": "nsubj"
+   }
+  },
+  {
+   "id": "s4:e6",
+   "kind": "entity",
+   "label": "symbols",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 4
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "symbols",
+    "root_dep": "dobj"
+   }
+  },
+  {
+   "id": "s4:e7",
+   "kind": "entity",
+   "label": "nodes",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 4
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "nodes",
+    "root_dep": "pobj"
+   }
+  },
+  {
+   "id": "s4:e8",
+   "kind": "entity",
+   "label": "no edges",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 4
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "edges",
+    "root_dep": "pobj"
+   }
+  },
+  {
+   "id": "s5",
+   "kind": "sentence",
+   "label": "S5",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 5
+   },
+   "tier": "core",
+   "defines": [],
+   "refs": [],
+   "attrs": {}
+  },
+  {
+   "id": "s5:e0",
+   "kind": "entity",
+   "label": "No import graph",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 5
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "graph",
+    "root_dep": "ROOT"
+   }
+  },
+  {
+   "id": "s5:e1",
+   "kind": "entity",
+   "label": "no call graph",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 5
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "graph",
+    "root_dep": "appos"
+   }
+  },
+  {
+   "id": "s5:e2",
+   "kind": "entity",
+   "label": "nothing",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 5
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "nothing",
+    "root_dep": "appos"
+   }
+  },
+  {
+   "id": "s6",
+   "kind": "sentence",
+   "label": "S6",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 6
+   },
+   "tier": "core",
+   "defines": [],
+   "refs": [],
+   "attrs": {}
+  },
+  {
+   "id": "s6:v4",
+   "kind": "predicate",
+   "label": "exist",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 6
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "exist",
+    "negated": false
+   }
+  },
+  {
+   "id": "s6:v5",
+   "kind": "predicate",
+   "label": "is",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 6
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "be",
+    "negated": false
+   }
+  },
+  {
+   "id": "s6:e0",
+   "kind": "entity",
+   "label": "Our entire reason",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 6
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "reason",
+    "root_dep": "nsubj"
+   }
+  },
+  {
+   "id": "s6:e1",
+   "kind": "entity",
+   "label": "the edges",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 6
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "edges",
+    "root_dep": "attr"
+   }
+  },
+  {
+   "id": "s7",
+   "kind": "sentence",
+   "label": "S7",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 7
+   },
+   "tier": "core",
+   "defines": [],
+   "refs": [],
+   "attrs": {}
+  },
+  {
+   "id": "s7:v10",
+   "kind": "predicate",
+   "label": "proved",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 7
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "prove",
+    "negated": false
+   }
+  },
+  {
+   "id": "s7:v15",
+   "kind": "predicate",
+   "label": "typed",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 7
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "type",
+    "negated": false
+   }
+  },
+  {
+   "id": "s7:v33",
+   "kind": "predicate",
+   "label": "is",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 7
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "verb": "be",
+    "negated": false
+   }
+  },
+  {
+   "id": "s7:e0",
+   "kind": "entity",
+   "label": "Arize Phoenix",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 7
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "Phoenix",
+    "root_dep": "nsubj"
+   }
+  },
+  {
+   "id": "s7:e1",
+   "kind": "entity",
+   "label": "ELv2",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 7
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "ELv2",
+    "root_dep": "appos"
+   }
+  },
+  {
+   "id": "s7:e2",
+   "kind": "entity",
+   "label": ", clean-room",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 7
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "room",
+    "root_dep": "appos"
+   }
+  },
+  {
+   "id": "s7:e3",
+   "kind": "entity",
+   "label": "the right architecture",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 7
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "architecture",
+    "root_dep": "dobj"
+   }
+  },
+  {
+   "id": "s7:e4",
+   "kind": "entity",
+   "label": "entity schema",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 7
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "schema",
+    "root_dep": "dobj"
+   }
+  },
+  {
+   "id": "s7:e5",
+   "kind": "entity",
+   "label": "MCP/agent query surface \u2192 server-side aggregation",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 7
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "aggregation",
+    "root_dep": "dobj"
+   }
+  },
+  {
+   "id": "s7:e6",
+   "kind": "entity",
+   "label": "its substrate",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 7
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "substrate",
+    "root_dep": "nsubj"
+   }
+  },
+  {
+   "id": "s7:e7",
+   "kind": "entity",
+   "label": "runtime telemetry",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 7
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "telemetry",
+    "root_dep": "attr"
+   }
+  },
+  {
+   "id": "s7:e8",
+   "kind": "entity",
+   "label": "static code structure",
+   "loc": {
+    "file": "paragraph.md",
+    "line": 7
+   },
+   "tier": "optional",
+   "defines": [],
+   "refs": [],
+   "attrs": {
+    "chunk_root": "structure",
+    "root_dep": "appos"
+   }
+  }
+ ],
+ "edges": [
+  {
+   "from": "para",
+   "to": "s1",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s1",
+   "to": "s1:v1",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s1",
+   "to": "s1:v7",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s1",
+   "to": "s1:v14",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s1",
+   "to": "s1:v19",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s1",
+   "to": "s1:v23",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s1",
+   "to": "s1:e0",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s1",
+   "to": "s1:e1",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s1",
+   "to": "s1:e2",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s1",
+   "to": "s1:e3",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s1",
+   "to": "s1:e4",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "para",
+   "to": "s2",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:v3",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:v9",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:v12",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:v16",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:v20",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:v23",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:v27",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:v37",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:e0",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:e1",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:e2",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:e3",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:e4",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:e5",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:e6",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:e7",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:e8",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:e9",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:e10",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:e11",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s2:e12",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "para",
+   "to": "s3",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s3",
+   "to": "s3:v3",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s3",
+   "to": "s3:e0",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s3",
+   "to": "s3:e1",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s3",
+   "to": "s3:e2",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s3",
+   "to": "s3:e3",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "para",
+   "to": "s4",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s4",
+   "to": "s4:v6",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s4",
+   "to": "s4:v8",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s4",
+   "to": "s4:v19",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s4",
+   "to": "s4:e0",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s4",
+   "to": "s4:e1",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s4",
+   "to": "s4:e2",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s4",
+   "to": "s4:e3",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s4",
+   "to": "s4:e4",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s4",
+   "to": "s4:e5",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s4",
+   "to": "s4:e6",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s4",
+   "to": "s4:e7",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s4",
+   "to": "s4:e8",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "para",
+   "to": "s5",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s5",
+   "to": "s5:e0",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s5",
+   "to": "s5:e1",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s5",
+   "to": "s5:e2",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "para",
+   "to": "s6",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s6",
+   "to": "s6:v4",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s6",
+   "to": "s6:v5",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s6",
+   "to": "s6:e0",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s6",
+   "to": "s6:e1",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "para",
+   "to": "s7",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s7",
+   "to": "s7:v10",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s7",
+   "to": "s7:v15",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s7",
+   "to": "s7:v33",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s7",
+   "to": "s7:e0",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s7",
+   "to": "s7:e1",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s7",
+   "to": "s7:e2",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s7",
+   "to": "s7:e3",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s7",
+   "to": "s7:e4",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s7",
+   "to": "s7:e5",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s7",
+   "to": "s7:e6",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s7",
+   "to": "s7:e7",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s7",
+   "to": "s7:e8",
+   "kind": "contains",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0"
+   }
+  },
+  {
+   "from": "s1:e0",
+   "to": "s1:v7",
+   "kind": "subject-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "nsubjpass"
+   }
+  },
+  {
+   "from": "s1:e1",
+   "to": "s1:v7",
+   "kind": "object-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "pobj",
+    "via": "for"
+   }
+  },
+  {
+   "from": "s1:e2",
+   "to": "s1:e0",
+   "kind": "appositive-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "appos"
+   }
+  },
+  {
+   "from": "s1:e3",
+   "to": "s1:v14",
+   "kind": "object-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "pobj",
+    "via": "at"
+   }
+  },
+  {
+   "from": "s1:e4",
+   "to": "s1:e2",
+   "kind": "coordinated-with",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "conj"
+   }
+  },
+  {
+   "from": "s1:v14",
+   "to": "s1:e2",
+   "kind": "clause-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "relcl"
+   }
+  },
+  {
+   "from": "s1:v19",
+   "to": "s1:e3",
+   "kind": "clause-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "relcl"
+   }
+  },
+  {
+   "from": "s1:v23",
+   "to": "s1:e2",
+   "kind": "clause-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "relcl"
+   }
+  },
+  {
+   "from": "s2:e0",
+   "to": "s2:v9",
+   "kind": "subject-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "nsubj"
+   }
+  },
+  {
+   "from": "s2:e1",
+   "to": "s2:v3",
+   "kind": "object-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "pobj",
+    "via": "over"
+   }
+  },
+  {
+   "from": "s2:e2",
+   "to": "s2:v12",
+   "kind": "subject-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "nsubj"
+   }
+  },
+  {
+   "from": "s2:e3",
+   "to": "s2:v12",
+   "kind": "object-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "dobj"
+   }
+  },
+  {
+   "from": "s2:e4",
+   "to": "s2:v16",
+   "kind": "subject-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "nsubj"
+   }
+  },
+  {
+   "from": "s2:e5",
+   "to": "s2:v16",
+   "kind": "object-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "dobj"
+   }
+  },
+  {
+   "from": "s2:e6",
+   "to": "s2:v20",
+   "kind": "subject-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "nsubj"
+   }
+  },
+  {
+   "from": "s2:e7",
+   "to": "s2:v23",
+   "kind": "subject-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "nsubj"
+   }
+  },
+  {
+   "from": "s2:e8",
+   "to": "s2:v27",
+   "kind": "complement-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "attr"
+   }
+  },
+  {
+   "from": "s2:e9",
+   "to": "s2:v27",
+   "kind": "complement-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "attr"
+   }
+  },
+  {
+   "from": "s2:e10",
+   "to": "s2:e9",
+   "kind": "modifier-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "pobj",
+    "via": "between"
+   }
+  },
+  {
+   "from": "s2:e11",
+   "to": "s2:e10",
+   "kind": "coordinated-with",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "conj"
+   }
+  },
+  {
+   "from": "s2:e12",
+   "to": "s2:v37",
+   "kind": "subject-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "nsubj"
+   }
+  },
+  {
+   "from": "s2:v3",
+   "to": "s2:e0",
+   "kind": "clause-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "acl"
+   }
+  },
+  {
+   "from": "s2:v12",
+   "to": "s2:v9",
+   "kind": "clause-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "parataxis"
+   }
+  },
+  {
+   "from": "s2:v16",
+   "to": "s2:v20",
+   "kind": "clause-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "advcl"
+   }
+  },
+  {
+   "from": "s2:v20",
+   "to": "s2:e3",
+   "kind": "clause-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "acl"
+   }
+  },
+  {
+   "from": "s2:v23",
+   "to": "s2:v20",
+   "kind": "clause-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "advcl"
+   }
+  },
+  {
+   "from": "s2:v27",
+   "to": "s2:v23",
+   "kind": "clause-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "ccomp"
+   }
+  },
+  {
+   "from": "s2:v37",
+   "to": "s2:e10",
+   "kind": "clause-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "relcl"
+   }
+  },
+  {
+   "from": "s3:e0",
+   "to": "s3:v3",
+   "kind": "subject-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "nsubj"
+   }
+  },
+  {
+   "from": "s3:e1",
+   "to": "s3:v3",
+   "kind": "object-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "dobj"
+   }
+  },
+  {
+   "from": "s3:e2",
+   "to": "s3:e1",
+   "kind": "coordinated-with",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "conj"
+   }
+  },
+  {
+   "from": "s3:e3",
+   "to": "s3:e2",
+   "kind": "coordinated-with",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "conj"
+   }
+  },
+  {
+   "from": "s4:e0",
+   "to": "s4:v8",
+   "kind": "subject-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "nsubj"
+   }
+  },
+  {
+   "from": "s4:e1",
+   "to": "s4:v8",
+   "kind": "object-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "dobj"
+   }
+  },
+  {
+   "from": "s4:e2",
+   "to": "s4:e1",
+   "kind": "modifier-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "pobj",
+    "via": "over"
+   }
+  },
+  {
+   "from": "s4:e3",
+   "to": "s4:e2",
+   "kind": "coordinated-with",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "conj"
+   }
+  },
+  {
+   "from": "s4:e4",
+   "to": "s4:e2",
+   "kind": "modifier-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "pobj",
+    "via": "over"
+   }
+  },
+  {
+   "from": "s4:e5",
+   "to": "s4:v19",
+   "kind": "subject-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "nsubj"
+   }
+  },
+  {
+   "from": "s4:e6",
+   "to": "s4:v19",
+   "kind": "object-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "dobj"
+   }
+  },
+  {
+   "from": "s4:e7",
+   "to": "s4:v19",
+   "kind": "object-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "pobj",
+    "via": "as"
+   }
+  },
+  {
+   "from": "s4:e8",
+   "to": "s4:e7",
+   "kind": "modifier-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "pobj",
+    "via": "with"
+   }
+  },
+  {
+   "from": "s4:v19",
+   "to": "s4:v8",
+   "kind": "coordinated-with",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "conj"
+   }
+  },
+  {
+   "from": "s5:e1",
+   "to": "s5:e0",
+   "kind": "appositive-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "appos"
+   }
+  },
+  {
+   "from": "s5:e2",
+   "to": "s5:e1",
+   "kind": "appositive-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "appos"
+   }
+  },
+  {
+   "from": "s6:e0",
+   "to": "s6:v5",
+   "kind": "subject-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "nsubj"
+   }
+  },
+  {
+   "from": "s6:e1",
+   "to": "s6:v5",
+   "kind": "complement-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "attr"
+   }
+  },
+  {
+   "from": "s6:v4",
+   "to": "s6:e0",
+   "kind": "clause-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "relcl"
+   }
+  },
+  {
+   "from": "s7:e0",
+   "to": "s7:v10",
+   "kind": "subject-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "nsubj"
+   }
+  },
+  {
+   "from": "s7:e1",
+   "to": "s7:e0",
+   "kind": "appositive-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "appos"
+   }
+  },
+  {
+   "from": "s7:e2",
+   "to": "s7:e0",
+   "kind": "appositive-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "appos"
+   }
+  },
+  {
+   "from": "s7:e3",
+   "to": "s7:v10",
+   "kind": "object-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "dobj"
+   }
+  },
+  {
+   "from": "s7:e4",
+   "to": "s7:v15",
+   "kind": "object-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "dobj"
+   }
+  },
+  {
+   "from": "s7:e5",
+   "to": "s7:v15",
+   "kind": "object-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "dobj"
+   }
+  },
+  {
+   "from": "s7:e6",
+   "to": "s7:v33",
+   "kind": "subject-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "nsubj"
+   }
+  },
+  {
+   "from": "s7:e7",
+   "to": "s7:v33",
+   "kind": "complement-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "attr"
+   }
+  },
+  {
+   "from": "s7:e8",
+   "to": "s7:e7",
+   "kind": "appositive-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "appos"
+   }
+  },
+  {
+   "from": "s7:v15",
+   "to": "s7:e3",
+   "kind": "clause-of",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "acl"
+   }
+  },
+  {
+   "from": "s7:v33",
+   "to": "s7:v10",
+   "kind": "coordinated-with",
+   "attrs": {
+    "method": "spacy 3.8.18 / en_core_web_md 3.8.0",
+    "dep": "conj"
+   }
+  },
+  {
+   "from": "s3:e0",
+   "to": "s2:e0",
+   "kind": "same-entity",
+   "attrs": {
+    "claimant": "english-spike-2026-11-19 reading agent",
+    "basis": "definite reference: 'the agent' in S3 is the AI agent introduced in S2"
+   }
+  },
+  {
+   "from": "s2:e2",
+   "to": "s2:e0",
+   "kind": "same-entity",
+   "attrs": {
+    "claimant": "english-spike-2026-11-19 reading agent",
+    "basis": "pronoun resolution within S2: 'it needs answers' - the agent"
+   }
+  },
+  {
+   "from": "s4:e5",
+   "to": "s4:e0",
+   "kind": "same-entity",
+   "attrs": {
+    "claimant": "english-spike-2026-11-19 reading agent",
+    "basis": "pronoun resolution in S4: 'it indexes symbols' - codebase-mcp (target node is the parse-mangled subject chunk; see flaw audit F-4)"
+   }
+  },
+  {
+   "from": "s6:e1",
+   "to": "s4:e8",
+   "kind": "same-entity",
+   "attrs": {
+    "claimant": "english-spike-2026-11-19 reading agent",
+    "basis": "the edges of S6 are the edges codebase-mcp lacks in S4 - the paragraph's pivot"
+   }
+  },
+  {
+   "from": "s6",
+   "to": "para",
+   "kind": "states-thesis-of",
+   "attrs": {
+    "claimant": "english-spike-2026-11-19 reading agent",
+    "basis": "S6 states the paragraph's thesis: the edges are the reason to exist"
+   }
+  },
+  {
+   "from": "s1",
+   "to": "s6",
+   "kind": "frames",
+   "attrs": {
+    "claimant": "english-spike-2026-11-19 reading agent",
+    "basis": "S1 frames the problem the thesis answers (tools built for human eyes)"
+   }
+  },
+  {
+   "from": "s2",
+   "to": "s6",
+   "kind": "frames",
+   "attrs": {
+    "claimant": "english-spike-2026-11-19 reading agent",
+    "basis": "S2 frames the problem (agents need answers, get none)"
+   }
+  },
+  {
+   "from": "s3",
+   "to": "s6",
+   "kind": "frames",
+   "attrs": {
+    "claimant": "english-spike-2026-11-19 reading agent",
+    "basis": "S3 frames the problem (today the agent gets pixels or nothing)"
+   }
+  },
+  {
+   "from": "s4",
+   "to": "s6",
+   "kind": "supports",
+   "attrs": {
+    "claimant": "english-spike-2026-11-19 reading agent",
+    "basis": "S4 is evidence: the closest prior tool has nodes with no edges"
+   }
+  },
+  {
+   "from": "s5",
+   "to": "s4",
+   "kind": "supports",
+   "attrs": {
+    "claimant": "english-spike-2026-11-19 reading agent",
+    "basis": "S5 (verbless) elaborates S4's 'no edges': no import graph, no call graph"
+   }
+  },
+  {
+   "from": "s7",
+   "to": "s6",
+   "kind": "supports",
+   "attrs": {
+    "claimant": "english-spike-2026-11-19 reading agent",
+    "basis": "S7 is parallel evidence: Phoenix has architecture but the wrong substrate"
+   }
+  },
+  {
+   "from": "s4:e6",
+   "to": "s4:e3",
+   "kind": "same-entity",
+   "attrs": {
+    "claimant": "english-spike-2026-11-19 reading agent",
+    "basis": "repeated noun phrase within S4: the symbols indexed are the symbols wanted"
+   }
+  }
+ ],
+ "audit_head": "",
+ "audit_log": [],
+ "diagnostics": []
+}
