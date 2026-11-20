@@ -10,7 +10,7 @@ Tree-sitter extractors for **Rust** (`.rs`), **TypeScript/JavaScript**
 **Java** (`.java`), **Go** (`.go`), **Shell** (`.sh`, `.bash`),
 **C++** (`.cpp`, `.hpp`, `.cc`, `.cxx`, `.hh`, `.hxx`), and
 **Swift** (`.swift`), **Ruby** (`.rb`), **R** (`.R`, `.r`),
-and **Julia** (`.jl`), **C#** (`.cs`), **PHP** (`.php`), **Scala** (`.scala`, `.sc`), and **Haskell** (`.hs`). One parse per file, one recursive walk, emitting
+and **Julia** (`.jl`), **C#** (`.cs`), **PHP** (`.php`), **Scala** (`.scala`, `.sc`), **Haskell** (`.hs`), and **Elixir** (`.ex`, `.exs`). One parse per file, one recursive walk, emitting
 [`codetopo_core::emit::FileSymbols`](../codetopo-core/src/emit.rs).
 
 ```rust
@@ -199,6 +199,17 @@ import resolution (the Java package rule):
 | `Core/Engine.hs`    | `{pkg}::Core::Engine` |
 | `Main.hs`           | `{pkg}::Main`        |
 
+**Elixir** — rel path, strip extension, `/` → `::` (the Python
+rule). Module ids are path-derived; the `defmodule` name
+does not enter the module id:
+
+| rel path            | module_id            |
+|---------------------|----------------------|
+| `Shapes/Shape.ex`   | `{pkg}::Shapes::Shape` |
+| `Shapes/Circle.ex`  | `{pkg}::Shapes::Circle` |
+| `Core/Engine.ex`    | `{pkg}::Core::Engine` |
+| `main.exs`          | `{pkg}::main`        |
+
 ### Symbol ids
 
 `{module_id}::{item path}` with `::` nesting. Examples:
@@ -366,6 +377,18 @@ symbols in any language here).
 Haskell non-symbols, by design: the module header,
 record fields, and data constructors (a constructor
 application is a call, as object creation is for C#).
+
+| Elixir `defmodule` | `Class` |
+| Elixir `defprotocol` | `Interface` |
+| Elixir `defimpl` | `Class` |
+| Elixir `def` / `defp` / `defmacro` / `defmacrop` in a module | `Method` |
+| Elixir `def` outside any module | `Function` |
+
+Elixir non-symbols, by design: `defstruct` /
+`defexception` (the struct takes the module's own name;
+fields are not symbols in any language here) and the
+contract attributes `@callback`, `@spec`, `@type`
+(contracts and prose, pruned whole).
 
 Kotlin non-symbols, by design: class-level properties and
 primary-constructor `val`/`var` parameters (fields are not symbols
@@ -716,6 +739,31 @@ inherits the class's interface); a standalone `deriving`
 instance is `Implements`. Haskell bindings are
 immutable, so `writes` lists are empty by the language's
 semantics, not by omission.
+
+**Elixir** imports are the `alias` / `import` /
+`require` / `use` calls. A dotted name whose first
+segment matches the package name case-insensitively is
+internal — the segment is read as the package name, the
+PHP rule — anything else is `external::{first segment}`.
+`alias` binds its last segment or its `as:` name,
+`require` binds its last segment, `import` binds its
+`only:` function names, `use` binds nothing:
+
+| statement | to_module_id | bindings |
+|---|---|---|
+| `alias Quarry.Shapes.Circle` | `{pkg}::Shapes::Circle` | `["Circle"]` |
+| `import Logger` | `external::Logger` | `[]` |
+| `use GenServer` | `external::GenServer` | `[]` |
+
+**Elixir calls** follow the shared rule: `to_name` is
+the called function's name; for a remote call the
+receiver is not part of it (the Python attribute rule);
+the declaration calls and the control forms (`if`,
+`unless`, `case`, `cond`, `for`, `with`, `try`,
+`receive`) are not calls. **Elixir heritage**: a
+module's `@behaviour M` is `Implements`; a
+`defimpl P, for: T` is T `Implements` P. Elixir has no
+inheritance.
 
 ### defines / refs
 

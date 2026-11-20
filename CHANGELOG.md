@@ -10,6 +10,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Elixir extractor.** `.ex` and `.exs` files are now
+  parsed via tree-sitter (`tree-sitter-elixir` 0.3).
+  Modules, protocols, implementations, functions and
+  macros, `alias`/`import`/`require`/`use` imports,
+  calls, and `@behaviour`/`defimpl` heritage are
+  extracted with the same CODE_SCHEMA output,
+  defines/refs/writes scan, and depth-safe heap-stack
+  walk as the existing extractors, proven by a
+  hand-derived known-answer fixture
+  (`crates/codetopo-extract/tests/fixture-ex`).
+  Fifteenth language of the full-language extractor
+  program (2026-11-18 ruling).
 - **Haskell extractor.** `.hs` files are now parsed via
   tree-sitter (`tree-sitter-haskell` 0.24). Data and
   newtype declarations, type synonyms, typeclasses and
