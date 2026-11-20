@@ -27,7 +27,7 @@ explain code.
 ## The workflow (counts first, files last)
 
 1. **Index once.** `codetopo_index` the repository (Rust,
-   TypeScript/JavaScript, Python, Kotlin, C, Java, Go, Shell, C++, Swift, Ruby, R, Julia, C#, PHP, Scala, Haskell, and Elixir are parsed). Keep the returned
+   TypeScript/JavaScript, Python, Kotlin, C, Java, Go, Shell, C++, Swift, Ruby, R, Julia, C#, PHP, Scala, Haskell, Elixir, and Lua are parsed). Keep the returned
    database path; every later call uses it.
 2. **Check the diagnostics before trusting any count.**
    `codetopo_diagnostics` lists what the index could not resolve —
