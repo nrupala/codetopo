@@ -29,9 +29,11 @@ prebuilt-binary pointer is corrected to 0.10.0 accordingly.
   (they were missing, a regression from 2026-11-16); fixture files
   themselves are unchanged — their content is pinned by the
   known-answer tests.
-- **Prebuilt binaries.** The release-binary set the README promises
-  now names 0.10.0 (CLI and server join the MCP and ACP binaries in
-  the release pipeline as part of this release's acts).
+- **Prebuilt binaries.** `release-binaries.yml` on main already
+  builds all four binaries (`codetopo-acp`, `codetopo-mcp`,
+  `codetopo` [CLI], `codetopo-server`) per platform — the README's
+  promise is kept by the existing pipeline at the 0.10.0 tag; no
+  workflow change is part of this release.
 
 ## [Unreleased]
 
