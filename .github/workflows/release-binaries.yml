@@ -259,6 +259,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release upload "${{ needs.declare.outputs.tag }}" codetopo-*.tar.gz codetopo-*.tar.gz.sha256 codetopo-*.zip codetopo-*.zip.sha256 --clobber
 
