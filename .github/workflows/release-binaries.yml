@@ -181,9 +181,9 @@ jobs:
         shell: bash
         run: |
           if [ "${{ runner.os }}" = "Windows" ]; then
-            sha256sum codetopo-*-${{ matrix.platform }}.zip > "release-evidence-${{ matrix.platform }}.txt"
+            sha256sum codetopo-*-${{ matrix.platform }}.zip codetopo-${{ matrix.platform }}.zip > "release-evidence-${{ matrix.platform }}.txt"
           else
-            sha256sum codetopo-*-${{ matrix.platform }}.tar.gz > "release-evidence-${{ matrix.platform }}.txt"
+            sha256sum codetopo-*-${{ matrix.platform }}.tar.gz codetopo-${{ matrix.platform }}.tar.gz > "release-evidence-${{ matrix.platform }}.txt"
           fi
           cat "release-evidence-${{ matrix.platform }}.txt"
 
@@ -193,6 +193,7 @@ jobs:
           name: codetopo-binaries-${{ matrix.platform }}
           path: |
             codetopo-*-${{ matrix.platform }}.*
+            codetopo-${{ matrix.platform }}.*
             release-evidence-${{ matrix.platform }}.txt
 
   certify:
