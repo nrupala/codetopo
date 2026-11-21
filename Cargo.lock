@@ -304,7 +304,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "codetopo-acp"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "codetopo-cli",
  "codetopo-core",
@@ -319,7 +319,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-bridge"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "aes-gcm",
  "axum",
@@ -352,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-cli"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "clap",
  "codetopo-core",
@@ -366,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-core"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "leiden-rs",
  "petgraph",
@@ -378,7 +378,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-extract"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "codetopo-core",
  "codetopo-store",
@@ -409,7 +409,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-mcp"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "codetopo-cli",
  "codetopo-core",
@@ -437,7 +437,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-server"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "axum",
  "codetopo-acp",
@@ -462,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "codetopo-store"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "codetopo-core",
  "hex",
@@ -596,9 +596,9 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
 name = "email-encoding"
-version = "0.4.2"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "420b9da095f052ea597503e39073b5b3c522f7db933fbac202d91d24492693fd"
+checksum = "9f690ae2169f2ceb3f45b28b6fcd8fa16839f2f5c8818546774b9425f5f71004"
 dependencies = [
  "base64",
  "memchr",
@@ -623,7 +623,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1154,9 +1154,9 @@ dependencies = [
 
 [[package]]
 name = "lettre"
-version = "0.11.23"
+version = "0.11.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2c646bd5cc763b1087b15493e29a64be6147ba8f19342004fa52048ee596eae"
+checksum = "f294f3d7cdb313e578acef7d7727d4e8d897e0fcd0d6d58c19959cec95073f19"
 dependencies = [
  "base64",
  "email-encoding",
@@ -1752,15 +1752,15 @@ checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
 name = "rustix"
-version = "1.1.5"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags",
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2062,7 +2062,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2551,7 +2551,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
