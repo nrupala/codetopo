@@ -916,7 +916,7 @@ mod tests {
         // build script reads it from codetopo-core's Cargo.toml, so
         // this asserts the plumbing, not a duplicated literal's luck.
         assert_eq!(version, env!("CODETOPO_CORE_VERSION"));
-        assert!(version.starts_with("0.9"), "core version: {version}");
+        assert!(version.starts_with("0.10"), "core version: {version}");
         let schema = unsafe { CStr::from_ptr(codetopo_schema_version()) }
             .to_str()
             .expect("schema version is UTF-8");

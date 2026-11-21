@@ -167,7 +167,7 @@ int main(int argc, char **argv) {
 
     /* ---- versions ------------------------------------------------ */
     const char *version = codetopo_version();
-    check(version && strncmp(version, "0.9", 3) == 0, "codetopo_version is the core's 0.9.x");
+    check(version && strncmp(version, "0.10", 4) == 0, "codetopo_version is the core's 0.10.x");
     const char *schema = codetopo_schema_version();
     check(schema && strcmp(schema, "2.0") == 0, "codetopo_schema_version is 2.0");
     printf("versions: core=%s schema=%s\n", version, schema);
