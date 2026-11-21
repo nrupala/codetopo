@@ -101,7 +101,7 @@ end
 # ---------------------------------------------------------------------------
 
 @testset "versions" begin
-    @test startswith(Codetopo.codetopo_version(), "0.9")
+    @test startswith(Codetopo.codetopo_version(), "0.10")
     @test Codetopo.schema_version() == "2.0"
 end
 

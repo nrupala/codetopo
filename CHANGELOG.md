@@ -8,6 +8,31 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 All notable changes to this project are documented here.
 
+## [0.10.0] — prepared 2026-11-20 (release gate run 2026-11-20; tag pending)
+
+The 19-language release. Sixteen language extractors land on top of
+the 0.9.x line's three (Rust, TypeScript/JavaScript, Python):
+Kotlin, C, Java, Go, Shell, C++, Swift, Ruby, R, Julia, C#, PHP,
+Scala, Haskell, Elixir, Lua — each proven by hand-derived
+known-answer fixtures. The English document profile (below) ships
+as a product surface in this release. There is no 0.9.2: the scope
+that number was reserved for (PR #139 + the F-8 server-headers
+item) is carried by this release line instead, and the README's
+prebuilt-binary pointer is corrected to 0.10.0 accordingly.
+
+- **Security updates.** `lettre` 0.11.23 → 0.11.24 (RUSTSEC-2026-0560
+  … 0565: SMTP STARTTLS response injection, command injection,
+  panic DoS, address rewrite, unbounded buffering) and `rustix`
+  1.1.5 → 1.1.6 (RUSTSEC-2026-0486), lockfile-only.
+- **REUSE compliance restored.** The extractor program's
+  known-answer fixture directories are declared in `REUSE.toml`
+  (they were missing, a regression from 2026-11-16); fixture files
+  themselves are unchanged — their content is pinned by the
+  known-answer tests.
+- **Prebuilt binaries.** The release-binary set the README promises
+  now names 0.10.0 (CLI and server join the MCP and ACP binaries in
+  the release pipeline as part of this release's acts).
+
 ## [Unreleased]
 
 - **ENGLISH document profile.** Codetopo now graphs English

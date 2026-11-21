@@ -5,7 +5,23 @@ version = 1
 [[annotations]]
 path = [
     "crates/codetopo-core/tests/fixtures/**",
+    "crates/codetopo-extract/tests/fixture-c/**",
+    "crates/codetopo-extract/tests/fixture-cpp/**",
+    "crates/codetopo-extract/tests/fixture-cs/**",
+    "crates/codetopo-extract/tests/fixture-ex/**",
+    "crates/codetopo-extract/tests/fixture-go/**",
+    "crates/codetopo-extract/tests/fixture-hs/**",
+    "crates/codetopo-extract/tests/fixture-java/**",
+    "crates/codetopo-extract/tests/fixture-jl/**",
+    "crates/codetopo-extract/tests/fixture-kt/**",
+    "crates/codetopo-extract/tests/fixture-lua/**",
+    "crates/codetopo-extract/tests/fixture-php/**",
     "crates/codetopo-extract/tests/fixture-py/**",
+    "crates/codetopo-extract/tests/fixture-r/**",
+    "crates/codetopo-extract/tests/fixture-rb/**",
+    "crates/codetopo-extract/tests/fixture-scala/**",
+    "crates/codetopo-extract/tests/fixture-sh/**",
+    "crates/codetopo-extract/tests/fixture-swift/**",
     "space-static/data/**",
 ]
 precedence = "override"

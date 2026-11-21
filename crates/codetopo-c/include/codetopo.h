@@ -110,7 +110,7 @@ extern "C" {
 typedef struct codetopo_graph codetopo_graph;
 
 /** Version of the codetopo core this library was built against
- *  (e.g. "0.9.1"). Static string — do NOT free. */
+ *  (e.g. "0.10.0"). Static string — do NOT free. */
 const char *codetopo_version(void);
 
 /** Core schema version this build speaks (e.g. "2.0"), taken from the

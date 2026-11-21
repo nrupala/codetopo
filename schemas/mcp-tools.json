@@ -6,7 +6,7 @@
     "protocolVersion": "2024-11-05",
     "serverInfo": {
       "name": "codetopo",
-      "version": "0.9.1"
+      "version": "0.10.0"
     },
     "transport": "stdio"
   },

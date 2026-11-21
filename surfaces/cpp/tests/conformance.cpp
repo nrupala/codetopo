@@ -208,8 +208,8 @@ int main(int argc, char** argv) {
     fs::create_directories(work, ec);
 
     /* ---- versions ------------------------------------------------ */
-    check(codetopo::version().rfind("0.9", 0) == 0,
-          "codetopo::version is the core's 0.9.x");
+    check(codetopo::version().rfind("0.10", 0) == 0,
+          "codetopo::version is the core's 0.10.x");
     check(codetopo::schema_version() == "2.0", "codetopo::schema_version is 2.0");
     std::printf("versions: core=%s schema=%s\n", codetopo::version().c_str(),
                 codetopo::schema_version().c_str());
