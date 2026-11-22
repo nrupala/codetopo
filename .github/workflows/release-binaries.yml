@@ -245,7 +245,7 @@ jobs:
       # this job while it is OPEN — the attach below is unreachable
       # for an uncertified release.
       - name: Guard — the declaration must be CLOSED
-        uses: nrupala/platform-ci-scaffolding/declare-certify/guard@41666ef6f938c01e8422d7d7b595e6438724193d
+        uses: nrupala/platform-ci-scaffolding/declare-certify/guard@35c8c282f6d508568196647d756f1d5929c7538e
         with:
           declaration-id: ${{ needs.declare.outputs.declaration-id }}
 
